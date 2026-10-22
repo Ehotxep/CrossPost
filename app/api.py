@@ -184,7 +184,8 @@ class Api:
 
     def update_check(self):
         from app import updates
-        return updates.check(force=True)
+        updates.check(force=True)
+        return self._update_info()   # с признаками «можно ли обновлять отсюда» — иначе окно теряет причину отказа
 
     def update_set(self, check: bool = True):
         from app import updates
