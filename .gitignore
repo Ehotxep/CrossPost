@@ -1,0 +1,15 @@
+# секреты и личные данные
+config.toml
+tokens.json
+*.session
+*.db
+data/
+# то, что делает программа
+Файлы/
+# служебное
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.zip
+*.log

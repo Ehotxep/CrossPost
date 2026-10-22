@@ -1,0 +1,125 @@
+# Скопируйте этот файл в config.toml и заполните.
+# Площадку можно выключить, поставив enabled = false.
+# Никому не показывайте config.toml и tokens.json — там ваши ключи.
+#
+# SFW / NSFW
+# ----------
+# У площадки и у каждого канала/вебхука/сабреддита можно указать rating:
+#   "sfw"  — только обычный контент
+#   "nsfw" — только 18+
+#   "all"  — любой (значение по умолчанию; для ВК по умолчанию "sfw")
+# При запуске укажите --sfw или --nsfw, и пост уйдёт только туда, где это разрешено.
+
+[general]
+require_rating = true  # без --sfw/--nsfw скрипт спросит «Это 18+?», а не будет угадывать
+
+[discord]
+enabled = true
+rating = "all"
+# Настройки канала → Интеграции → Вебхуки → Новый вебхук → Копировать URL.
+# Можно несколько каналов/серверов, у каждого свой rating.
+# Для NSFW-канала не забудьте включить в Discord «Канал с возрастным ограничением».
+webhook_urls = [
+  { url = "https://discord.com/api/webhooks/1111/aaaa", rating = "sfw" },
+  # { url = "https://discord.com/api/webhooks/2222/bbbb", rating = "nsfw" },
+]
+blur_nsfw = false      # 18+ картинки прятать под спойлер (размытие до клика)
+username = ""          # имя, от которого придёт сообщение (пусто — имя вебхука)
+include_title = true   # добавлять --title жирным в начало сообщения
+max_file_mb = 10       # с бустами сервера можно увеличить
+
+[light]
+# Лёгкая версия: JPEG, который делается из оригинала для постов.
+scale = 0.5            # 50% от размера оригинала
+quality = 88
+subsampling = "4:4:4"  # чистые цветные края; "4:2:0" — файл меньше
+sharpen = false        # лёгкая резкость после уменьшения
+background = "#FFFFFF" # чем заливать прозрачность
+
+[telegram]
+enabled = true
+bot_token = "123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"   # от @BotFather
+include_title = true
+spoiler_nsfw = true        # 18+ посты под спойлером (нужно, если 18+ пересылается в группу)
+silent_originals = true    # оригиналы без уведомления подписчикам
+comments_wait_seconds = 60 # сколько ждать копию поста в группе обсуждения
+
+# Каналы. @username для публичных или числовой id (-100...) для приватных.
+# rating: "sfw" — только обычные посты, "all" — все (SFW-посты тоже идут в 18+ канал).
+# originals — куда класть PNG-оригиналы:
+#   "comments" — в комментарии к посту (старая схема, нужна привязанная группа обсуждения)
+#   "reply"    — ответом на пост прямо в канале (новая схема, канал без комментариев)
+#   "none"     — не отправлять
+channels = [
+  { id = "@my_art_sfw", rating = "sfw", originals = "comments" },
+  { id = "-1001234567890", rating = "all", originals = "comments" },
+]
+
+# Группа с темами (новая схема). Не заполнено — пересылки в группу нет.
+# id группы и номера тем можно узнать командой: python tg_ids.py
+[telegram.group]
+id = 0                 # например -1009876543210
+sfw_topic = 0          # тема для SFW-артов
+nsfw_topic = 0         # тема для 18+ артов
+
+[vk]
+enabled = true
+rating = "sfw"         # 18+ в ВК не публикуется
+group_id = 123456789   # числовой id группы (без минуса)
+app_id = 12345678      # id приложения VK ID
+redirect_uri = "http://localhost:8765/callback"
+include_title = true
+# access_token = ""    # можно вставить готовый токен вместо `python auth.py vk` (без автообновления)
+
+[x]
+enabled = true
+# X разрешает 18+, но только если в настройках аккаунта включено
+# «Помечать публикуемые медиафайлы как деликатные». Если не включено — поставьте "sfw".
+rating = "all"
+# developer.x.com → ваш проект → приложение → Keys and tokens.
+# У приложения должны быть права Read and Write (перегенерируйте Access Token после смены прав).
+api_key = ""
+api_secret = ""
+access_token = ""
+access_token_secret = ""
+allow_links = false    # ссылки в посте сильно дороже, по умолчанию вырезаются
+include_title = false
+
+[deviantart]
+enabled = true
+rating = "all"         # при --nsfw работа автоматически помечается как Mature
+# deviantart.com/developers → Register your Application
+client_id = ""
+client_secret = ""
+redirect_uri = "http://localhost:8765/callback"
+default_title = ""     # если не указан --title
+default_tags = []      # например ["digitalart", "illustration"]
+mature_level = "moderate"  # уровень для 18+ работ: moderate или strict
+allow_comments = true
+allow_free_download = false
+is_ai_generated = false
+noai = true            # запретить использовать работу для обучения ИИ
+
+[reddit]
+# Включайте только после того, как Reddit одобрит доступ к API (см. README).
+enabled = false
+rating = "all"
+client_id = ""         # строка под названием приложения на reddit.com/prefs/apps
+client_secret = ""
+username = ""          # ваш логин без u/
+password = ""          # с двухфакторкой вход по паролю не сработает, см. README
+user_agent = ""        # пусто — сформируется автоматически
+text_as_comment = true # текст поста добавлять первым комментарием
+delay_seconds = 10     # пауза между сабреддитами
+
+# Список сабреддитов. Перед постингом прочитайте правила каждого:
+# во многих обязателен флэр, а самопиар ограничен.
+# Свой профиль: name = "u_ваш_логин". При --nsfw пост помечается NSFW автоматически.
+[[reddit.subreddits]]
+name = "u_your_username"
+rating = "all"
+
+[[reddit.subreddits]]
+name = "DigitalPainting"
+rating = "sfw"
+flair_id = ""          # id флэра, если в сабреддите он обязателен

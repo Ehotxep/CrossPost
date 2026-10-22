@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<link rel="icon" href="/appicon.ico">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crosspost</title>
+<script>window.UI_STATE = __UI_STATE__; if (window.UI_STATE.theme === "light") document.documentElement.dataset.theme = "light";</script>
+<link rel="stylesheet" href="/static/style.css">
+<script>window.API_TOKEN = "__TOKEN__";</script>
+</head>
+<body>
+<header class="top">
+  <div class="logo">crosspost</div>
+  <nav id="nav">
+    <button data-view="post">Новый пост</button>
+    <button data-view="history">История</button>
+    <button data-view="stats">Статистика</button>
+    <button data-view="trends">Тренды</button>
+    <button data-view="settings">Настройки</button>
+  </nav>
+  <button class="newsbtn" id="newsbtn" aria-haspopup="dialog" aria-label="Новости по свежим артам" data-tip="Новости по свежим артам"><span class="nbi"></span><span class="nbc" hidden></span></button>
+  <button class="wkind" id="wkind" hidden aria-haspopup="dialog"><span class="lamp"></span><span class="wt">Фоновая отправка</span></button>
+  <button class="wkind tgind on" id="tgind" aria-pressed="true"><span class="lamp"></span><span class="wt">Теггер</span></button>
+</header>
+<div class="wkpop" id="wkpop" hidden role="dialog" aria-label="Фоновая отправка"></div>
+<div class="newspop" id="newspop" hidden role="dialog" aria-label="Новости"></div>
+<main id="main"></main>
+<div class="acts" id="acts" aria-live="polite"></div>
+<div id="tip" class="tip" hidden></div>
+<div id="hcard" class="hcard" hidden></div>
+<script src="/static/charts.js"></script>
+<script src="/static/videditor.js"></script>
+<script src="/static/publish.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
