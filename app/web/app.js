@@ -243,7 +243,7 @@
   // ---------------- данные ----------------
   async function loadInfo() {
     S.info = await api("info");
-    navBadge();
+    navBadge(); updBadge();
     const running = Object.values(S.info.trends).some((t) => t.job && t.job.state === "running") ||
       (S.info.tg_job && S.info.tg_job.state === "running") ||
       (S.info.pub_job && S.info.pub_job.state === "running") || (S.info.vk_job && S.info.vk_job.state === "running") ||
@@ -334,6 +334,29 @@
     el.querySelector("[data-bar]").style.width = pct;
     el.querySelector("[data-pct]").textContent = pct;
     el.querySelector("[data-msg]").textContent = job.message || "";
+  }
+  function updBadge() {
+    const b = document.getElementById("updbtn"), u = S.info && S.info.update; if (!b) return;
+    b.hidden = !(u && u.show);
+    if (u && u.show) b.querySelector(".wt").textContent = "Вышла версия " + u.latest.version;
+  }
+  function updHtml() {
+    const u = S.info.update, hint = window.CP.hint;
+    if (!u) return "";
+    const lt = u.latest, ago = u.last ? new Date(u.last * 1000).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "";
+    let st;
+    if (u.newer) st = `<p><b>Вышла версия ${esc(lt.version)}</b>${lt.date ? ` <span class="muted">от ${esc(lt.date)}</span>` : ""}. У вас ${esc(u.current)}.</p>
+      ${lt.notes ? `<div class="notes">${esc(lt.notes)}</div>` : ""}
+      <div class="cardfoot"><button class="btn primary" data-action="upd-open">Открыть страницу выпуска</button>
+        ${u.show ? `<button class="btn ghost" data-action="upd-skip">Пропустить эту версию</button>` : `<span class="muted small">Уведомление скрыто — версия пропущена.</span>`}</div>
+      <p class="muted small" style="margin:0">Скачайте архив со страницы выпуска и распакуйте поверх программы: ваши данные хранятся отдельно и не затронутся.</p>`;
+    else if (u.error && !lt) st = `<p class="muted">Не удалось проверить: ${esc(u.error)}.</p>`;
+    else st = `<p class="muted">У вас последняя версия (${esc(u.current)}).${u.error ? ` Последняя проверка не удалась: ${esc(u.error)}.` : ""}</p>`;
+    return `<section class="card setc"><div class="head"><h2>Обновления ${hint("Программа раз в 12 часов спрашивает GitHub, вышла ли новая версия, и только сообщает об этом — сама ничего не скачивает и не ставит. Передаётся только запрос на страницу выпусков, без ваших данных.")}</h2></div>
+      ${st}
+      <div class="cardfoot"><button class="btn" data-action="upd-check" ${S.updBusy || u.checking ? "disabled" : ""}>${S.updBusy ? "Проверяю…" : "Проверить сейчас"}</button>
+        <label class="tgl"><input type="checkbox" data-action="upd-auto" ${u.check ? "checked" : ""}><span>Проверять автоматически</span></label>
+        <span class="muted small">${ago ? `Проверено ${esc(ago)}` : "Ещё не проверялось"}</span></div></section>`;
   }
   function navBadge() {
     const b = document.querySelector('#nav button[data-view="settings"]'); if (!b) return;
@@ -815,6 +838,7 @@
         ${w ? `<div class="status"><span>${w.running ? esc(w.next || "Работает") : "Запланированные посты выйдут, только пока открыто окно Crosspost."}</span><span class="grow1"></span>
             ${w.running ? `<button class="btn small danger" data-wk="stop">Выключить</button>` : `<button class="btn small primary" data-wk="start">Включить</button>`}</div>
           <label class="tgl"><input type="checkbox" data-pa="wk-auto" ${w.autostart ? "checked" : ""} ${w.platform === "win32" ? "" : "disabled"}><span>Запускать вместе с Windows</span></label>` : `<p class="muted">Проверяю…</p>`}</section>
+      ${updHtml()}
       <section class="card setc"><div class="head"><h2>Значок и ярлык ${hint("Ярлык запускает Crosspost напрямую, без файла Crosspost.bat — поэтому Windows не показывает окно «Не удаётся проверить издателя», а в панели задач виден значок Crosspost. Закрепить на панели задач: правой кнопкой по ярлыку → «Закрепить на панели задач».")}</h2></div>
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap"><img src="/appicon.ico?v=${S.iconV || 0}" alt="Значок приложения" width="40" height="40" style="border-radius:10px">
           <button class="btn" data-action="icon-pick">Выбрать свой значок…</button>
@@ -1387,6 +1411,15 @@
       catch (err) { alert(err.message); }
       render(); return;
     }
+    if (act.startsWith("upd-")) {
+      try {
+        if (act === "upd-check") { S.updBusy = true; render(); S.info.update = await api("update_check"); S.updBusy = false; }
+        else if (act === "upd-open") await api("update_open");
+        else if (act === "upd-skip") S.info.update = await api("update_skip", { version: (S.info.update.latest || {}).version });
+        else if (act === "upd-auto") S.info.update = await api("update_set", { check: a.checked });
+      } catch (err) { S.updBusy = false; }
+      updBadge(); render(); return;
+    }
     const tgAct = { "tg-keys": 1, "tg-phone": 1, "tg-code": 1, "tg-password": 1, "tg-resend": 1, "tg-rekeys": 1, "tg-logout": 1, "tg-refresh-ch": 1, "tg-sync": 1 };
     if (tgAct[act]) {
       // значения полей читаем ДО перерисовки — она пересоздаёт поля ввода
@@ -1475,6 +1508,9 @@
   });
 
   (async function init() {
+    document.getElementById("updbtn").addEventListener("click", () => { S.view = "settings"; S.platSec = "app"; store.set("view", S.view); loadInfo().then(() => render()); });
+    setTimeout(() => loadInfo().catch(() => {}), 8000);   // к этому моменту фоновая проверка версии уже ответила
+    setInterval(() => loadInfo().catch(() => {}), 3600000);
     loadWorker(); setInterval(loadWorker, 20000);
     pollActs(); loadNews(false); setInterval(() => loadNews(false), 60000);
     try { await loadInfo(); } catch (e) { $main.innerHTML = `<p class="err">Не удалось связаться с приложением: ${esc(e.message)}</p>`; return; }

@@ -1002,3 +1002,8 @@ body.working { cursor: progress; }
 .pathbox code { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; user-select: text; }
 .cw .more { cursor: pointer; transition: background .15s; } .cw .more:hover { background: rgba(8, 9, 13, .4); }
 .daylist { scroll-margin-top: 72px; }
+.updbtn { margin-left: auto; border-color: var(--accent, #6d71ff); color: var(--ink); }
+.updbtn .lamp { background: var(--accent, #6d71ff) !important; box-shadow: 0 0 0 3px rgba(109, 113, 255, .25) !important; }
+.updbtn + .wkind { margin-left: 8px; }
+.setc .notes { white-space: pre-wrap; max-height: 180px; overflow: auto; padding: 10px 12px; border-radius: 8px; background: var(--card-2); border: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
+#updbtn[hidden] { display: none; }

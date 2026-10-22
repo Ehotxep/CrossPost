@@ -30,7 +30,16 @@ class Api:
                 "trends": {src: self._trends_state(src) for src in dumps.SOURCES},
                 "tg_job": self.jobs.get("tg:sync"), "pub_job": self.jobs.get("publish"),
                 "ins_job": self.jobs.get("insights:tag"),
-                "vk_job": self.jobs.get("vk:auth"), "vk_stats_job": self.jobs.get("vk:stats"), "modules": self.modules(), "levels": self._levels()}
+                "vk_job": self.jobs.get("vk:auth"), "vk_stats_job": self.jobs.get("vk:stats"), "modules": self.modules(), "levels": self._levels(),
+                "update": self._update_info()}
+
+    def _update_info(self):
+        try:
+            from app import updates
+            updates.check_async()
+            return updates.status()
+        except Exception:  # noqa: BLE001
+            return None
 
     def _levels(self) -> dict:
         try:
@@ -199,6 +208,30 @@ class Api:
         except Exception:
             pass
         return out
+
+    # --- обновления ---
+    def update_status(self):
+        from app import updates
+        updates.check_async()
+        return updates.status()
+
+    def update_check(self):
+        from app import updates
+        return updates.check(force=True)
+
+    def update_set(self, check: bool = True):
+        from app import updates
+        return updates.set_check(check)
+
+    def update_skip(self, version: str = ""):
+        from app import updates
+        return updates.skip(version)
+
+    def update_open(self):
+        from app import updates
+        lt = updates.status()["latest"]
+        self.open_url((lt or {}).get("url") or f"https://github.com/{updates.REPO}/releases")
+        return True
 
     def open_url(self, url: str):
         """Открыть ссылку в обычном браузере (из окна приложения ссылки сами не открываются)."""
