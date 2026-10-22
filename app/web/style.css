@@ -87,8 +87,7 @@ a:hover { text-decoration: underline; }
   background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }
 .logo { font-weight: 700; font-size: 16px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; }
-.logo::before { content: ""; width: 18px; height: 18px; border-radius: 5px;
-  background: linear-gradient(135deg, var(--accent-fill), #B06CFF); }
+.logo::before { content: ""; width: 24px; height: 24px; background: url(/appicon.ico) center / contain no-repeat; }
 nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 nav button { border: 0; background: transparent; padding: 7px 12px; border-radius: 8px; color: var(--ink-3);
   min-height: 34px; font-weight: 500; white-space: nowrap; }
@@ -1011,3 +1010,24 @@ body.working { cursor: progress; }
   display: flex; flex-direction: column; gap: 4px; padding: 22px 24px; border-radius: 14px; background: var(--card); border: 1px solid var(--line-strong); box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
 .updbox h2 { margin: 0 0 6px; font-size: 18px; } .updbox p { margin: 6px 0; } .updbox .notes { white-space: pre-wrap; max-height: 200px; overflow: auto; padding: 10px 12px; border-radius: 8px; background: var(--card-2); border: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
 .updbox .cardfoot { margin-top: 12px; flex-wrap: wrap; }
+.heat .hc.empty.one { background: var(--card-3); position: relative; } .heat .hc.empty.one::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 99px; background: var(--ink-3); }
+.hcov { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; max-width: 330px; }
+
+/* календарь: выбор и объединение работ, значки площадок, подсказки */
+.cw.picked { outline: 2px solid var(--accent, #7c8cff); outline-offset: -2px; }
+.cw.picked::after { content: "✓"; position: absolute; right: 3px; bottom: 3px; width: 16px; height: 16px; border-radius: 999px; background: var(--accent, #7c8cff); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
+.cwp { position: absolute; left: 3px; top: 3px; display: flex; gap: 2px; z-index: 2; }
+.cwp i, .hcparts i { font-style: normal; font-size: 9px; font-weight: 700; line-height: 13px; padding: 0 3px; border-radius: 4px; color: #fff; background: #5b6472; }
+.pl-telegram { background: #2a8fd0 !important; } .pl-vk { background: #3f6fd8 !important; } .pl-bsky { background: #1f7ae0 !important; } .pl-e6ai, .pl-e621 { background: #1f3c6e !important; } .pl-da { background: #05a36a !important; }
+@media (max-width: 900px) { .cwp { display: none; } }
+.selbar { display: flex; align-items: center; gap: 8px; margin: 8px 0; padding: 8px 12px; border-radius: 10px; background: var(--card-3); font-size: 13px; }
+.btn.on { background: var(--accent-soft, var(--card-3)); color: var(--accent, inherit); }
+.sugg { margin: 8px 0 12px; } .sugg h3 { margin: 0 0 6px; font-size: 13px; }
+.sgl { display: grid; gap: 6px; }
+.sg { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 10px; background: var(--card-3); flex-wrap: wrap; }
+.sgi { display: flex; align-items: center; gap: 8px; }
+.sgt { width: 44px; height: 44px; border-radius: 6px; overflow: hidden; background: var(--card-2, #222); flex: none; }
+.sgt img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sgeq { color: var(--ink-2); font-weight: 700; } .sga { margin-left: auto; display: flex; gap: 6px; }
+.hcparts { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.hcparts span { display: flex; align-items: center; gap: 6px; } .hcparts b { margin-left: auto; }

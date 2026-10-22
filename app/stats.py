@@ -221,6 +221,18 @@ def overview(period: str = "90", chat_id: str | None = None) -> dict | None:
             else:
                 row.append({"v": None, "n": int(len(cell))})
         grid.append({"day": DAYS[d], "cells": row})
+    # Изученность окон за всю историю (а не только за выбранный период): сколько из 56 окон имеют данные.
+    # Нужна, чтобы видеть, куда ещё не постили, — иначе всё внимание уходит на уже проверенные окна.
+    hist = full[(full["dt"] <= now - MIN_AGE) & full["index"].notna()]
+    cnt = {}
+    if not hist.empty:
+        hl = hist["dt"].dt.tz_convert(datetime.now().astimezone().tzinfo)
+        for d_, s_ in zip(hl.dt.dayofweek.values, (hl.dt.hour // 3).values):
+            cnt[(int(d_), int(s_))] = cnt.get((int(d_), int(s_)), 0) + 1
+    ns = [cnt.get((d_, s_), 0) for d_ in range(7) for s_ in range(8)]
+    coverage = {"cells": 56, "solid": sum(1 for n_ in ns if n_ >= 3), "weak": sum(1 for n_ in ns if 1 <= n_ < 3),
+                "none": sum(1 for n_ in ns if n_ == 0), "posts": int(len(hist)),
+                "grid": [[cnt.get((d_, s_), 0) for s_ in range(8)] for d_ in range(7)]}
     # надёжные лучшие окна: хотя бы 3 поста
     best_cells = sorted([b for b in best_cells if b[1] >= 3], key=lambda b: -b[0])[:3]
     best_times = [{"label": f"{DAYS[d]}, {s * 3:02d}:00–{(s * 3 + 3) % 24:02d}:00", "index": round(v, 2), "n": n,
@@ -305,7 +317,7 @@ def overview(period: str = "90", chat_id: str | None = None) -> dict | None:
         "median_reactions": round(float(df["reactions"].median()), 1),
         "hits": hits, "hits_share": round(hits / max(len(mature), 1), 3), "levels": lv,
         "best": post_item(best) if best is not None else None,
-        "top": top, "heat": grid, "groups": groups, "best_times": best_times, "channels": channels, "hashtags": hashtags,
+        "top": top, "heat": grid, "coverage": coverage, "groups": groups, "best_times": best_times, "channels": channels, "hashtags": hashtags,
         "tz": _tz_label(), "prev": prev, "period": period,
         "excluded": db.query("SELECT COUNT(*) AS n FROM posts WHERE COALESCE(excluded,0)=1")[0]["n"],
     }

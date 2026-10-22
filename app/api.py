@@ -50,41 +50,6 @@ class Api:
         except Exception:  # noqa: BLE001
             return {"good": 1.3, "hit": 2.0, "super": 3.0}
 
-    def icon_status(self):
-        from app import icon
-        return {"custom": icon.custom_path().exists()}
-
-    def icon_pick(self):
-        """Выбрать свой значок (окно выбора файла) и сразу поставить его окну."""
-        if self.window is None:
-            raise ValueError("Выбор файла работает в окне приложения")
-        import webview
-        res = self.window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False,
-                                             file_types=("Картинки (*.ico;*.png;*.jpg;*.jpeg;*.webp;*.bmp)", "Все файлы (*.*)"))
-        if not res:
-            return {"custom": False, "cancelled": True}
-        return self.icon_set(res[0])
-
-    def icon_set(self, path: str):
-        from app import icon
-        icon.set_custom(path)
-        self._apply_icon()
-        return {"custom": True}
-
-    def icon_reset(self):
-        from app import icon
-        icon.reset_custom()
-        self._apply_icon()
-        return {"custom": False}
-
-    def _apply_icon(self):
-        """Поставить значок открытому окну сразу, без перезапуска."""
-        if self.window is None:
-            return
-        import threading
-        from app import icon
-        threading.Thread(target=icon.set_window_icon, args=(self.window.title,), kwargs={"timeout": 3}, daemon=True).start()
-
     def create_shortcuts(self):
         """Ярлыки Crosspost со значком на рабочем столе и в «Пуске» (запуск без .bat и без предупреждения Windows)."""
         from app import icon
@@ -132,7 +97,7 @@ class Api:
         return PS.module_on(key)
 
     # --- панель процессов: всё, что сейчас идёт в фоне ---
-    JOB_LABELS = {"trends:e6ai": ("Тренды e6ai", "trends"), "trends:e621": ("Тренды e621", "trends"),
+    JOB_LABELS = {"ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды e6ai", "trends"), "trends:e621": ("Тренды e621", "trends"),
                   "e6db": ("База тегов e6ai", "settings:tags"), "tagger:install": ("Установка теггера", "settings:tags"),
                   "tagger:run": ("Подбор тегов", "post"), "publish": ("Публикация", "post"),
                   "tg:sync": ("Загрузка из Telegram", "settings:import"), "insights:tag": ("Разметка истории теггером", "stats"),
@@ -1346,8 +1311,31 @@ class Api:
         from app.insights import warmup as W
         if not _re.fullmatch(r"\d{4}-\d{2}", ym or ""):
             raise ValueError("Месяц в виде ГГГГ-ММ")
+        from app.insights import ext_posts
+        ext_posts.sync_async()   # посты ВК и Bluesky, вышедшие мимо Crosspost, — раз в 3 часа, в фоне
         r = cache.get(W.calendar_name(ym), W.calendar_compute(ym), W.calendar_key(), max_age=1800)
-        return dict(r["data"], _cache={"at": r["at"], "stale": r["stale"], "refreshing": r["refreshing"]})
+        return dict(r["data"], _cache={"at": r["at"], "stale": r["stale"], "refreshing": r["refreshing"]},
+                    ext=ext_posts.state())
+
+    def cal_merge(self, atoms: list):
+        """Объединить выбранные работы календаря в одну (атомы — исходные посты)."""
+        from app.insights import calendar
+        return calendar.merge(atoms)
+
+    def cal_split(self, atoms: list):
+        """Разъединить работу календаря на отдельные посты."""
+        from app.insights import calendar
+        return calendar.split(atoms)
+
+    def cal_decide(self, a: list, b: list, yes: bool):
+        """Ответ на подсказку «Похоже на тот же арт»."""
+        from app.insights import calendar
+        return calendar.decide(a, b, bool(yes))
+
+    def ext_sync(self):
+        """Обновить посты ВК и Bluesky для календаря сейчас."""
+        from app.insights import ext_posts
+        return self.jobs.start("ext:sync", lambda report: ext_posts.sync(force=True))
 
     def post_detail(self, post_id: int):
         """Статистика импортированного поста (без публикации из Crosspost) — для шторки календаря."""

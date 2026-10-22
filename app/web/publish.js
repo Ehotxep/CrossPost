@@ -755,6 +755,29 @@
     if (c && c.days) Object.values(c.days).flat().forEach((it) => { out[it.key] = it; });
     return out;
   }
+  const PLAT = { telegram: ["TG", "Telegram"], vk: ["ВК", "ВКонтакте"], bsky: ["Bs", "Bluesky"], e6ai: ["e6", "e6ai"], e621: ["621", "e621"], da: ["DA", "DeviantArt"] };
+  function platChips(it) {
+    const set = [...new Set((it.parts || []).map((p) => p.plat))];
+    return set.length ? `<span class="cwp">${set.map((p) => `<i class="pl-${p}">${(PLAT[p] || [p])[0]}</i>`).join("")}</span>` : "";
+  }
+  function suggestHtml(c) {
+    const items = calItems(), ICON = C().ICON;
+    const list = (c.suggestions || []).filter((x) => items[x.ka] && items[x.kb]);
+    if (!list.length) return "";
+    const side = (it) => `<span class="sgi"><span class="sgt">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : ""}</span><span class="small">${esc(it.channels.join(", "))}<br><span class="muted">${it.day.slice(8)}.${it.day.slice(5, 7)} ${it.time}</span></span></span>`;
+    return `<div class="sugg"><h3>Похоже на тот же арт</h3><div class="sgl">${list.map((x, i) => `<div class="sg">${side(items[x.ka])}<span class="sgeq">=</span>${side(items[x.kb])}
+        <span class="sga"><button class="btn small" data-pa="cal-sg-yes" data-i="${i}">Объединить</button><button class="btn small ghost" data-pa="cal-sg-no" data-i="${i}">Разные</button></span></div>`).join("")}</div></div>`;
+  }
+  function selBarHtml() {
+    const s = S(), sel = s.calSel || [];
+    if (!s.calSelMode && !sel.length) return "";
+    const items = calItems();
+    const multi = sel.length === 1 && items[sel[0]] && (items[sel[0]].atoms || []).length > 1;
+    return `<div class="selbar"><span>${sel.length ? `Выбрано: ${sel.length}` : "Нажимайте на работы, чтобы выбрать"}</span><span class="spacer"></span>
+      <button class="btn small" data-pa="cal-merge" ${sel.length < 2 ? "disabled" : ""}>Объединить</button>
+      <button class="btn small ghost" data-pa="cal-split" ${multi ? "" : "disabled"}>Разъединить</button>
+      <button class="btn small ghost" data-pa="cal-sel-off">Готово</button></div>`;
+  }
   function calendarHtml() {
     const s = S(), ym = s.calYm || curYm(), c = (s.cal || {})[ym], ICON = C().ICON;
     const [y, m] = ym.split("-").map(Number);
@@ -762,9 +785,11 @@
         <button class="icon-btn" data-pa="cal-prev" aria-label="Предыдущий месяц" style="transform:scaleX(-1)">${ICON.chev}</button>
         <button class="calm" data-pa="cal-today" data-tip="Вернуться к текущему месяцу">${MONTHS[m - 1]} ${y}</button>
         <button class="icon-btn" data-pa="cal-next" aria-label="Следующий месяц">${ICON.chev}</button></div>
+        <button class="btn small ghost ${s.calSelMode ? "on" : ""}" data-pa="cal-sel" data-tip="Выберите несколько работ (или Ctrl+клик), чтобы объединить их в одну — например, один арт на разных площадках">Объединять</button>
         ${c && c.summary ? `<span class="muted small">${c.summary.posts} ${C().plural(c.summary.posts, "работа", "работы", "работ")}${c.summary.hits ? `, хитов: ${c.summary.hits}` : ""}${c.summary.typical ? `, обычно ${mult(c.summary.typical)}` : ""}</span>` : ""}</div>`;
     if (!c) return h + `<p class="muted">Загрузка…</p></section>`;
     if (c.error) return h + `<p class="err">${esc(c.error)}</p></section>`;
+    h += selBarHtml() + suggestHtml(c);
     const start = new Date(c.start + "T00:00:00"), end = new Date(c.end + "T00:00:00");
     const rankOf = {};   // медали лидерам месяца
     (c.leaders || []).slice(0, 3).forEach((it, i) => { if (it.index != null) rankOf[it.key] = i + 1; });
@@ -778,7 +803,8 @@
       const best = list.length ? list[0].index : null;
       const show = list.slice(0, 4), more = list.length - show.length;
       const n = show.length;
-      const works = show.map((it, i) => `<button class="cw" data-cw="${esc(it.key)}" aria-label="${esc(it.text || it.channels.join(", "))}">
+      const works = show.map((it, i) => `<button class="cw ${(s.calSel || []).includes(it.key) ? "picked" : ""}" data-cw="${esc(it.key)}" aria-label="${esc(it.text || it.channels.join(", "))}">
+          ${platChips(it)}
           ${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}
           ${C().badges({ kind: it.kind, n: it.n_media, kinds: false, rank: rankOf[it.key], scope: "за месяц", index: it.index, est: it.est, sm: true })}
           ${mk(it.index, it.est)}${i === 3 && more > 0 ? `<span class="more">+${more}</span>` : ""}${it.app ? "" : ""}</button>`).join("");
@@ -825,7 +851,8 @@
         <div class="hcn"><span>${it.by_views ? "Просмотры" : "Реакции"}<b>${it.by_views ? views : n(it.reactions || 0)}</b></span>
           ${it.by_views ? `<span>Реакции<b>${n(it.reactions || 0)}</b></span>` : ""}<span>Пересылки<b>${n(it.forwards || 0)}</b></span></div>
         ${it.index != null ? `<span class="small">${it.est ? `Идёт на ${mult(it.index)} к норме канала${it.proj ? `, ждём ≈${n(it.proj)} за неделю` : ""} — оценка по ${Math.round(it.age_h)} ч` : `${mult(it.index)} к норме канала`}</span>` : `<span class="muted small">Статистики нет: канал не подключён к «Статистике»</span>`}
-        <span class="muted small">Нажмите, чтобы открыть подробную статистику</span></div>`;
+        ${(it.parts || []).length > 1 ? `<div class="hcparts">${it.parts.map((p) => `<span><i class="pl-${p.plat}">${(PLAT[p.plat] || [p.plat])[0]}</i>${esc(p.label)}<b>${p.index != null ? mult(p.index) : "—"}</b></span>`).join("")}</div>` : ""}
+        <span class="muted small">${it.pub_id || it.post_id ? "Нажмите, чтобы открыть подробную статистику" : "Нажмите, чтобы открыть пост на площадке"}</span></div>`;
   }
   let hcTimer = null;
   function showHoverCard(el) {
@@ -1639,7 +1666,14 @@
     if (cw) {   // работа в календаре → шторка: публикация из Crosspost или пост из импорта
       e.preventDefault();
       const it = calItems()[cw.dataset.cw];
-      if (it) await openDrawer(it.pub_id ? "pub:" + it.pub_id : "post:" + it.post_id);
+      const s1 = S();
+      if (it && (s1.calSelMode || e.ctrlKey || e.metaKey || e.shiftKey)) {   // выбор работ для объединения
+        const sel = s1.calSel || (s1.calSel = []), i = sel.indexOf(it.key);
+        if (i >= 0) sel.splice(i, 1); else sel.push(it.key);
+        C().render(); return true;
+      }
+      if (it && (it.pub_id || it.post_id)) await openDrawer(it.pub_id ? "pub:" + it.pub_id : "post:" + it.post_id);
+      else if (it && it.link) C().api("open_url", { url: it.link }).catch(() => {});
       return true;
     }
     const hs = e.target.closest('[data-set="hf"],[data-set="histMode"]');
@@ -1802,6 +1836,26 @@
         C().render(); return true;
       }
       case "cal-day-clear": s.calDay = null; C().render(); return true;
+      case "cal-sel": s.calSelMode = !s.calSelMode; if (!s.calSelMode) s.calSel = []; C().render(); return true;
+      case "cal-sel-off": s.calSelMode = false; s.calSel = []; C().render(); return true;
+      case "cal-merge": case "cal-split": {
+        const items = calItems(), atoms = [...new Set((s.calSel || []).flatMap((k) => (items[k] || {}).atoms || []))];
+        try {
+          await api(act === "cal-merge" ? "cal_merge" : "cal_split", { atoms });
+          s.calSel = []; s.calSelMode = false; s.cal = {};
+          await loadCalendar(); C().render();
+        } catch (err) { (C().toast ? C().toast(err.message, "err") : alert(err.message)); }
+        return true;
+      }
+      case "cal-sg-yes": case "cal-sg-no": {
+        const c0 = (s.cal || {})[s.calYm], x = ((c0 && c0.suggestions) || [])[+a.dataset.i];
+        if (!x) return true;
+        try {
+          await api("cal_decide", { a: x.a, b: x.b, yes: act === "cal-sg-yes" });
+          s.cal = {}; await loadCalendar(); C().render();
+        } catch (err) { (C().toast ? C().toast(err.message, "err") : alert(err.message)); }
+        return true;
+      }
       case "fc-when": {   // «выгоднее опубликовать в …» → запланировать на это время
         s.when = "later"; s.whenAt = a.dataset.at;
         if (!s.bestTimes) { try { s.bestTimes = await api("post_best_times"); } catch (err) { s.bestTimes = []; } }

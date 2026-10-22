@@ -75,6 +75,169 @@ def _pub_map() -> dict:
     return out
 
 
+db.conn().executescript("CREATE TABLE IF NOT EXISTS cal_rules (a TEXT NOT NULL, b TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (a, b));")
+
+
+def rules_key():
+    r = db.query("SELECT COUNT(*) AS n, MAX(rowid) AS m FROM cal_rules")[0]
+    return (r["n"], r["m"])
+
+
+def _rules():
+    joins, splits = [], set()
+    for r in db.query("SELECT a, b, kind FROM cal_rules"):
+        if r["kind"] == "join":
+            joins.append((r["a"], r["b"]))
+        else:
+            splits.add(frozenset((r["a"], r["b"])))
+    return joins, splits
+
+
+def _set_rule(a: str, b: str, kind: str | None):
+    """kind: 'join' | 'split' | None (убрать правило)."""
+    with db.tx() as c:
+        c.execute("DELETE FROM cal_rules WHERE (a=? AND b=?) OR (a=? AND b=?)", (a, b, b, a))
+        if kind:
+            c.execute("INSERT INTO cal_rules (a, b, kind) VALUES (?,?,?)", (a, b, kind))
+
+
+def merge(keys: list) -> int:
+    """Вручную объединить посты (ключи исходных постов) в одну работу."""
+    keys = list(dict.fromkeys(str(k) for k in keys or []))
+    if len(keys) < 2:
+        raise ValueError("Выберите хотя бы две работы")
+    with db.tx() as c:
+        for i, a in enumerate(keys):   # прежние «не склеивать» между этими постами снимаем
+            for b in keys[i + 1:]:
+                c.execute("DELETE FROM cal_rules WHERE kind='split' AND ((a=? AND b=?) OR (a=? AND b=?))", (a, b, b, a))
+        for k in keys[1:]:
+            c.execute("INSERT OR REPLACE INTO cal_rules (a, b, kind) VALUES (?,?,'join')", (keys[0], k))
+    return len(keys)
+
+
+def split(keys: list) -> int:
+    """Разъединить: между всеми постами работы — «не склеивать» (в том числе автосклейку)."""
+    keys = list(dict.fromkeys(str(k) for k in keys or []))
+    if len(keys) < 2:
+        raise ValueError("В этой работе только один пост")
+    with db.tx() as c:
+        for i, a in enumerate(keys):
+            for b in keys[i + 1:]:
+                c.execute("DELETE FROM cal_rules WHERE (a=? AND b=?) OR (a=? AND b=?)", (a, b, b, a))
+                c.execute("INSERT INTO cal_rules (a, b, kind) VALUES (?,?,'split')", (a, b))
+        for a in keys:   # ручные объединения с этой работой тоже снимаем
+            c.execute("DELETE FROM cal_rules WHERE kind='join' AND (a=? OR b=?)", (a, a))
+    return len(keys)
+
+
+def decide(a: list, b: list, yes: bool) -> bool:
+    """Ответ на подсказку «Похоже на тот же арт»: объединить или запомнить, что это разные работы."""
+    if yes:
+        merge([*a, *b])
+        return True
+    with db.tx() as c:
+        for x in a:
+            for y in b:
+                c.execute("DELETE FROM cal_rules WHERE (a=? AND b=?) OR (a=? AND b=?)", (x, y, y, x))
+                c.execute("INSERT INTO cal_rules (a, b, kind) VALUES (?,?,'split')", (x, y))
+    return True
+
+
+def _decorate(it: dict, plat: str):
+    it["platform"] = plat
+    it["atoms"] = [it["key"]]
+    it["parts"] = [{"plat": plat, "label": (it["channels"] or [""])[0], "link": it.get("link") or "", "index": it["index"],
+                    "est": it["est"], "views": it["views"], "reactions": it["reactions"], "key": it["key"]}]
+
+
+def _hamming(x, y):
+    return bin(x ^ y).count("1")
+
+
+def _group(atoms: list):
+    """Группы постов-копий: ручные объединения, затем автосклейка (одна публикация или похожее превью за 36 ч)."""
+    joins, splits = _rules()
+    by_key = {a["key"]: a for a in atoms}
+    parent = {k: k for k in by_key}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for a, b in joins:
+        if a in by_key and b in by_key:
+            parent[find(a)] = find(b)
+    bucket: dict = {}
+    for a in atoms:
+        bucket.setdefault(find(a["key"]), []).append(a)
+    glist = sorted(bucket.values(), key=lambda g: min(x["ts"] for x in g))
+
+    def blocked(g1, g2):
+        return any(frozenset((x["key"], y["key"])) in splits for x in g1 for y in g2)
+
+    def same(g1, g2):
+        for x in g1:
+            for y in g2:
+                if abs(x["ts"] - y["ts"]) > 36 * 3600:
+                    continue
+                if x["pub_id"] and x["pub_id"] == y["pub_id"]:
+                    return True
+                if x["_h"] is not None and y["_h"] is not None and _hamming(x["_h"], y["_h"]) <= 6:
+                    return True
+        return False
+    out: list = []
+    for g in glist:
+        twin = next((o for o in out[-12:] if not blocked(g, o) and same(g, o)), None)
+        if twin is None:
+            out.append(list(g))
+        else:
+            twin.extend(g)
+    return out, splits
+
+
+def _suggest(groups: list, splits: set, limit: int = 5) -> list:
+    """Пары работ на разных площадках, похожие по превью, но не склеенные сами: спросим у человека."""
+    res = []
+    plats = [{p["plat"] for x in g for p in x["parts"]} for g in groups]
+    for i, g1 in enumerate(groups):
+        for j in range(i + 1, len(groups)):
+            g2 = groups[j]
+            if plats[i] & plats[j]:
+                continue
+            if any(frozenset((x["key"], y["key"])) in splits for x in g1 for y in g2):
+                continue
+            dt = min(abs(x["ts"] - y["ts"]) for x in g1 for y in g2)
+            if dt > 7 * 86400:
+                continue
+            bits = min((_hamming(x["_h"], y["_h"]) for x in g1 for y in g2 if x["_h"] is not None and y["_h"] is not None), default=None)
+            if bits is None or bits > 14:
+                continue
+            res.append((bits + dt / 86400 / 2, bits, dt, g1, g2))
+    res.sort(key=lambda r: r[0])
+    return [r[1:] for r in res[:limit]]
+
+
+def _collapse(g: list) -> dict:
+    """Группа постов → одна работа в календаре; цифры и превью — от лучшей копии."""
+    main = max(g, key=lambda x: (x["index"] if x["index"] is not None else -1, bool(x["preview"])))
+    first = min(g, key=lambda x: x["ts"])
+    it = {k: v for k, v in main.items() if k != "_h"}
+    it.update(day=first["day"], time=first["time"], ts=first["ts"])
+    it["channels"] = sorted({c for x in g for c in x["channels"]})
+    it["pub_id"] = next((x["pub_id"] for x in g if x["pub_id"]), None)
+    it["app"] = any(x["app"] for x in g)
+    it["post_id"] = main["post_id"] or next((x["post_id"] for x in g if x["post_id"]), None)
+    for k in ("preview", "text", "link"):
+        it[k] = main[k] or next((x[k] for x in g if x[k]), main[k])
+    it["parts"] = [p for x in sorted(g, key=lambda x: x["ts"]) for p in x["parts"]]
+    it["atoms"] = [x["key"] for x in sorted(g, key=lambda x: x["ts"])]
+    joined = {frozenset(j) for j in _rules()[0]}
+    it["manual"] = any(frozenset((a, b)) in joined for a in it["atoms"] for b in it["atoms"] if a != b)
+    return it
+
+
+
 def month(ym: str) -> dict:
     y, m = (int(x) for x in ym.split("-"))
     tz = datetime.now().astimezone().tzinfo
@@ -110,33 +273,28 @@ def month(ym: str) -> dict:
                 "n_media": int(r["n_media"] or 1), "age_h": round(float(r.get("age_h", 0) or 0), 1),
                 "kind": _kind(r.get("media_type")),
             })
-    # склеиваем копии одного арта: по публикации из Crosspost или по похожему превью в пределах суток
-    merged: list = []
-    for it in sorted(items, key=lambda x: x["ts"]):
-        h = _ahash(it["preview"])
-        twin = None
-        for o in merged[-12:]:
-            if abs(o["ts"] - it["ts"]) > 36 * 3600:
-                continue
-            if it["pub_id"] and o["pub_id"] == it["pub_id"]:
-                twin = o
-                break
-            oh = o.get("_h")
-            if h is not None and oh is not None and bin(h ^ oh).count("1") <= 6:
-                twin = o
-                break
-        if twin is None:
-            it["_h"] = h
-            merged.append(it)
-            continue
-        twin["channels"] = sorted(set(twin["channels"] + it["channels"]))
-        twin["pub_id"] = twin["pub_id"] or it["pub_id"]
-        twin["app"] = twin["app"] or it["app"]
-        if (it["index"] or 0) > (twin["index"] or 0):   # лучшая из копий — главная
-            for k in ("index", "est", "level", "views", "reactions", "forwards", "proj", "link", "post_id", "preview", "kind", "n_media"):
-                twin[k] = it[k]
-    for it in merged:
-        it.pop("_h", None)
+    for it in items:
+        _decorate(it, "telegram")
+    try:   # посты, вышедшие в обход Crosspost (ВК, Bluesky)
+        from app.insights import ext_posts
+        for it in ext_posts.items_between(t0.timestamp(), t1.timestamp(), tz):
+            _decorate(it, it["ext"])
+            items.append(it)
+    except Exception:   # noqa: BLE001 — внешние посты не должны ломать календарь
+        pass
+    # склеиваем копии одного арта: ручные объединения → по публикации Crosspost/похожему превью, кроме разъединённых
+    for it in items:
+        it["_h"] = _ahash(it["preview"])
+    groups, splits = _group(items)
+    suggest_raw = _suggest(groups, splits)
+    merged = []
+    by_group = {}
+    for g in groups:
+        it = _collapse(g)
+        by_group[id(g)] = it
+        merged.append(it)
+    suggestions = [{"a": [x["key"] for x in g1], "b": [x["key"] for x in g2], "ka": by_group[id(g1)]["key"], "kb": by_group[id(g2)]["key"],
+                    "bits": bits, "days": round(dt / 86400, 1)} for bits, dt, g1, g2 in suggest_raw]
 
     # публикации из Crosspost без постов в статистике (например, только Discord/ВК)
     seen = {it["pub_id"] for it in merged if it["pub_id"]}
@@ -182,7 +340,7 @@ def month(ym: str) -> dict:
     return {
         "ym": ym, "start": grid_start.isoformat(), "end": grid_end.isoformat(),
         "today": datetime.now(tz).date().isoformat(),
-        "days": days, "sched": sched, "leaders": leaders,
+        "days": days, "sched": sched, "leaders": leaders, "suggestions": suggestions,
         "summary": {"posts": len(in_month), "hits": sum(1 for i in scored if i["index"] >= __import__("app.insights.norms", fromlist=["x"]).levels()["hit"]),
                     "typical": round(geo, 2) if geo else None, "est": sum(1 for i in in_month if i["est"])},
     }

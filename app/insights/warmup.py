@@ -68,7 +68,8 @@ def calendar_key():
     from app.publish import schedule  # noqa: F401  (таблица scheduled)
     p = db.query("SELECT COUNT(*) AS n, MAX(id) AS m FROM publications")[0]
     s = db.query("SELECT COUNT(*) AS n, MAX(run_at) AS r, GROUP_CONCAT(state) AS st FROM scheduled WHERE state IN ('pending','running','missed')")[0]
-    return (stats._data_key(), p["n"], p["m"], s["n"], s["r"], s["st"])
+    from app.insights import calendar as K, ext_posts
+    return (stats._data_key(), p["n"], p["m"], s["n"], s["r"], s["st"], ext_posts.data_key(), K.rules_key())
 
 
 _seen: dict = {}   # имя экрана → (грубый ключ, когда пересчитан)

@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SKIP_DIRS = {"__pycache__", ".git", "dist", "Файлы", "data", "lpub", "venv", ".venv", "tests", ".update-backup"}
+SKIP_DIRS = {"__pycache__", ".git", ".github", "dist", "Файлы", "data", "lpub", "venv", ".venv", "tests", ".update-backup"}
 SKIP_FILES = {"config.toml", "tokens.json", ".write-test"}
 SKIP_SUFFIX = {".pyc", ".zip", ".log", ".session", ".db"}
 

@@ -13,11 +13,11 @@
     "post_prep", "post_preupload", "post_scheduled", "post_state", "post_tags", "pub_da_galleries", "pub_da_state", "pub_settings",
     "pub_stats", "pub_stats_summary", "pub_tg_known", "pub_tg_topics", "storage_info", "tag_cats", "tag_search", "tagger_status",
     "tg_channels", "tg_status", "tg_status_quick", "trends_forecast", "trends_overview", "worker_status", "stats_overview", "open_url",
-    "news", "news_read", "modules", "icon_status"]);
+    "news", "news_read", "modules"]);
   const OK_TEXT = {
     e6_check_now: "Сверка тегов запущена", pub_e6_site: "Сайт для загрузки переключён", e6_forget: "Забыто", e6_never: "Больше не буду предлагать этот тег",
     e6db_update: "Скачивание базы тегов запущено", hide_tag: "Тег скрыт из трендов", insights_tag_history: "Разметка истории запущена",
-    outputs_set: "Сохранено", media_install: "Установка ffmpeg запущена", modules_set: "Сохранено", icon_pick: "Значок поставлен. Для ярлыка — создайте его заново", icon_set: "Значок поставлен", icon_reset: "Вернула значок Crosspost", create_shortcuts: "Ярлыки созданы: на рабочем столе и в меню «Пуск»", modules_set_many: "Готово", tagger_unload: "Теггер выгружен — память освобождена", tagger_check: "Проверено", tagger_cpu_ok: "Сохранено", perf_report: "Отчёт сохранён — папка открыта",
+    outputs_set: "Сохранено", media_install: "Установка ffmpeg запущена", modules_set: "Сохранено", create_shortcuts: "Ярлыки созданы: на рабочем столе и в меню «Пуск»", modules_set_many: "Готово", tagger_unload: "Теггер выгружен — память освобождена", tagger_check: "Проверено", tagger_cpu_ok: "Сохранено", perf_report: "Отчёт сохранён — папка открыта",
     tg_forget_proxy: "Прокси убран из запаса", open_debug_folder: "Папка открыта", open_light_folder: "Папка открыта", post_publish: "Публикация началась",
     post_remove_file: "Файл убран из поста", post_retry: "Повторяю неудачные", post_schedule: "Пост запланирован",
     post_schedule_cancel: "Запланированный пост отменён", post_schedule_move: "Время перенесено", post_schedule_now: "Публикую сейчас",
@@ -878,7 +878,6 @@
   }
   function appSettingsHtml() {
     const w = S.worker;
-    if (S.iconCustom === undefined) { S.iconCustom = false; api("icon_status").then((r) => { S.iconCustom = !!r.custom; if (S.view === "settings") render(); }).catch(() => {}); }
     if (!S.storage && !S.storageLoading) { S.storageLoading = true; api("storage_info").then((r) => { S.storage = r; S.storageLoading = false; if (S.view === "settings") render(); }).catch(() => { S.storageLoading = false; }); }
     return `<section class="card setc"><div class="head"><h2>Фоновая отправка ${hint("Отдельный маленький процесс со значком у часов. Публикует запланированные посты и снимает цифры свежих постов, даже когда окно Crosspost закрыто.")}</h2>
           ${w ? `<span class="badge ${w.running ? "ok" : "warn"}" style="padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600">${w.running ? "работает" : "выключена"}</span>` : ""}</div>
@@ -887,11 +886,9 @@
           <label class="tgl"><input type="checkbox" data-pa="wk-auto" ${w.autostart ? "checked" : ""} ${w.platform === "win32" ? "" : "disabled"}><span>Запускать вместе с Windows</span></label>` : `<p class="muted">Проверяю…</p>`}</section>
       ${updHtml()}
       <section class="card setc"><div class="head"><h2>Значок и ярлык ${hint("Ярлык запускает Crosspost напрямую, без файла Crosspost.bat — поэтому Windows не показывает окно «Не удаётся проверить издателя», а в панели задач виден значок Crosspost. Закрепить на панели задач: правой кнопкой по ярлыку → «Закрепить на панели задач».")}</h2></div>
-        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap"><img src="/appicon.ico?v=${S.iconV || 0}" alt="Значок приложения" width="40" height="40" style="border-radius:10px">
-          <button class="btn" data-action="icon-pick">Выбрать свой значок…</button>
-          ${S.iconCustom ? `<button class="btn ghost" data-action="icon-reset">Вернуть значок Crosspost</button>` : ""}
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap"><img src="/appicon.ico" alt="Значок приложения" width="40" height="40" style="border-radius:10px">
           <button class="btn" data-action="mk-shortcut">Создать ярлык на рабочем столе и в «Пуске»</button></div>
-        <p class="muted small" style="margin:0">Свой значок — файл .ico или картинка (png, jpg), лучше квадратная от 256×256. Он ставится окну, панели задач и значку фоновой отправки. Если ярлык уже создан — создайте его заново, чтобы и у ярлыка был новый значок.</p></section>
+        <p class="muted small" style="margin:0">Если значок у ярлыка старый — создайте ярлык заново.</p></section>
       <section class="card setc"><div class="head"><h2>Оформление</h2></div>
         <div class="field" style="max-width:260px"><label for="themesel">Тема</label><select id="themesel"><option value="dark" ${store.get("theme", "dark") !== "light" ? "selected" : ""}>Тёмная</option><option value="light" ${store.get("theme", "dark") === "light" ? "selected" : ""}>Светлая</option></select></div></section>
       <section class="card setc"><div class="head"><h2>Место на диске ${hint("Файлы, добавленные в пост, копируются в папку приложения — поэтому перемещение исходников ничего не ломает. Тяжёлые копии удаляются через 7 дней после публикации; миниатюры и JPEG-превью остаются.")}</h2></div>
@@ -1205,7 +1202,7 @@
         ${st.top.length ? `<div class="artgrid">${st.top.slice(0, 8).map((p, i) => art(p, i, true)).join("")}</div>` : `<p class="muted">Нет постов старше недели за этот период.</p>`}
       </section>
       ${st.week ? weekHtml(st) : `<section class="card"><div class="head"><h2>Когда постить ${hint("Средний индекс постов в каждом окне по 3 часа. Окна, где меньше 2 постов, — серые; где постов мало, цвет приглушён поправкой, чтобы одна удача не выглядела закономерностью.")}</h2><span class="muted small">время ${esc(st.tz)}</span></div>
-        <div class="heatwrap">${heatHtml(st.heat)}
+        <div class="heatwrap">${heatHtml(st.heat, st.coverage)}
           <div class="top3"><h3>Лучшие окна</h3>
             ${st.best_times.length ? st.best_times.map((b, i) => `<div class="slot"><span class="n">${i + 1}</span><span><b>${esc(b.label)}</b><br><span class="muted small">${b.n} ${plural(b.n, "пост", "поста", "постов")}</span></span><span class="v">${mult(b.index)}</span></div>`).join("")
               : `<p class="muted small">Пока мало постов, чтобы уверенно назвать лучшее время.</p>`}</div></div>
@@ -1292,7 +1289,7 @@
       </section>`;
   }
   const RAMP = ["var(--h0)", "var(--h1)", "var(--h2)", "var(--h3)", "var(--h4)", "var(--h5)"];
-  function heatHtml(heat) {
+  function heatHtml(heat, cov) {
     const vals = heat.flatMap((r) => r.cells.map((c) => c.v)).filter((v) => v !== null);
     // шкала не уже ×0.7…×1.4, чтобы разница в 5% не выглядела как «тёмное против светлого»
     const lo = Math.min(...vals, 1 / 1.4), hi = Math.max(...vals, 1.4);
@@ -1300,9 +1297,11 @@
     const hours = ["00", "03", "06", "09", "12", "15", "18", "21"];
     return `<div style="display:flex;flex-direction:column;gap:10px"><div class="heat" role="img" aria-label="Тепловая карта: день недели и время"><span></span>${hours.map((x) => `<span class="hh">${x}</span>`).join("")}
       ${heat.map((r) => `<span class="hd">${r.day}</span>${r.cells.map((c, i) => c.v === null
-        ? `<span class="hc empty" data-tip="${r.day} ${hours[i]}:00 — ${c.n ? c.n + " пост, мало для вывода" : "не постили"}"></span>`
+        ? `<span class="hc empty ${c.n ? "one" : ""}" data-tip="${r.day} ${hours[i]}:00 — ${c.n ? c.n + " пост, мало для вывода" : "не постили"}"></span>`
         : `<span class="hc" style="background:${color(c.v)}" data-tip="${r.day}, ${hours[i]}:00–${String((i * 3 + 3) % 24).padStart(2, "0")}:00 — ${mult(c.v)} (без поправки ${mult(c.raw)}), ${c.n} ${plural(c.n, "пост", "поста", "постов")}"></span>`).join("")}`).join("")}</div>
-      <div class="hramp"><span>хуже</span>${RAMP.map((c) => `<i style="background:${c}"></i>`).join("")}<span>лучше</span></div></div>`;
+      <div class="hramp"><span>хуже</span>${RAMP.map((c) => `<i style="background:${c}"></i>`).join("")}<span>лучше</span></div>
+      ${cov ? `<div class="hcov"><b>За всю историю изучено ${cov.solid} из ${cov.cells} окон</b> (3 и больше постов). Мало данных — ${cov.weak}, без данных — ${cov.none}.
+        <span class="muted">Карта выше — только выбранный период, поэтому серых окон на ней может быть больше. Серое с точкой — один пост, пустое — ни одного.</span></div>` : ""}</div>`;
   }
 
   const SOON = {};
@@ -1329,17 +1328,6 @@
       try { if (wkb.dataset.wk === "start") S.worker = await api("worker_start"); else { S.worker = await api("worker_stop"); setTimeout(async () => { await loadWorker(); render(); }, 16000); } }
       catch (err) { alert(err.message); }
       paintWorker(); render(); return;
-    }
-    const ic = e.target.closest('[data-action="icon-pick"],[data-action="icon-reset"]');
-    if (ic) {
-      try {
-        const r = await api(ic.dataset.action === "icon-pick" ? "icon_pick" : "icon_reset");
-        if (r && r.cancelled) return;
-        S.iconCustom = !!(r && r.custom); S.iconV = Date.now();
-        const fav = document.querySelector('link[rel="icon"]'); if (fav) fav.href = "/appicon.ico?v=" + S.iconV;
-        render();
-      } catch (err) { /* ошибка уже показана */ }
-      return;
     }
     const pfb = e.target.closest('[data-action="perf-refresh"],[data-action="perf-report"],[data-action="perf-kill"],[data-action="perf-tagger"]');
     if (pfb) {

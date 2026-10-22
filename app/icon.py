@@ -1,7 +1,7 @@
 """Значок Crosspost: файл .ico для окна и панели задач Windows, картинка для значка в трее.
 
-Рисуется кодом (без готовых картинок): скруглённый квадрат с переходом цвета, как логотип в шапке приложения,
-и белый «самолётик» отправки. Файл .ico создаётся один раз в папке приложения (app/web/crosspost.ico).
+Основной значок — готовый файл app/web/crosspost.ico из поставки. Если его нет, рисуется кодом:
+скруглённый квадрат с переходом цвета и белый «самолётик» (и записывается в тот же файл).
 """
 from pathlib import Path
 
@@ -10,64 +10,25 @@ SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 C1, C2 = (91, 103, 240), (176, 108, 255)   # как .logo в style.css: #5B67F0 → #B06CFF
 
 
-def custom_path() -> Path:
-    """Свой значок пользователя (выбирается в «Настройки» → «Общие»). Лежит в папке данных — обновления его не трогают."""
-    from app.paths import data_dir
-    return data_dir() / "icon.ico"
-
-
 def active_ico() -> Path:
-    """Какой значок ставить: свой, если выбран, иначе значок Crosspost."""
-    c = custom_path()
-    return c if c.exists() else ensure_ico()
-
-
-def set_custom(src: str) -> Path:
-    """Сделать свой значок из файла: .ico или картинки (png, jpg, webp…). Не квадратную картинку дополняем
-    прозрачными полями, чтобы значок не сплющился."""
-    from PIL import Image, ImageOps
-    p = Path(src)
-    if not p.is_file():
-        raise ValueError("Файл не найден")
+    """Значок приложения — файл из поставки (старый «свой значок» из папки данных больше не используется)."""
     try:
-        with Image.open(p) as im:
-            if getattr(im, "n_frames", 1) > 1 or p.suffix.lower() == ".ico":   # в .ico — берём самый крупный размер
-                best = None
-                for i in range(getattr(im, "n_frames", 1)):
-                    im.seek(i)
-                    if best is None or im.size[0] * im.size[1] > best.size[0] * best.size[1]:
-                        best = im.copy()
-                im = best
-            im = ImageOps.exif_transpose(im).convert("RGBA")
-    except Exception as e:  # noqa: BLE001
-        raise ValueError(f"Не получилось открыть картинку: {e}")
-    if min(im.size) < 16:
-        raise ValueError("Картинка слишком маленькая — нужна хотя бы 64×64, лучше 256×256")
-    side = max(im.size)
-    sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
-    sq.paste(im, ((side - im.size[0]) // 2, (side - im.size[1]) // 2))
-    sq = sq.resize((256, 256), Image.LANCZOS)
-    out = custom_path()
-    tmp = out.with_name("icon.ico.tmp")
-    sq.save(tmp, format="ICO", sizes=[(s, s) for s in SIZES])
-    tmp.replace(out)
-    return out
-
-
-def reset_custom():
-    custom_path().unlink(missing_ok=True)
+        from app.paths import data_dir
+        (data_dir() / "icon.ico").unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001
+        pass
+    return ensure_ico()
 
 
 def image(size: int = 256):
-    """Значок нужного размера: свой, если выбран; иначе рисуем значок Crosspost (вчетверо крупнее и уменьшаем — края гладкие)."""
+    """Значок нужного размера: из файла поставки; если его нет — рисуем (вчетверо крупнее и уменьшаем — края гладкие)."""
     from PIL import Image, ImageDraw
-    try:
-        c = custom_path()
-        if c.exists():
-            with Image.open(c) as im:
-                big = im.ico.getimage(max(im.ico.sizes())) if hasattr(im, "ico") else im   # самый крупный размер из .ico
+    try:   # готовый значок из поставки (app/web/crosspost.ico) — главнее нарисованного
+        if ICO.exists():
+            with Image.open(ICO) as im:
+                big = im.ico.getimage(max(im.ico.sizes())) if hasattr(im, "ico") else im
                 return big.convert("RGBA").resize((size, size), Image.LANCZOS)
-    except Exception:  # noqa: BLE001 — свой значок испорчен — рисуем стандартный
+    except Exception:  # noqa: BLE001
         pass
     S = size * 4
     grad = Image.new("RGBA", (S, S))
