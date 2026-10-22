@@ -1007,3 +1007,7 @@ body.working { cursor: progress; }
 .updbtn + .wkind { margin-left: 8px; }
 .setc .notes { white-space: pre-wrap; max-height: 180px; overflow: auto; padding: 10px 12px; border-radius: 8px; background: var(--card-2); border: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
 #updbtn[hidden] { display: none; }
+.updbox { position: fixed; z-index: 61; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto;
+  display: flex; flex-direction: column; gap: 4px; padding: 22px 24px; border-radius: 14px; background: var(--card); border: 1px solid var(--line-strong); box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
+.updbox h2 { margin: 0 0 6px; font-size: 18px; } .updbox p { margin: 6px 0; } .updbox .notes { white-space: pre-wrap; max-height: 200px; overflow: auto; padding: 10px 12px; border-radius: 8px; background: var(--card-2); border: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
+.updbox .cardfoot { margin-top: 12px; flex-wrap: wrap; }

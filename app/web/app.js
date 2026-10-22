@@ -243,11 +243,11 @@
   // ---------------- данные ----------------
   async function loadInfo() {
     S.info = await api("info");
-    navBadge(); updBadge();
+    navBadge(); updBadge(); updModal();
     const running = Object.values(S.info.trends).some((t) => t.job && t.job.state === "running") ||
       (S.info.tg_job && S.info.tg_job.state === "running") ||
       (S.info.pub_job && S.info.pub_job.state === "running") || (S.info.vk_job && S.info.vk_job.state === "running") ||
-      (S.info.ins_job && S.info.ins_job.state === "running");
+      (S.info.ins_job && S.info.ins_job.state === "running") || (S.info.update && S.info.update.job && S.info.update.job.state === "running");
     if (running && !poll) poll = setInterval(tick, 1000);
     if (!running && poll) { clearInterval(poll); poll = null; }
   }
@@ -335,10 +335,59 @@
     el.querySelector("[data-pct]").textContent = pct;
     el.querySelector("[data-msg]").textContent = job.message || "";
   }
+  // ----- окно «вышла новая версия» при запуске: установить / позже / пропустить -----
+  function updModal() {
+    const u = S.info && S.info.update, old = document.getElementById("updmodal");
+    const j = u && u.job, rd = u && u.ready && u.latest && u.ready.version === u.latest.version;
+    if (u && u.show && !S.updPrompted && !(j && j.state === "running")) { S.updPrompted = true; S.updOpen = true; }   // один раз за запуск
+    if (!u || !u.latest || !(S.updAuto || S.updOpen) || (!u.show && !S.updAuto)) { if (old) old.remove(); return; }
+    if (rd && S.updAuto && !S.updApplying && u.can) {   // скачано и проверено — человек уже нажал «Установить»
+      S.updApplying = true;
+      api("update_apply").catch((err) => { S.updApplying = false; S.updAuto = false; toast(err.message, "error"); updModal(); });
+    }
+    const lt = u.latest, e = window.CP.esc;
+    let body, foot;
+    if (S.updApplying) { body = `<p>Устанавливаю версию ${e(lt.version)}… Crosspost закроется и сам откроется заново — это займёт около минуты.</p>`; foot = ""; }
+    else if (j && j.state === "running") { body = `<div class="progress thin"><div style="width:${Math.round((j.progress || 0) * 100)}%"></div></div><p class="muted small" style="margin:8px 0 0">${e(j.message || "Скачиваю…")}</p>`; foot = ""; }
+    else {
+      const err = S.updAuto && j && j.state === "error" ? `<p class="err">${e(j.error)}</p>` : "";
+      body = `<p>У вас версия ${e(u.current)}, вышла ${e(lt.version)}${lt.date ? ` (${e(lt.date)})` : ""}.</p>${lt.notes ? `<div class="notes">${e(lt.notes)}</div>` : ""}${err}
+        <p class="muted small" style="margin:10px 0 0">${u.can ? "Установка займёт около минуты: Crosspost закроется и откроется заново. Данные и ключи не затрагиваются, прежняя версия сохраняется на случай отката." : "Обновление по кнопке здесь недоступно: " + e(u.why) + "."}</p>`;
+      foot = `${u.can ? `<button class="btn primary" data-upd="install">Установить сейчас</button>` : `<button class="btn primary" data-upd="page">Страница выпуска</button>`}
+        <button class="btn" data-upd="later">Напомнить позже</button><button class="btn ghost" data-upd="skip">Пропустить эту версию</button>`;
+    }
+    const html = `<div class="backdrop" style="z-index:60"></div><div class="updbox" role="dialog" aria-modal="true" aria-label="Вышла новая версия"><h2>Вышла новая версия Crosspost</h2>${body}${foot ? `<div class="cardfoot">${foot}</div>` : ""}</div>`;
+    if (old) { if (old.dataset.sig === html) return; old.innerHTML = html; old.dataset.sig = html; return; }
+    const el = document.createElement("div"); el.id = "updmodal"; el.dataset.sig = html; el.innerHTML = html; document.body.appendChild(el);
+    el.addEventListener("click", async (ev) => {
+      const b = ev.target.closest("[data-upd]"); if (!b) return;
+      const a = b.dataset.upd;
+      try {
+        if (a === "later") { S.updOpen = false; S.updAuto = false; updModal(); }
+        else if (a === "page") await api("update_open");
+        else if (a === "skip") { S.updOpen = false; S.info.update = await api("update_skip", { version: S.info.update.latest.version }); updBadge(); updModal(); if (S.view === "settings") render(); }
+        else if (a === "install") { S.updAuto = true; await api("update_prepare"); await loadInfo(); }
+      } catch (err) { S.updAuto = false; toast(err.message, "error"); updModal(); }
+    });
+  }
   function updBadge() {
     const b = document.getElementById("updbtn"), u = S.info && S.info.update; if (!b) return;
     b.hidden = !(u && u.show);
     if (u && u.show) b.querySelector(".wt").textContent = "Вышла версия " + u.latest.version;
+  }
+  // кнопки обновления: скачать → установить и перезапустить
+  function updAct(u) {
+    const j = u.job, rd = u.ready && u.ready.version === (u.latest || {}).version ? u.ready : null;
+    const skip = u.show ? `<button class="btn ghost" data-action="upd-skip">Пропустить эту версию</button>` : `<span class="muted small">Уведомление скрыто — версия пропущена.</span>`;
+    const page = `<button class="btn ghost" data-action="upd-open">Страница выпуска</button>`;
+    if (j && j.state === "running") return `<div class="progress thin"><div style="width:${Math.round((j.progress || 0) * 100)}%"></div></div><p class="muted small" style="margin:0">${esc(j.message || "Скачиваю…")}</p>`;
+    const err = j && j.state === "error" ? `<p class="err">${esc(j.error)}</p>` : "";
+    if (S.updApplying) return `<p>Устанавливаю… Окно закроется и откроется заново — это займёт около минуты.</p>`;
+    if (rd) return `${err}<div class="callout"><p><b>Версия ${esc(rd.version)} скачана и проверена.</b> При установке Crosspost закроется на минуту и откроется заново. Фоновая отправка остановится и включится снова. Ваши данные, ключи и папка «Готовые файлы» не затрагиваются; прежняя версия сохраняется на случай отката.</p></div>
+      <div class="cardfoot"><button class="btn primary" data-action="upd-apply">Установить и перезапустить</button>${page}${skip}</div>`;
+    if (!u.can) return `<p class="muted">Обновление по кнопке здесь недоступно: ${esc(u.why)}.</p><div class="cardfoot">${page}${skip}</div>`;
+    return `${err}<div class="cardfoot"><button class="btn primary" data-action="upd-get">Скачать обновление</button>${page}${skip}</div>
+      <p class="muted small" style="margin:0">Файл качается с GitHub и проверяется по контрольной сумме. Сначала только скачивание — ничего не меняется, пока вы не нажмёте «Установить».</p>`;
   }
   function updHtml() {
     const u = S.info.update, hint = window.CP.hint;
@@ -347,9 +396,7 @@
     let st;
     if (u.newer) st = `<p><b>Вышла версия ${esc(lt.version)}</b>${lt.date ? ` <span class="muted">от ${esc(lt.date)}</span>` : ""}. У вас ${esc(u.current)}.</p>
       ${lt.notes ? `<div class="notes">${esc(lt.notes)}</div>` : ""}
-      <div class="cardfoot"><button class="btn primary" data-action="upd-open">Открыть страницу выпуска</button>
-        ${u.show ? `<button class="btn ghost" data-action="upd-skip">Пропустить эту версию</button>` : `<span class="muted small">Уведомление скрыто — версия пропущена.</span>`}</div>
-      <p class="muted small" style="margin:0">Скачайте архив со страницы выпуска и распакуйте поверх программы: ваши данные хранятся отдельно и не затронутся.</p>`;
+      ${updAct(u)}`;
     else if (u.error && !lt) st = `<p class="muted">Не удалось проверить: ${esc(u.error)}.</p>`;
     else st = `<p class="muted">У вас последняя версия (${esc(u.current)}).${u.error ? ` Последняя проверка не удалась: ${esc(u.error)}.` : ""}</p>`;
     return `<section class="card setc"><div class="head"><h2>Обновления ${hint("Программа один раз при запуске спрашивает GitHub, вышла ли новая версия, и только сообщает об этом — сама ничего не скачивает и не ставит. Проверку можно отключить. Передаётся только запрос на страницу выпусков, без ваших данных.")}</h2></div>
@@ -1415,9 +1462,14 @@
       try {
         if (act === "upd-check") { S.updBusy = true; render(); S.info.update = await api("update_check"); S.updBusy = false; }
         else if (act === "upd-open") await api("update_open");
+        else if (act === "upd-get") { await api("update_prepare"); await loadInfo(); }
+        else if (act === "upd-apply") {
+          if (!confirm("Установить обновление? Crosspost закроется и сам откроется заново. Несохранённый черновик поста может пропасть.")) return;
+          S.updApplying = true; render(); await api("update_apply"); return;
+        }
         else if (act === "upd-skip") S.info.update = await api("update_skip", { version: (S.info.update.latest || {}).version });
         else if (act === "upd-auto") S.info.update = await api("update_set", { check: a.checked });
-      } catch (err) { S.updBusy = false; }
+      } catch (err) { S.updBusy = false; S.updApplying = false; toast(err.message, "error"); }
       updBadge(); render(); return;
     }
     const tgAct = { "tg-keys": 1, "tg-phone": 1, "tg-code": 1, "tg-password": 1, "tg-resend": 1, "tg-rekeys": 1, "tg-logout": 1, "tg-refresh-ch": 1, "tg-sync": 1 };
@@ -1514,6 +1566,8 @@
     pollActs(); loadNews(false); setInterval(() => loadNews(false), 60000);
     try { await loadInfo(); } catch (e) { $main.innerHTML = `<p class="err">Не удалось связаться с приложением: ${esc(e.message)}</p>`; return; }
     if (applyModules()) render();
+    const ur = S.info.update && S.info.update.result;
+    if (ur) { toast(ur.ok ? `Crosspost обновлён до версии ${ur.version}` : `Обновление не удалось, осталась прежняя версия: ${ur.error}`, ur.ok ? "ok" : "error"); api("update_ack").catch(() => {}); }
     if (S.view === "trends") await loadOverview();
     if (S.view === "platforms") { S.view = "settings"; store.set("view", S.view); }   // раздел «Площадки» теперь внутри «Настроек»
     if (S.view === "settings") await loadTg(false);

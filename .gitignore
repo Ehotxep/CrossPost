@@ -13,3 +13,5 @@ __pycache__/
 venv/
 *.zip
 *.log
+dist/
+.update-backup/

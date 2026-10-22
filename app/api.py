@@ -36,8 +36,10 @@ class Api:
     def _update_info(self):
         try:
             from app import updates
+            from app import selfupdate
             updates.check_async()
-            return updates.status()
+            ok, why = selfupdate.can_update()
+            return dict(updates.status(), job=self.jobs.get("app:update"), ready=selfupdate.ready(), can=ok, why=why, result=selfupdate.result())
         except Exception:  # noqa: BLE001
             return None
 
@@ -135,7 +137,7 @@ class Api:
                   "tagger:run": ("Подбор тегов", "post"), "publish": ("Публикация", "post"),
                   "tg:sync": ("Загрузка из Telegram", "settings:import"), "insights:tag": ("Разметка истории теггером", "stats"),
                   "media:install": ("Установка ffmpeg", "settings:media"), "media:edit": ("Правка видео", "post"), "media:editprev": ("Просмотр петли", "post"), "vk:auth": ("ВКонтакте", "settings:vk"),
-                  "vk:stats": ("Статистика ВК", "settings:collect")}
+                  "vk:stats": ("Статистика ВК", "settings:collect"), "app:update": ("Загрузка обновления", "settings:app")}
 
     def news(self):
         """Новости по свежим артам; если давно не смотрели — посмотрим в фоне (ответ — сразу, из сохранённого)."""
@@ -226,6 +228,39 @@ class Api:
     def update_skip(self, version: str = ""):
         from app import updates
         return updates.skip(version)
+
+    def update_prepare(self):
+        """Скачать и проверить новую версию (ничего не меняя). Дальше — update_apply."""
+        from app import selfupdate
+        if not self.jobs.start("app:update", selfupdate.prepare):
+            raise ValueError("Обновление уже скачивается")
+        return True
+
+    def update_apply(self):
+        """Установить скачанную версию: остановить фоновую отправку, заменить файлы отдельным процессом, перезапуститься."""
+        from app import selfupdate
+        busy = [self.JOB_LABELS.get(k, (k,))[0] for k, j in self.jobs.all().items() if j["state"] == "running" and k != "app:update"]
+        if busy:
+            raise ValueError("Сейчас идёт: " + ", ".join(busy) + ". Дождитесь окончания — программа закроется на время обновления.")
+        res = selfupdate.apply()
+
+        def close():
+            import os as _os
+            import time as _t
+            _t.sleep(1.0)
+            try:
+                if self.window is not None:
+                    self.window.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+            _t.sleep(4.0)
+            _os._exit(0)   # браузерный режим или окно не закрылось: замена ждёт завершения процесса
+        threading.Thread(target=close, daemon=True, name="update-close").start()
+        return res
+
+    def update_ack(self):
+        from app import selfupdate
+        return selfupdate.result(ack=True)
 
     def update_open(self):
         from app import updates
