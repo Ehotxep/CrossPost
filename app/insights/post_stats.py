@@ -259,8 +259,16 @@ def for_post(post_id: int) -> dict:
             "link": p["link"], "chat_id": p["chat_id"], "message_ids": ids}
     curve = M.growth_curve()
     st = tg_stats(dest, curve)
-    return {"id": None, "post_id": p["id"], "title": (p["text"] or "").split("\n")[0][:80], "created": p["date_utc"], "rating": None,
+    first = (p["text"] or "").strip().split("\n")[0][:80]
+    kind = {"video": "Видео", "gif": "GIF", "animation": "GIF", "photo": "Фото", "document": "Файл", "text": "Текст"}.get(str(p["media_type"] or ""), "Пост")
+    when = ""
+    try:
+        when = datetime.fromisoformat(str(p["date_utc"]).replace("Z", "+00:00")).astimezone().strftime("%d.%m %H:%M")
+    except (ValueError, TypeError):
+        pass
+    return {"id": None, "post_id": p["id"], "title": first or f"{kind} · {when}".strip(" ·"), "created": p["date_utc"], "rating": None,
             "files": [], "preview": p["preview"], "curve": curve, "tracking": _last_track["note"],
+            "media": p["media_type"] or "", "text": (p["text"] or "").strip()[:300], "link": p["link"] or "",
             "dests": [{"key": dest["key"], "name": dest["name"], "platform": "telegram", "state": "done", "link": p["link"] or "",
                        "stats": st, "forecast": None, "verdict": verdict(st, None)}]}
 

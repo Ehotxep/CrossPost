@@ -271,7 +271,7 @@ def month(ym: str) -> dict:
                 "proj": _int(r["proj"]) if est and r["by_views"] else None,
                 "index": idx, "est": est, "level": _level(idx), "by_views": bool(r["by_views"]),
                 "n_media": int(r["n_media"] or 1), "age_h": round(float(r.get("age_h", 0) or 0), 1),
-                "kind": _kind(r.get("media_type")),
+                "kind": _kind(r.get("media_type")), "media": str(r.get("media_type") or ""),
             })
     for it in items:
         _decorate(it, "telegram")

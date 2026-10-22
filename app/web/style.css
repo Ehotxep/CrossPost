@@ -1031,3 +1031,10 @@ body.working { cursor: progress; }
 .sgeq { color: var(--ink-2); font-weight: 700; } .sga { margin-left: auto; display: flex; gap: 6px; }
 .hcparts { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 .hcparts span { display: flex; align-items: center; gap: 6px; } .hcparts b { margin-left: auto; }
+
+/* пост без превью: тип и начало подписи вместо пустого квадрата */
+.ph { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 3px; padding: 4px; text-align: center; overflow: hidden; background: linear-gradient(160deg, var(--card-3), var(--card-2, var(--card-3))); color: var(--ink-2); }
+.ph b { font-size: 11px; letter-spacing: .02em; color: var(--ink); } .ph i { font-style: normal; font-size: 10px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.hthumb, .lt, .cw { position: relative; }
+.drawer .dh .hthumb { display: block; width: 80px; height: 80px; border-radius: 12px; overflow: hidden; flex: none; }
+.cg .ph i { display: none; } .cg.n1 .ph i, .cg.n2 .ph i { display: -webkit-box; }

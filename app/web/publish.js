@@ -725,6 +725,9 @@
     return `<img src="/pthumb/${r.id}?t=${tok()}" alt="" loading="lazy" ${img ? `onerror="this.onerror=null;this.src='/uthumb/${esc(img.id)}?t=${tok()}'"` : `onerror="this.style.visibility='hidden'"`}>`;
   };
   const pubKind = (r) => { const k = new Set((r.files || []).map((f) => f.kind)); return k.has("video") ? "vid" : k.has("gif") ? "gif" : "img"; };
+  // нет превью (в выгрузке не было файла) — вместо пустого квадрата: тип и начало подписи, чтобы пост можно было узнать
+  const phKind = (kind, media) => kind === "vid" ? "▶ Видео" : kind === "gif" ? "GIF" : media === "text" ? "Текст" : media === "document" ? "Файл" : "Фото";
+  const phHtml = (it) => `<span class="ph"><b>${phKind(it.kind, it.media)}</b><i>${esc((it.text || "").trim().slice(0, 48))}</i></span>`;
   const thumbOf = (it) => it.preview ? `/mthumb/${encodeURIComponent(it.preview)}?t=${tok()}` : it.pub_id ? `/pthumb/${it.pub_id}?t=${tok()}` : "";
   const curYm = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
   const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
@@ -805,7 +808,7 @@
       const n = show.length;
       const works = show.map((it, i) => `<button class="cw ${(s.calSel || []).includes(it.key) ? "picked" : ""}" data-cw="${esc(it.key)}" aria-label="${esc(it.text || it.channels.join(", "))}">
           ${platChips(it)}
-          ${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}
+          ${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : phHtml(it)}
           ${C().badges({ kind: it.kind, n: it.n_media, kinds: false, rank: rankOf[it.key], scope: "за месяц", index: it.index, est: it.est, sm: true })}
           ${mk(it.index, it.est)}${i === 3 && more > 0 ? `<span class="more">+${more}</span>` : ""}${it.app ? "" : ""}</button>`).join("");
       const plan = sc.map((x) => `<div class="cs" draggable="true" data-sid="${x.sid}" data-tip="Запланировано: ${esc(x.title || "пост")}, ${x.time}. Перетащите на другой день, чтобы перенести.">
@@ -817,7 +820,7 @@
     h += `<div class="cal"><div class="cdow">${DOWS.map((x) => `<span>${x}</span>`).join("")}</div><div class="cgrid">${cells}</div></div>`;
     if (c.leaders && c.leaders.length) {
       h += `<div class="leaders"><h3>Лидеры месяца</h3><div class="lrow">${c.leaders.map((it, i) => `<button class="ld" data-cw="${esc(it.key)}">
-          <span class="lt">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : ""}${C().badges({ kind: it.kind, n: it.n_media, rank: it.index != null ? i + 1 : 0, scope: "за месяц", index: it.index, est: it.est, sm: true })}${mk(it.index, it.est)}</span>
+          <span class="lt">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : phHtml(it)}${C().badges({ kind: it.kind, n: it.n_media, rank: it.index != null ? i + 1 : 0, scope: "за месяц", index: it.index, est: it.est, sm: true })}${mk(it.index, it.est)}</span>
           <span class="ln"><b>${esc((it.text || "").split("\n")[0].slice(0, 40) || it.channels.join(", "))}</b><span class="muted small">${it.day.slice(8)}.${it.day.slice(5, 7)}, ${esc(it.channels[0] || "")}</span></span></button>`).join("")}</div></div>`;
     }
     return h + `</section>`;
@@ -831,7 +834,7 @@
     return `<div class="toolbar daylist"><h2>${d.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" })}</h2><span class="spacer"></span>
         <button class="btn small ghost" data-pa="cal-day-clear">${ICON.close} Весь месяц</button></div>
       ${list.length ? `<div class="hlist">${list.map((it) => `<div class="hitem" role="button" tabindex="0" data-cw="${esc(it.key)}">
-        <span class="hthumb">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : `<div class="noimg"></div>`}${C().badges({ kind: it.kind, n: it.n_media, rank: rankOfMonth(it.key), scope: "за месяц", index: it.index, est: it.est, sm: true })}</span>
+        <span class="hthumb">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : phHtml(it)}${C().badges({ kind: it.kind, n: it.n_media, rank: rankOfMonth(it.key), scope: "за месяц", index: it.index, est: it.est, sm: true })}</span>
         <div class="ht"><b>${esc((it.text || "").split("\n")[0].slice(0, 80) || "Без подписи")}</b><span>${it.time} · ${esc(it.channels.join(", "))}${it.app ? ` <span class="pill">Crosspost</span>` : ""}</span></div>
         <div></div><div class="metrics">${it.views != null ? `<span class="metric">${ICON.eye}${n(it.views)}</span>` : ""}${it.index != null ? mk(it.index, it.est, "big") : ""}</div><span class="chev">${ICON.chev}</span></div>`).join("")}</div>`
         : `<p class="muted">В этот день ничего не выходило.</p>`}`;
@@ -947,7 +950,7 @@
     } else {
       const d = (s.pstat || {})[key] || {};
       title = d.title || "Пост";
-      img = d.preview ? `<img src="/mthumb/${encodeURIComponent(d.preview)}?t=${tok()}" alt="">` : "";
+      img = d.preview ? `<img src="/mthumb/${encodeURIComponent(d.preview)}?t=${tok()}" alt="">` : `<span class="hthumb">${phHtml({ kind: d.media === "video" ? "vid" : /gif|animation/.test(d.media || "") ? "gif" : "img", media: d.media, text: d.text })}</span>`;
       big = d.preview ? `/media/${encodeURIComponent(d.preview)}?t=${tok()}` : "";
       sub = d.created ? new Date(d.created).toLocaleString("ru-RU") : "";
     }
@@ -956,7 +959,8 @@
       <aside class="drawer" role="dialog" aria-label="Статистика поста">
         <div class="dh">${img || `<div class="noimg"></div>`}
           <div style="min-width:0;display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">${esc(title || "Без названия")}</b>
-            <span class="muted small">${sub}</span>${badges}</div>
+            <span class="muted small">${sub}</span>${badges}
+            ${(() => { const d = (s.pstat || {})[key] || {}; if (kind === "pub") return ""; const t = d.text && d.text.length > (title || "").length ? esc(d.text.slice(0, 140)) : ""; const hint = !d.preview && d.media !== "text" ? "Превью нет: файла не было в выгрузке. Сделайте экспорт канала с включёнными фото и видео и импортируйте снова — превью добавятся." : ""; return t || hint ? `<span class="muted small">${t}${t && hint ? "<br>" : ""}${hint}</span>` : ""; })()}</div>
           <button class="icon-btn" data-pa="pstat-close" aria-label="Закрыть">${C().ICON.close}</button></div>
         <div class="db">${pstatHtml(key)}</div></aside>`;
   }
