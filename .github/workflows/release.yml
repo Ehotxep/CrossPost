@@ -1,0 +1,43 @@
+# Выпуск собирается сам, когда появляется тег вида v0.2.0.
+# Нужно: Settings → Actions → General → Workflow permissions → Read and write permissions.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Проверить, что тег совпадает с версией программы
+        run: |
+          ver=$(python -c "import re;print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('app/__init__.py', encoding='utf-8').read()).group(1))")
+          if [ "v$ver" != "${GITHUB_REF_NAME}" ]; then
+            echo "Тег ${GITHUB_REF_NAME} не совпадает с версией в app/__init__.py (v$ver)"; exit 1
+          fi
+
+      - name: Собрать архив и контрольную сумму
+        run: python tools/make_release.py
+
+      - name: Текст выпуска из CHANGELOG.md
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v h="## $ver" '$0==h{f=1;next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          test -s notes.md || echo "Версия $ver" > notes.md
+
+      - name: Создать выпуск
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/*.zip.sha256 \
+            --title "Crosspost ${GITHUB_REF_NAME#v}" --notes-file notes.md --verify-tag
