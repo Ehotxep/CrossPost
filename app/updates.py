@@ -1,7 +1,7 @@
 """Проверка новых версий: смотрим последний выпуск (Release) в репозитории на GitHub.
 
 Сама программа не обновляется — окно только сообщает «вышла версия X» и открывает страницу выпуска.
-Запрос анонимный: работает, пока репозиторий публичный и в нём есть хотя бы один выпуск.
+Проверка — один раз при запуске (и по кнопке), её можно отключить. Запрос анонимный: работает, пока репозиторий публичный и в нём есть хотя бы один выпуск.
 """
 import json
 import re
@@ -13,9 +13,9 @@ from app.paths import data_dir
 
 REPO = "Ehotxep/CrossPost"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
-GAP = 12 * 3600          # как часто проверять сами
 _lock = threading.Lock()
 _busy = False
+_asked = False   # при запуске спрашиваем один раз; дальше — только кнопкой «Проверить сейчас»
 
 
 def _path():
@@ -67,11 +67,11 @@ def _fetch() -> dict:
 
 
 def check(force: bool = False) -> dict:
-    """Спросить GitHub (не чаще раза в 12 часов, если не force). Ошибки сети — в поле error, не исключением."""
+    """Спросить GitHub (при запуске, если проверка включена, или по кнопке — force). Ошибки сети — в поле error, не исключением."""
     global _busy
     with _lock:
         d = _load()
-        if not force and (not d["check"] or time.time() - d["last"] < GAP):
+        if not force and not d["check"]:
             return status()
         if _busy:
             return status()
@@ -89,8 +89,12 @@ def check(force: bool = False) -> dict:
 
 
 def check_async():
-    d = _load()
-    if d["check"] and time.time() - d["last"] >= GAP and not _busy:
+    """Вызывается при каждом обращении окна, но спрашивает GitHub только раз за запуск программы."""
+    global _asked
+    if _asked or _busy:
+        return
+    _asked = True
+    if _load()["check"]:
         threading.Thread(target=check, daemon=True, name="updates").start()
 
 

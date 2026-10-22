@@ -352,10 +352,10 @@
       <p class="muted small" style="margin:0">Скачайте архив со страницы выпуска и распакуйте поверх программы: ваши данные хранятся отдельно и не затронутся.</p>`;
     else if (u.error && !lt) st = `<p class="muted">Не удалось проверить: ${esc(u.error)}.</p>`;
     else st = `<p class="muted">У вас последняя версия (${esc(u.current)}).${u.error ? ` Последняя проверка не удалась: ${esc(u.error)}.` : ""}</p>`;
-    return `<section class="card setc"><div class="head"><h2>Обновления ${hint("Программа раз в 12 часов спрашивает GitHub, вышла ли новая версия, и только сообщает об этом — сама ничего не скачивает и не ставит. Передаётся только запрос на страницу выпусков, без ваших данных.")}</h2></div>
+    return `<section class="card setc"><div class="head"><h2>Обновления ${hint("Программа один раз при запуске спрашивает GitHub, вышла ли новая версия, и только сообщает об этом — сама ничего не скачивает и не ставит. Проверку можно отключить. Передаётся только запрос на страницу выпусков, без ваших данных.")}</h2></div>
       ${st}
       <div class="cardfoot"><button class="btn" data-action="upd-check" ${S.updBusy || u.checking ? "disabled" : ""}>${S.updBusy ? "Проверяю…" : "Проверить сейчас"}</button>
-        <label class="tgl"><input type="checkbox" data-action="upd-auto" ${u.check ? "checked" : ""}><span>Проверять автоматически</span></label>
+        <label class="tgl"><input type="checkbox" data-action="upd-auto" ${u.check ? "checked" : ""}><span>Проверять при запуске</span></label>
         <span class="muted small">${ago ? `Проверено ${esc(ago)}` : "Ещё не проверялось"}</span></div></section>`;
   }
   function navBadge() {
@@ -1510,7 +1510,6 @@
   (async function init() {
     document.getElementById("updbtn").addEventListener("click", () => { S.view = "settings"; S.platSec = "app"; store.set("view", S.view); loadInfo().then(() => render()); });
     setTimeout(() => loadInfo().catch(() => {}), 8000);   // к этому моменту фоновая проверка версии уже ответила
-    setInterval(() => loadInfo().catch(() => {}), 3600000);
     loadWorker(); setInterval(loadWorker, 20000);
     pollActs(); loadNews(false); setInterval(() => loadNews(false), 60000);
     try { await loadInfo(); } catch (e) { $main.innerHTML = `<p class="err">Не удалось связаться с приложением: ${esc(e.message)}</p>`; return; }
