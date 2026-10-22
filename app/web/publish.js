@@ -70,6 +70,7 @@
       } else if (view === "history") {
         s.hist = await api("post_history");
         s.sched = await api("post_scheduled");
+        try { s.pipe = await api("pipeline_state"); } catch (e) { s.pipe = null; }
         try { s.histSum = await api("pub_stats_summary"); } catch (e) { s.histSum = {}; }
         await loadCalendar();
       } else {
@@ -583,7 +584,8 @@
         <button class="btn big" data-set="when" data-val="now" data-tip="Не планировать — опубликовать сейчас" aria-label="Не планировать">${C().ICON.close}</button></div>`;
     } else {
       h += `<div class="splitbtn"><button class="btn primary big" data-pa="publish" ${can ? "" : "disabled"}>Опубликовать сейчас</button>
-        <button class="btn primary big" data-set="when" data-val="later" data-tip="Запланировать на время" aria-label="Запланировать" ${d.rating ? "" : "disabled"}>${C().ICON.clock}</button></div>`;
+        <button class="btn primary big" data-set="when" data-val="later" data-tip="Запланировать на время" aria-label="Запланировать" ${d.rating ? "" : "disabled"}>${C().ICON.clock}</button></div>
+        <button class="btn big" style="width:100%;margin-top:8px" data-pa="pipe-add" ${can && will.length && d.rating ? "" : "disabled"} data-tip="Положить пост в очередь: Crosspost сам выберет лучшее свободное время по вашей статистике и опубликует">В конвейер</button>`;
     }
     if (hard.some(e6wait) && hard.length === (p.errors || []).filter(e6wait).length) h += `<p class="small warnline">${BN()} ждёт теги: заполните форму «Теги ${BN()}» или выключите ${BN()} для этого поста.</p>`;
     if (s.schedMsg) h += `<p class="ok small">${esc(s.schedMsg)}. <a href="#" data-view-link="history">Открыть «Историю»</a></p>`;
@@ -683,8 +685,53 @@
       <button class="btn small" data-pa="wk-start">Включить</button></div>`;
   }
   const MONS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  function pipelineHtml() {
+    const s = S(), P = s.pipe;
+    if (!P) return "";
+    const ICON = C().ICON, c = P.cfg, items = P.items || [];
+    const hint = C().hint;
+    const EXPL = [[0, "Только лучшие окна"], [0.25, "Иногда пробовать новые"], [0.45, "Часто пробовать новые"]];
+    const exSel = EXPL.reduce((b, x) => Math.abs(x[0] - c.explore) < Math.abs(b[0] - c.explore) ? x : b);
+    const opt = (v, cur, l) => `<option value="${v}" ${String(v) === String(cur) ? "selected" : ""}>${l}</option>`;
+    const row = (r) => {
+      const img = (r.files || [])[0], at = r.state === "pending" || r.state === "running" || r.state === "missed" ? new Date(r.run_at) : null;
+      const when = r.state === "running" ? `<span class="small" style="color:var(--accent)">публикуется…</span>`
+        : r.state === "failed" ? `<span class="err small">не вышел: ${esc(r.error || "ошибка")}</span>`
+        : r.state === "missed" ? `<span class="err small">пропущен — получит новое время</span>`
+        : at ? `<span class="muted small">${esc(r.human)}</span>` : `<span class="muted small">${c.enabled ? "ищу свободное окно…" : "ждёт включения конвейера"}</span>`;
+      const mv = s.pipeMove === r.id;
+      const box = at ? `<div class="datebox"><b>${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}</b><span>${at.getDate()} ${MONS[at.getMonth()]}</span></div>` : `<div class="datebox"><b>—</b><span>очередь</span></div>`;
+      return `<div class="sitem ${r.state === "missed" || r.state === "failed" ? "missed" : ""}">
+        ${box}
+        ${img ? `<img src="/uthumb/${esc(img)}?t=${tok()}" alt="" onerror="this.style.visibility='hidden'">` : `<div class="noimg"></div>`}
+        <div style="min-width:0;display:flex;flex-direction:column;gap:3px">
+          <div style="display:flex;gap:8px;align-items:center;min-width:0"><b class="clip" style="-webkit-line-clamp:1;color:var(--ink)">${esc(r.title || r.text || "Без названия")}</b>${ratingPill(r.rating)}${r.pinned ? `<span class="pill" data-tip="Время закреплено — конвейер его не двигает">📌</span>` : ""}</div>
+          <span style="display:flex;gap:10px;flex-wrap:wrap">${when}<span class="muted small">${r.dests} ${C().plural(r.dests, "место", "места", "мест")}</span></span>
+          ${r.why && r.state !== "failed" ? `<span class="muted small">${esc(r.why)}</span>` : ""}
+          ${mv ? `<div class="row" style="align-items:center;gap:8px;margin-top:4px"><input type="datetime-local" id="pmv-${r.id}" min="${localInput(new Date())}" value="${at ? localInput(at) : ""}"><button class="btn small primary" data-pa="pipe-pin" data-id="${r.id}">Закрепить</button>${r.pinned ? `<button class="btn small" data-pa="pipe-unpin" data-id="${r.id}">Снять закрепление</button>` : ""}<button class="btn small ghost" data-pa="pipe-pin-cancel">Отмена</button></div>` : ""}
+        </div>
+        ${r.state !== "running" ? `<div class="acts">
+          <button class="icon-btn" data-pa="pipe-up" data-id="${r.id}" data-tip="Выше в очереди" aria-label="Выше">↑</button>
+          <button class="icon-btn" data-pa="pipe-down" data-id="${r.id}" data-tip="Ниже в очереди" aria-label="Ниже">↓</button>
+          <button class="btn small" data-pa="pipe-move" data-id="${r.id}">${ICON.cal} Время</button>
+          <button class="icon-btn danger" data-pa="pipe-remove" data-id="${r.id}" data-tip="Убрать из конвейера" aria-label="Убрать">${ICON.trash}</button></div>` : ""}
+      </div>`;
+    };
+    return `<section class="card pipecard"><div class="head"><h2>Конвейер ${hint("Кладёте готовые посты в очередь кнопкой «В конвейер» на экране нового поста — Crosspost сам выбирает время по вашей статистике (окна «день недели × 3 часа») и публикует в фоновой отправке. Время можно закрепить вручную. Если пост сорвался — повторит через 20 минут, до двух раз.")}</h2>
+        <span class="spacer"></span><button class="btn small ${c.enabled ? "" : "primary"}" data-pa="pipe-toggle">${c.enabled ? "Поставить на паузу" : "Включить"}</button>
+        <button class="btn small ghost" data-pa="pipe-cfg">Настройки</button></div>
+      ${!c.enabled ? `<p class="muted small" style="margin:0 0 8px">Конвейер на паузе: посты ждут в очереди без времени.</p>` : ""}
+      ${s.pipeCfg ? `<div class="pipecfg">
+        <label>Постов в сутки<select data-pipe="per_day">${[1, 2, 3].map((v) => opt(v, c.per_day, v)).join("")}</select></label>
+        <label>Не чаще, чем раз в<select data-pipe="min_gap_h">${[3, 4, 6, 8, 12, 24].map((v) => opt(v, c.min_gap_h, v + " ч")).join("")}</select></label>
+        <label>Окна<select data-pipe="explore">${EXPL.map((x) => opt(x[0], exSel[0], x[1])).join("")}</select></label>
+        <label>Планировать вперёд<select data-pipe="horizon_days">${[7, 14, 30, 60].map((v) => opt(v, c.horizon_days, v + " дн")).join("")}</select></label>
+        <p class="muted small" style="margin:6px 0 0">Изучено окон: ${P.windows.solid} из ${P.windows.cells} (3 и больше постов). «Пробовать новые» — иногда ставить пост в окно, где данных мало, чтобы статистика пополнялась. Лимит «в сутки» общий для всех площадок.</p></div>` : ""}
+      ${items.length ? `<div class="pinned" style="margin-top:6px">${items.map(row).join("")}</div>` : `<p class="muted small" style="margin:0">Очередь пуста. Подготовьте пост и нажмите «В конвейер».</p>`}
+    </section>`;
+  }
   function schedHtml() {
-    const s = S(), list = (s.sched || []).filter((r) => ["pending", "running", "missed"].includes(r.state));
+    const s = S(), list = (s.sched || []).filter((r) => ["pending", "running", "missed"].includes(r.state) && !r.queue);
     if (!list.length) return "";
     const ICON = C().ICON;
     return `<div class="pinned">${list.map((r) => {
@@ -914,7 +961,7 @@
         <select class="sm" id="hsort" aria-label="Сортировка"><option value="date">Сначала новые</option><option value="index" ${s.hsort === "index" ? "selected" : ""}>По индексу успеха</option></select>` : ""}
       ${C().seg("histMode", [["cal", "Календарь"], ["list", "Список"]], mode)}</div>`;
     if (mode === "cal") {
-      h += schedHtml() + C().newsStrip() + calendarHtml() + dayListHtml();
+      h += pipelineHtml() + schedHtml() + C().newsStrip() + calendarHtml() + dayListHtml();
     } else {
       if (s.hf !== "hits") h += schedHtml();
       if (!rows) { C().$main.innerHTML = h + `<p class="muted">Загрузка…</p>`; return; }
@@ -1877,6 +1924,30 @@
         } catch (err) { alert(err.message); }
         s.publishing = false; C().render(); return true;
       }
+      case "pipe-add": {
+        s.publishing = true; paintSide();
+        try {
+          await api("pipeline_add", { draft: apiDraft() });
+          s.schedMsg = "Добавлено в конвейер";
+          s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
+          saveDraft(); s.when = "now"; s.whenAt = null; await refreshPlan();
+        } catch (err) { alert(err.message); }
+        s.publishing = false; C().render(); return true;
+      }
+      case "pipe-toggle": try { s.pipe = await api("pipeline_set", { changes: { enabled: !s.pipe.cfg.enabled } }); s.sched = await api("post_scheduled"); } catch (err) { alert(err.message); } C().render(); return true;
+      case "pipe-cfg": s.pipeCfg = !s.pipeCfg; C().render(); return true;
+      case "pipe-up": case "pipe-down": try { s.pipe = await api("pipeline_move", { sid: +a.dataset.id, direction: act === "pipe-down" ? 1 : -1 }); } catch (err) { alert(err.message); } C().render(); return true;
+      case "pipe-remove": if (!confirm("Убрать пост из конвейера?")) return true; try { s.pipe = await api("pipeline_remove", { sid: +a.dataset.id }); s.sched = await api("post_scheduled"); } catch (err) { alert(err.message); } C().render(); return true;
+      case "pipe-move": s.pipeMove = +a.dataset.id; C().render(); return true;
+      case "pipe-pin-cancel": s.pipeMove = null; C().render(); return true;
+      case "pipe-pin": case "pipe-unpin": {
+        const el = document.getElementById("pmv-" + a.dataset.id);
+        try {
+          s.pipe = await api("pipeline_pin", { sid: +a.dataset.id, run_at: act === "pipe-pin" && el && el.value ? new Date(el.value).toISOString() : "" });
+          s.sched = await api("post_scheduled"); s.pipeMove = null;
+        } catch (err) { alert(err.message); }
+        C().render(); return true;
+      }
       case "sched-cancel": if (!confirm("Отменить запланированный пост?")) return true; s.sched = await api("post_schedule_cancel", { sid: +a.dataset.id }); C().render(); return true;
       case "sched-now": s.sched = await api("post_schedule_now", { sid: +a.dataset.id }); C().render(); setTimeout(async () => { s.sched = await api("post_scheduled"); s.hist = await api("post_history"); C().render(); }, 3000); return true;
       case "sched-move": {
@@ -2047,6 +2118,7 @@
   async function onChange(e) {
     const t = e.target, s = S(), api = C().api;
     if (t.dataset.pa === "wk-auto") { try { s.worker = await api("worker_autostart", { on: t.checked }); } catch (err) { alert(err.message); } C().render(); return true; }
+    if (t.dataset.pipe) { try { s.pipe = await api("pipeline_set", { changes: { [t.dataset.pipe]: +t.value } }); s.sched = await api("post_scheduled"); } catch (err) { alert(err.message); } C().render(); return true; }
     if (t.id === "hsort") { s.hsort = t.value; C().render(); return true; }
     if (t.id === "whenAt") { s.whenAt = t.value ? new Date(t.value).toISOString() : null; paintSide(); scheduleFc(); return true; }
     if (t.id === "fileinp") { await uploadFiles(t.files); t.value = ""; return true; }

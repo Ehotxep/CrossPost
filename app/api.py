@@ -1172,6 +1172,39 @@ class Api:
             threading.Thread(target=schedule.tick, args=(self,), daemon=True).start()
         return schedule.items()
 
+    # --- конвейер: очередь постов, время выбирает программа ---
+    def pipeline_state(self):
+        from app.publish import pipeline
+        pipeline.maintain()
+        return pipeline.state()
+
+    def pipeline_add(self, draft: dict):
+        """Положить пост в конвейер (время выберет программа по статистике)."""
+        from app.publish import pipeline
+        self._tg_ctx()
+        return pipeline.add(draft)
+
+    def pipeline_remove(self, sid: int):
+        from app.publish import pipeline
+        pipeline.remove(sid)
+        return pipeline.state()
+
+    def pipeline_move(self, sid: int, direction: int):
+        from app.publish import pipeline
+        pipeline.move(sid, direction)
+        return pipeline.state()
+
+    def pipeline_pin(self, sid: int, run_at: str = ""):
+        """Закрепить время поста (ISO) или снять закрепление (пустая строка)."""
+        from app.publish import pipeline
+        pipeline.pin(sid, run_at or None)
+        return pipeline.state()
+
+    def pipeline_set(self, changes: dict):
+        from app.publish import pipeline
+        pipeline.set_cfg(changes)
+        return pipeline.state()
+
     # --- фоновая отправка ---
     def worker_status(self):
         from app import worker

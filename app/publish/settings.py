@@ -71,6 +71,13 @@ DEFAULTS = {
         "gallery_id": "", "gallery_name": "", "originals": True,   # PNG-оригинал (до 30 МБ), иначе лёгкая версия
         "tags_from": "hashtags",  # hashtags — теги из хэштегов поста; none — без тегов
     },
+    "pipeline": {
+        "enabled": False,
+        "per_day": 1,            # не больше стольких постов в сутки (по всем площадкам)
+        "min_gap_h": 6,          # и не чаще, чем раз в столько часов
+        "explore": 0.25,         # охота за новыми окнами: 0 — только лучшие известные, 0,5 — часто пробовать неизученные
+        "horizon_days": 30,      # на сколько дней вперёд расставлять очередь
+    },
     "vk": {
         "enabled": False, "group_id": "", "group_name": "", "app_id": "",
         "redirect_uri": "https://localhost/callback", "include_title": True,

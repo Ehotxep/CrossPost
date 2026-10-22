@@ -108,7 +108,7 @@ def ensure_pub_thumbs() -> int:
 def _scheduled_ids() -> set:
     from app.publish import schedule  # noqa: F401  (таблица scheduled)
     out = set()
-    for r in db.query("SELECT draft FROM scheduled WHERE state IN ('pending','running','missed')"):
+    for r in db.query("SELECT draft FROM scheduled WHERE state IN ('pending','running','missed','queued')"):
         try:
             out |= set(json.loads(r["draft"] or "{}").get("files") or [])
         except Exception:

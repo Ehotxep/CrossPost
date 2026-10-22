@@ -885,12 +885,12 @@
             ${w.running ? `<button class="btn small danger" data-wk="stop">Выключить</button>` : `<button class="btn small primary" data-wk="start">Включить</button>`}</div>
           <label class="tgl"><input type="checkbox" data-pa="wk-auto" ${w.autostart ? "checked" : ""} ${w.platform === "win32" ? "" : "disabled"}><span>Запускать вместе с Windows</span></label>` : `<p class="muted">Проверяю…</p>`}</section>
       ${updHtml()}
+      <section class="card setc"><div class="head"><h2>Оформление</h2></div>
+        <div class="field" style="max-width:260px"><label for="themesel">Тема</label><select id="themesel"><option value="dark" ${store.get("theme", "dark") !== "light" ? "selected" : ""}>Тёмная</option><option value="light" ${store.get("theme", "dark") === "light" ? "selected" : ""}>Светлая</option></select></div></section>
       <section class="card setc"><div class="head"><h2>Значок и ярлык ${hint("Ярлык запускает Crosspost напрямую, без файла Crosspost.bat — поэтому Windows не показывает окно «Не удаётся проверить издателя», а в панели задач виден значок Crosspost. Закрепить на панели задач: правой кнопкой по ярлыку → «Закрепить на панели задач».")}</h2></div>
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap"><img src="/appicon.ico" alt="Значок приложения" width="40" height="40" style="border-radius:10px">
           <button class="btn" data-action="mk-shortcut">Создать ярлык на рабочем столе и в «Пуске»</button></div>
         <p class="muted small" style="margin:0">Если значок у ярлыка старый — создайте ярлык заново.</p></section>
-      <section class="card setc"><div class="head"><h2>Оформление</h2></div>
-        <div class="field" style="max-width:260px"><label for="themesel">Тема</label><select id="themesel"><option value="dark" ${store.get("theme", "dark") !== "light" ? "selected" : ""}>Тёмная</option><option value="light" ${store.get("theme", "dark") === "light" ? "selected" : ""}>Светлая</option></select></div></section>
       <section class="card setc"><div class="head"><h2>Место на диске ${hint("Файлы, добавленные в пост, копируются в папку приложения — поэтому перемещение исходников ничего не ломает. Тяжёлые копии удаляются через 7 дней после публикации; миниатюры и JPEG-превью остаются.")}</h2></div>
         ${S.storage ? `<div class="kvlist"><div><span>Копии оригиналов</span><b>${fmtBytes(S.storage.originals)}</b></div>
           <div><span>JPEG-превью</span><b>${fmtBytes(S.storage.light)}</b></div>
@@ -934,13 +934,13 @@
   }
 
   // меню настроек: группа, пункты, когда группа видна (по включённым функциям)
-  const PSECS = [["", [["features", "Функции"]], () => true],
+  const PSECS = [["Приложение", [["app", "Общие"], ["features", "Функции"], ["net", "Соединение"]], () => true],
     ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "e6ai / e621"]], () => true],
-    ["Пост", [["signatures", "Подписи"], ["hashtags", "Хэштеги"], ["light", "JPEG-превью"], ["media", "Видео и GIF"], ["files", "Готовые файлы"]], () => modOn("crosspost")],
+    ["Текст поста", [["signatures", "Подписи"], ["hashtags", "Хэштеги"]], () => modOn("crosspost")],
+    ["Файлы поста", [["light", "JPEG-превью"], ["media", "Видео и GIF"], ["files", "Готовые файлы"]], () => modOn("crosspost")],
     ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || modOn("e6ai")],
-    ["Статистика", [["collect", "Сбор статистики"], ["import", "Telegram"]], () => statsOn()],
-    ["Тренды", [["trends", "Тренды"]], () => modOn("trends")],
-    ["Приложение", [["net", "Соединение"], ["app", "Общие"]], () => true]];
+    ["Статистика", [["collect", "Сбор статистики"], ["import", "Импорт из Telegram"]], () => statsOn()],
+    ["Тренды", [["trends", "Тренды"]], () => modOn("trends")]];
   // четыре функции приложения; у каждой — модули, которые она включает и выключает разом
   const FEATURES = [
     ["crosspost", "Кросспостинг", "Новый пост, публикация на площадки, расписание и «История».", ["crosspost", "history"]],
@@ -979,7 +979,7 @@
     const t = S.tg;
     if (!t || t.unknown) return `<section class="card setc"><p class="muted">Проверяю…</p></section>`;
     if (!t.configured) return `<section class="card setc"><div class="head"><h2>Соединение с Telegram</h2></div>
-      <p class="muted">Соединение настраивается после того, как сохранены ключи API Telegram: ${statsOn() ? `<a href="#" data-view-link="settings" data-tab="import">«Статистика» → «Telegram»</a>` : `включите «Статистика» в <a href="#" data-view-link="settings" data-tab="features">«Функциях»</a> — ключи вводятся там`}. Боту по Bot API оно не нужно.</p></section>`;
+      <p class="muted">Соединение настраивается после того, как сохранены ключи API Telegram: ${statsOn() ? `<a href="#" data-view-link="settings" data-tab="import">«Статистика» → «Импорт из Telegram»</a>` : `включите «Статистика» в <a href="#" data-view-link="settings" data-tab="features">«Функциях»</a> — ключи вводятся там`}. Боту по Bot API оно не нужно.</p></section>`;
     return `<section class="card setc"><div class="head"><h2>Соединение с Telegram ${hint("Для входа в аккаунт Telegram (статистика) и для бота, который работает через MTProto. zapret, прокси и ссылки на прокси из Telegram Desktop.")}</h2></div>
       ${S.tgErr ? `<p class="err">${esc(S.tgErr)}</p>` : ""}${netHtml(t, true)}</section>`;
   }

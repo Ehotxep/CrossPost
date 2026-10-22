@@ -1038,3 +1038,9 @@ body.working { cursor: progress; }
 .hthumb, .lt, .cw { position: relative; }
 .drawer .dh .hthumb { display: block; width: 80px; height: 80px; border-radius: 12px; overflow: hidden; flex: none; }
 .cg .ph i { display: none; } .cg.n1 .ph i, .cg.n2 .ph i { display: -webkit-box; }
+
+/* конвейер */
+.pipecard { margin-bottom: 14px; }
+.pipecfg { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--card-3); }
+.pipecfg label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
+.pipecfg p { flex-basis: 100%; }

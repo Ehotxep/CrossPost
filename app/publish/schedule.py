@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS scheduled (
     pub_id   INTEGER, error TEXT, done_at TEXT
 );
 """)
+for _col in ("queue INTEGER DEFAULT 0",    # 1 — пост из конвейера (время выбирает сама программа)
+             "pinned INTEGER DEFAULT 0",   # 1 — время закреплено вручную, конвейер его не двигает
+             "qpos REAL",                  # место в очереди конвейера
+             "tries INTEGER DEFAULT 0",    # повторы после сбоя
+             "why TEXT"):                  # почему выбрано это время
+    try:
+        db.conn().execute("ALTER TABLE scheduled ADD COLUMN " + _col)
+    except Exception:   # noqa: BLE001 — колонка уже есть
+        pass
 
 
 def _now():
@@ -96,6 +105,8 @@ def reschedule(sid: int, run_at: str) -> dict:
     if dt < _now() + timedelta(minutes=1):
         raise ValueError("Время уже прошло — выберите время в будущем")
     _set(int(sid), run_at=dt.isoformat(timespec="seconds"), state="pending", error=None)
+    with db.tx() as c:   # перенесённый вручную пост конвейера дальше не двигаем
+        c.execute("UPDATE scheduled SET pinned=1, why='время задано вами' WHERE id=? AND queue=1", (int(sid),))
     return {"human": human(dt)}
 
 
@@ -155,7 +166,11 @@ def _loop(api, every):
 
 def tick(api):
     """Один проход: опубликовать подошедшие посты (по одному, по порядку)."""
-    from app.publish import runner
+    from app.publish import pipeline, runner
+    try:
+        pipeline.maintain()   # конвейер: расставить очередь по лучшим окнам, повторить сорвавшееся
+    except Exception:  # noqa: BLE001
+        pass
     now = _now()
     for r in db.query("SELECT * FROM scheduled WHERE state='pending' ORDER BY run_at"):
         at = _parse(r["run_at"])
