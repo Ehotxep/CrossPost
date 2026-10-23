@@ -53,7 +53,7 @@ def mirror_vk() -> int:
     """Переносит посты ВК из vk_posts в ext_posts (цифры — последний замер). Локально, без сети."""
     try:
         rows = db.query("""SELECT p.key, p.date, p.title, p.text, p.kind, p.href, p.thumb,
-                           s.views, s.likes, s.reposts, s.comments
+                           s.views, s.likes, s.reposts, s.comments, s.at AS snap_at
                            FROM vk_posts p LEFT JOIN vk_snap s ON s.key = p.key
                            AND s.at = (SELECT MAX(at) FROM vk_snap WHERE key = p.key)""")
     except Exception:   # noqa: BLE001 — таблиц ВК ещё нет
@@ -65,15 +65,19 @@ def mirror_vk() -> int:
             key = "vk:" + r["key"]
             text = (r["title"] or r["text"] or "").strip()
             kind = "vid" if r["kind"] in ("video", "short_video") else "img"
-            old = c.execute("SELECT thumb_url, preview FROM ext_posts WHERE key=?", (key,)).fetchone()
+            old = c.execute("SELECT thumb_url, preview, views, likes, reposts, replies, text, updated_at FROM ext_posts WHERE key=?", (key,)).fetchone()
             keep_prev = old["preview"] if old and old["thumb_url"] == (r["thumb"] or "") else None
+            stamp = int(r["snap_at"] or now)   # «обновлено» = время замера ВК, а не момент пересчёта: так видно, насколько цифры свежие
+            if old and (old["views"], old["likes"], old["reposts"], old["replies"], old["text"], old["updated_at"]) == (
+                    r["views"], r["likes"], r["reposts"], r["comments"], text[:300], stamp):
+                continue   # ничего не поменялось — не трогаем (иначе ключ календаря менялся бы при каждом вызове)
             c.execute("""INSERT INTO ext_posts (key, platform, date, text, link, kind, thumb_url, preview, views, likes, reposts, replies, updated_at)
                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                          ON CONFLICT(key) DO UPDATE SET date=excluded.date, text=excluded.text, link=excluded.link, kind=excluded.kind,
                            thumb_url=excluded.thumb_url, preview=excluded.preview, views=excluded.views, likes=excluded.likes,
                            reposts=excluded.reposts, replies=excluded.replies, updated_at=excluded.updated_at""",
                       (key, "vk", int(r["date"] or 0), text[:300], r["href"] or "", kind, r["thumb"] or "", keep_prev,
-                       r["views"], r["likes"], r["reposts"], r["comments"], now))
+                       r["views"], r["likes"], r["reposts"], r["comments"], stamp))
             n += 1
     return n
 
@@ -480,6 +484,6 @@ def items_between(t0: float, t1: float, tz) -> list[dict]:
             "link": r["link"] or "", "views": r["views"], "reactions": react, "forwards": r["reposts"] or 0, "proj": None,
             "index": idx, "est": False, "level": K._level(idx) if idx is not None else "", "by_views": by_views,
             "n_media": r["n_media"] or 1, "age_h": round(age_d * 24, 1), "kind": r["kind"] or "img",
-            "ext": r["platform"],
+            "ext": r["platform"], "stat_at": r["updated_at"],
         })
     return out

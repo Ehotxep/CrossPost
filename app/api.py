@@ -1357,6 +1357,10 @@ class Api:
         if not _re.fullmatch(r"\d{4}-\d{2}", ym or ""):
             raise ValueError("Месяц в виде ГГГГ-ММ")
         from app.insights import ext_posts
+        try:
+            ext_posts.mirror_vk()   # свежие замеры ВК — сразу, без ожидания 3-часового круга (локально, без сети)
+        except Exception:  # noqa: BLE001
+            pass
         ext_posts.sync_async()   # посты ВК и Bluesky, вышедшие мимо Crosspost, — раз в 3 часа, в фоне
         r = cache.get(W.calendar_name(ym), W.calendar_compute(ym), W.calendar_key(), max_age=1800)
         return dict(r["data"], _cache={"at": r["at"], "stale": r["stale"], "refreshing": r["refreshing"]},

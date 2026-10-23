@@ -352,8 +352,7 @@ class TgService:
                         asyncio.run_coroutine_threadsafe(b.close(), self._loop).result(5)
                     except Exception:
                         pass
-                for f in data_dir().glob("telegram_netcheck.session*"):
-                    f.unlink(missing_ok=True)
+                self.clean_probe_files("telegram_netcheck.session")
             if chosen is not None:
                 break   # дальше проверять незачем
         if chosen is not None:
@@ -368,7 +367,9 @@ class TgService:
         k = self.keys()
         if not k:
             raise AuthError("Сначала сохраните api_id и api_hash")
-        tmp = data_dir() / f"telegram_netcheck_p{slot}"
+        import uuid
+        stem = f"telegram_netcheck_p{slot}_{uuid.uuid4().hex[:6]}"   # у каждой проверки своя сессия: недоудалённый файл прошлой не мешает
+        tmp = data_dir() / stem
         variant = {"transport": self.net().get("transport", "obfuscated"), "proxy": p, "proxies": []}
         t0, b = time.time(), None
         try:
@@ -383,8 +384,19 @@ class TgService:
                     asyncio.run_coroutine_threadsafe(b.close(), self._loop).result(5)
                 except Exception:
                     pass
-            for f in data_dir().glob(f"telegram_netcheck_p{slot}.session*"):
-                f.unlink(missing_ok=True)
+            self.clean_probe_files(stem)
+
+    @staticmethod
+    def clean_probe_files(stem: str = "telegram_netcheck_p") -> None:
+        """Убрать временные сессии проверок. В Windows файл может быть ещё занят — тогда тихо оставляем до следующего раза."""
+        import time
+        for f in data_dir().glob(f"{stem}*"):
+            for _ in range(3):
+                try:
+                    f.unlink(missing_ok=True)
+                    break
+                except OSError:
+                    time.sleep(0.3)
 
     def status_net(self) -> dict:
         net = json.loads(json.dumps(self.net()))

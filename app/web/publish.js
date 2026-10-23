@@ -995,7 +995,8 @@
     let img = "", title = "", sub = "", badges = "", big = "";
     if (kind === "cal") {   // пост с площадки (ВК, Bluesky, e6ai…) или склейка копий — данные берём из самого календаря
       const it = calItems()[String(key).slice(4)] || {};
-      title = (it.text || "").split("\n")[0].slice(0, 80) || "Без названия";
+      title = (it.text || "").split("\n")[0].slice(0, 80);
+      if (!title || /^Запись от \d{4}-\d\d-\d\d/.test(title)) title = `${(it.channels || ["Пост"])[0]} · ${it.day ? it.day.slice(8) + "." + it.day.slice(5, 7) : ""}`;
       img = it.preview ? `<img src="/mthumb/${encodeURIComponent(it.preview)}?t=${tok()}" alt="">` : `<span class="hthumb">${phHtml(it)}</span>`;
       big = it.preview ? `/media/${encodeURIComponent(it.preview)}?t=${tok()}` : "";
       sub = it.day ? `${it.day.slice(8)}.${it.day.slice(5, 7)}.${it.day.slice(0, 4)} ${it.time}` : "";
@@ -1029,9 +1030,14 @@
     const it = calItems()[ik];
     if (!it) return `<p class="muted">Пост не найден</p>`;
     const n = C().num, parts = it.parts && it.parts.length ? it.parts : [{ plat: it.ext || it.platform, label: (it.channels || [""])[0], link: it.link, index: it.index, views: it.views, reactions: it.reactions, est: it.est }];
-    return parts.map((p) => `<div class="pdest"><div class="pdhead">${C().pbadge(p.plat)}<b>${esc(p.label || (PLAT[p.plat] || [, p.plat])[1])}</b>${p.link && /^https?:/.test(p.link) ? `<a href="#" data-open="${esc(p.link)}" class="small">открыть на площадке</a>` : ""}</div>
-      <div class="pdm">${p.views != null ? `<span>Просмотры: <b>${n(p.views)}</b></span> ` : ""}<span>Реакции: <b>${n(p.reactions || 0)}</b></span>
-      ${p.index != null ? ` <span>Успех: ${C().badges ? C().badges({ index: p.index, est: p.est, sm: true }) : "×" + Number(p.index).toFixed(2).replace(".", ",")}</span>` : ` <span class="muted small">индекс появится через несколько дней или когда на площадке наберётся достаточно постов</span>`}</div></div>`).join("");
+    const ago = (t) => { const h = (Date.now() / 1000 - t) / 3600; return h < 1 ? "только что" : h < 48 ? `${Math.floor(h)} ч назад` : `${Math.floor(h / 24)} дн назад`; };
+    return parts.map((p) => {
+      const old = p.plat === "vk" && p.stat_at && Date.now() / 1000 - p.stat_at > 2 * 86400;
+      const idx = p.index != null ? `<span>Успех: <b>×${Number(p.index).toFixed(2).replace(".", ",")}</b>${p.est ? " (оценка)" : ""}</span>` : `<span class="muted small">Индекс успеха появится через несколько дней, когда на площадке наберётся достаточно постов для сравнения.</span>`;
+      return `<div class="pdest"><div class="pdhead">${C().pbadge(p.plat)}<b>${esc(p.label || (PLAT[p.plat] || [, p.plat])[1])}</b>${p.link && /^https?:/.test(p.link) ? `<a href="#" data-open="${esc(p.link)}" class="small">открыть на площадке</a>` : ""}</div>
+      <div class="pdm">${p.views != null ? `<span>Просмотры: <b>${n(p.views)}</b></span> ` : ""}<span>Реакции: <b>${n(p.reactions || 0)}</b></span> ${idx}</div>
+      ${p.stat_at ? `<p class="${old ? "err" : "muted"} small">Замер: ${ago(p.stat_at)}${old ? ". Цифры давно не обновлялись — проверьте сбор статистики в «Настройки» → ВКонтакте." : ""}</p>` : ""}</div>`;
+    }).join("");
   }
   function bigHtml(src, full, extra) {
     return `${full ? `<div class="backdrop"></div>` : ""}<div class="bigprev ${full ? "full" : ""}"><div class="bpstage"><img src="${src}" alt="" draggable="false" onload="window.Pub.bpInit(this)" onerror="this.closest('.bigprev').remove()"></div>${extra || ""}</div>`;

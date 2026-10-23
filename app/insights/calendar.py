@@ -147,7 +147,8 @@ def _decorate(it: dict, plat: str):
     it["platform"] = plat
     it["atoms"] = [it["key"]]
     it["parts"] = [{"plat": plat, "label": (it["channels"] or [""])[0], "link": it.get("link") or "", "index": it["index"],
-                    "est": it["est"], "views": it["views"], "reactions": it["reactions"], "key": it["key"]}]
+                    "est": it["est"], "views": it["views"], "reactions": it["reactions"], "key": it["key"],
+                    "stat_at": it.get("stat_at")}]
 
 
 def _hamming(x, y):

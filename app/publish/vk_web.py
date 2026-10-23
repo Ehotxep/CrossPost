@@ -181,9 +181,36 @@ REMOVE_ATTACH = ("[aria-label*='Удалить' i], [aria-label*='Убрать' 
                  "[class*='remove' i][role='button'], button[class*='remove' i], button[class*='delete' i], button[class*='dismiss' i]")
 
 
+COMMENT_AREA = "[data-testid*='comment' i], [class*='comment' i], [id*='comment' i], [data-testid*='reply' i], [class*='reply' i]"
+COMPOSER_BTN = re.compile(r"Опубликовать|Далее|Запланировать|Publish|Next|Schedule", re.I)
+
+
+def _in_comments(el) -> bool:
+    """Элемент — часть комментариев? При любой неясности считаем, что да: лучше не нажать, чем удалить чужое."""
+    try:
+        return bool(el.evaluate("(e, s) => !!e.closest(s)", COMMENT_AREA))
+    except Exception:
+        return True
+
+
+def _composer_like(scope) -> bool:
+    """Это точно окно новой записи (есть кнопка публикации), а не просмотр поста/фото с комментариями."""
+    if scope is NO_DIALOG:
+        return False
+    try:
+        return scope.get_by_role("button", name=COMPOSER_BTN).count() > 0
+    except Exception:
+        return False
+
+
 def _clear_draft(page, editor):
     """ВК хранит черновик: при открытии окна там может остаться текст и фото прошлой попытки.
     Стираем текст и убираем прикреплённые фото, прежде чем вставлять своё."""
+    # Всё, что стирает или убирает, — только внутри окна новой записи. Нет такого окна, или поле лежит среди
+    # комментариев — ничего не трогаем (на стене группы стирать и «убирать» можно только чужое).
+    scope0 = _scope(page)
+    if not _composer_like(scope0) or _in_comments(editor):
+        return
     try:
         editor.click()
         page.keyboard.press("Control+A")
@@ -192,7 +219,7 @@ def _clear_draft(page, editor):
         pass
     for _ in range(20):
         scope = _scope(page)
-        if scope is NO_DIALOG:
+        if not _composer_like(scope):
             break
         btns = scope.locator(REMOVE_ATTACH)
         target = None
@@ -200,7 +227,7 @@ def _clear_draft(page, editor):
             b = btns.nth(i)
             try:
                 label = (b.get_attribute("aria-label") or "").lower()
-                if b.is_visible() and "закрыть" not in label and "close" not in label:
+                if b.is_visible() and "закрыть" not in label and "close" not in label and not _in_comments(b):
                     target = b
                     break
             except Exception:
@@ -218,22 +245,33 @@ def _close_draft(page, editor):
     """После пробного прогона: стереть текст и закрыть окно, не публикуя."""
     try:
         back = _find_in(page, [lambda p: p.get_by_role("button", name=re.compile(r"^\s*(Назад|Back|Редактировать|Edit)\s*$", re.I))], 1000)
-        if back:
+        if back and not _in_comments(back):
             back.click()
             page.wait_for_timeout(600)
         ed = _find_in(page, ["[contenteditable='true']"], 1500) or editor
         _clear_draft(page, ed)
     except Exception:
         pass
+    # Закрываем окно записи по Escape. Если ВК спросит про черновик — отвечаем «не сохранять», но ТОЛЬКО внутри
+    # окна с вопросом про черновик. Кнопки «Удалить»/«Закрыть» по всей странице не ищем: на стене группы это
+    # могут быть комментарии и записи, их трогать нельзя.
     for _ in range(3):
         try:
+            if _scope(page) is NO_DIALOG:
+                break
             page.keyboard.press("Escape")
             page.wait_for_timeout(500)
-            ok = B.first_visible(page, [lambda p: p.get_by_role("button", name=re.compile(
-                r"^\s*(Не сохранять|Выйти|Закрыть|Удалить черновик|Удалить|Discard)\s*$", re.I))], 800)
-            if ok:
-                ok.click()
-                page.wait_for_timeout(400)
+            ask = page.locator("[role='dialog'], [role='alertdialog'], [aria-modal='true']").filter(
+                has_text=re.compile(r"черновик|draft", re.I))
+            for i in range(min(ask.count(), 3)):
+                box = ask.nth(i)
+                if not box.is_visible():
+                    continue
+                ok = box.get_by_role("button", name=re.compile(r"^\s*(Не сохранять|Удалить черновик|Discard|Don.t save)\s*$", re.I))
+                if ok.count() and ok.first.is_visible():
+                    ok.first.click()
+                    page.wait_for_timeout(400)
+                    break
         except Exception:
             break
 

@@ -160,10 +160,14 @@ def refresh(tg, report=lambda **k: None) -> dict:
         for i_ in range(WORKERS):
             slots.put(i_)
 
+        tg.clean_probe_files()   # остатки прошлых кругов
+
         def probe(p):
             slot = slots.get()
             try:
                 return p, tg.probe_proxy({k: v for k, v in p.items() if k not in ("ms", "fails", "ok_at")}, slot)
+            except Exception as e:  # noqa: BLE001 — сбой одной проверки не должен рвать весь круг
+                return p, {"ok": False, "error": type(e).__name__}
             finally:
                 slots.put(slot)
 
@@ -211,6 +215,7 @@ def refresh(tg, report=lambda **k: None) -> dict:
         now_net = tg.net()   # за время круга настройки могли поменяться — берём свежие и меняем только запас
         tg._write_cfg(net=dict(now_net, proxies=final), pool=dict(cfg(tg), at=time.time(), msg=msg, bad=dict(list(bad.items())[-500:])))
         report(progress=1.0, message=msg)
+        tg.clean_probe_files()
         return {"alive": len(alive), "target": target, "added": added, "dropped": dropped, "checked": checked, "msg": msg}
     finally:
         _run_lock.release()
