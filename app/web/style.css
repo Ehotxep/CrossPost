@@ -1044,3 +1044,7 @@ body.working { cursor: progress; }
 .pipecfg { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--card-3); }
 .pipecfg label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
 .pipecfg p { flex-basis: 100%; }
+
+/* запас прокси */
+.poolbox { margin: 10px 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--card-3); }
+.poolbox textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; }

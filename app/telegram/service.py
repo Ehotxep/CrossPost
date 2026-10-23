@@ -294,10 +294,17 @@ class TgService:
         txt = f"{type(e).__name__} {e}".lower()
         if not any(w in txt for w in ("не отвечает", "timeout", "connection", "connect", "proxy", "refused", "reset", "network")):
             return False
-        if not (self.net().get("proxies") or []) or time.time() - TgService._failover_at < 300:
+        from app.telegram import proxy_pool
+        if not ((self.net().get("proxies") or []) or proxy_pool.cfg(self)["enabled"]) or time.time() - TgService._failover_at < 300:
             return False
         TgService._failover_at = time.time()
-        threading.Thread(target=lambda: self.check_network(), daemon=True, name="tg-failover").start()
+        def run():
+            res = self.check_network()
+            if not any(r.get("ok") for r in res):   # ни запасные, ни напрямую — пробуем пополнить запас из списков
+                from app.telegram import proxy_pool
+                if proxy_pool.cfg(self)["enabled"]:
+                    proxy_pool.refresh(self)
+        threading.Thread(target=run, daemon=True, name="tg-failover").start()
         return True
 
     def set_net(self, net: dict):
@@ -354,6 +361,31 @@ class TgService:
             self._drop_backend()
         return results
 
+    def probe_proxy(self, p: dict, slot: int = 0, timeout: float = 25) -> dict:
+        """Настоящая проверка одного прокси: подключение к Telegram через него и один лёгкий запрос.
+        Настройки не меняются. slot — номер временной сессии (параллельным проверкам нужны разные)."""
+        import time
+        k = self.keys()
+        if not k:
+            raise AuthError("Сначала сохраните api_id и api_hash")
+        tmp = data_dir() / f"telegram_netcheck_p{slot}"
+        variant = {"transport": self.net().get("transport", "obfuscated"), "proxy": p, "proxies": []}
+        t0, b = time.time(), None
+        try:
+            b = self.backend_factory(tmp, k["api_id"], k["api_hash"], variant)
+            asyncio.run_coroutine_threadsafe(asyncio.wait_for(b.ping(), timeout), self._loop).result(timeout + 5)
+            return {"ok": True, "ms": int((time.time() - t0) * 1000)}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": _net_error(e)}
+        finally:
+            if b is not None and hasattr(b, "close"):
+                try:
+                    asyncio.run_coroutine_threadsafe(b.close(), self._loop).result(5)
+                except Exception:
+                    pass
+            for f in data_dir().glob(f"telegram_netcheck_p{slot}.session*"):
+                f.unlink(missing_ok=True)
+
     def status_net(self) -> dict:
         net = json.loads(json.dumps(self.net()))
         if (net.get("proxy") or {}).get("password"):
@@ -364,6 +396,8 @@ class TgService:
                 p["password"], p["has_password"] = "", True
         from app.telegram.backend import faketls_ready
         net["faketls"] = faketls_ready()
+        from app.telegram import proxy_pool
+        net["pool"] = proxy_pool.public(self)
         return net
 
     def status(self) -> dict:

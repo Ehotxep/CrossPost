@@ -436,6 +436,29 @@ def _save_pub():
                 _state["pub_id"] = cur.lastrowid
 
 
+NETFAIL = "Нет связи с api.telegram.org"
+NETFAIL_TEXT = ("Публикация в Telegram не прошла: нет связи с api.telegram.org (проблема с соединением). "
+                "Включите связь через MTProto или запас прокси в «Настройки» → «Соединение».")
+
+
+def net_failed(dests=None) -> bool:
+    """Хоть одно место Telegram не опубликовано из-за недоступности api.telegram.org."""
+    if dests is None:
+        dests = (state() or {}).get("dests") or []
+    return any(d.get("state") == "error" and NETFAIL in (d.get("message") or "") for d in dests)
+
+
+def _notify_netfail():
+    st = state() or {}
+    if not net_failed(st.get("dests")):
+        return
+    try:
+        from app.insights import news
+        news._add(f"netfail:{st.get('pub_id')}", st.get("pub_id"), "telegram", "alert", NETFAIL_TEXT, level=3)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def start(draft: dict, report) -> None:
     """Публикует черновик (запускается в фоне через Jobs)."""
     if draft.get("extend"):
@@ -766,7 +789,8 @@ def _run(draft, report, only):
     st = state()
     ok = sum(1 for d in st["dests"] if d["state"] == "done")
     bad = sum(1 for d in st["dests"] if d["state"] == "error")
-    report(progress=1.0, message=f"опубликовано: {ok}" + (f", ошибок: {bad}" if bad else ""))
+    _notify_netfail()
+    report(progress=1.0, message=f"опубликовано: {ok}" + (f", ошибок: {bad}" if bad else "") + (" — нет связи с api.telegram.org" if net_failed(st["dests"]) else ""))
 
 
 class _Done(Exception):

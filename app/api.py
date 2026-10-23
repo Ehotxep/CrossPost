@@ -97,7 +97,7 @@ class Api:
         return PS.module_on(key)
 
     # --- панель процессов: всё, что сейчас идёт в фоне ---
-    JOB_LABELS = {"ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды e6ai", "trends"), "trends:e621": ("Тренды e621", "trends"),
+    JOB_LABELS = {"tg:pool": ("Запас прокси Telegram", "settings:net"), "ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды e6ai", "trends"), "trends:e621": ("Тренды e621", "trends"),
                   "e6db": ("База тегов e6ai", "settings:tags"), "tagger:install": ("Установка теггера", "settings:tags"),
                   "tagger:run": ("Подбор тегов", "post"), "publish": ("Публикация", "post"),
                   "tg:sync": ("Загрузка из Telegram", "settings:import"), "insights:tag": ("Разметка истории теггером", "stats"),
@@ -405,6 +405,17 @@ class Api:
 
     def tg_forget_proxy(self, host: str, port: int):
         return self.tg.forget_proxy(host, port)
+
+    def tg_pool_set(self, changes: dict):
+        """Запас прокси из открытых списков: включить/выключить, сколько держать, откуда брать."""
+        from app.telegram import proxy_pool
+        proxy_pool.set_cfg(self.tg, changes)
+        return self.tg.status()
+
+    def tg_pool_refresh(self):
+        """Пополнить запас прокси сейчас (в фоне: скачать списки, проверить, оставить рабочие)."""
+        from app.telegram import proxy_pool
+        return self.jobs.start("tg:pool", lambda report: proxy_pool.refresh(self.tg, report))
 
     def tg_send_code(self, phone: str):
         return self.tg.send_code(phone)

@@ -161,6 +161,12 @@ def _loop(api, every):
         threading.Thread(target=post_stats.track_tick, args=(api.tg,), daemon=True, name="track").start()
         from app.worker import _e6_check
         threading.Thread(target=_e6_check, daemon=True, name="e6learn").start()
+        try:   # запас прокси из открытых списков (если включён) — и из окна, не только из фоновой отправки
+            from app.telegram import proxy_pool
+            if proxy_pool.due(api.tg):
+                threading.Thread(target=lambda: proxy_pool.refresh(api.tg), daemon=True, name="proxypool").start()
+        except Exception:  # noqa: BLE001
+            pass
         time.sleep(every)
 
 
@@ -207,5 +213,5 @@ def tick(api):
         bad = sum(1 for d in dests if d.get("state") == "error")
         state = "failed" if (j and j["state"] == "error") or (dests and ok == 0) else ("partial" if bad else "done")
         _set(r["id"], state=state, pub_id=st.get("pub_id"), done_at=_now().isoformat(timespec="seconds"),
-             error=(j or {}).get("error") or (f"ошибок: {bad}" if bad else None))
+             error=(j or {}).get("error") or (((runner.NETFAIL_TEXT if runner.net_failed(dests) else f"ошибок: {bad}") if bad else None)))
         return   # следующий — на следующем проходе

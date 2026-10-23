@@ -149,7 +149,11 @@
     const j = s.info && s.info.pub_job;
     if (j && (j.state === "running" || (s.pubJob && s.pubJob.state === "running"))) {
       const st = await C().api("post_state");
+      const was = s.pubJob && s.pubJob.state === "running";
       s.pubState = st.state; s.pubJob = st.job;
+      const dd = (st.state && st.state.dests) || [];
+      if (was && st.job && st.job.state !== "running" && dd.some((d) => d.state === "error" && /api\.telegram\.org/.test(d.message || "")))
+        C().toast("Публикация в Telegram не прошла: нет связи с api.telegram.org. Включите MTProto или запас прокси в «Настройки» → «Соединение»", "error");
     }
     if (s.view === "settings" && s.tagger && ((s.tagger.job && s.tagger.job.state === "running") || s.tagWaiting)) {
       s.tagger = await C().api("tagger_status");
@@ -785,15 +789,19 @@
     s.cal = s.cal || {};
     try {
       const r = await C().api("calendar_month", { ym });
+      const prev = s.cal[ym];
       s.cal[ym] = r;
+      if (!r._cache || !r._cache.stale || !prev || !prev._cache || prev._cache.at !== r._cache.at) s.calTries = 0;
       if (r._cache && r._cache.stale) {   // данные поменялись — пересчёт идёт в фоне, через 2 с спросим снова
         clearTimeout(s.calPoll);
-        s.calPoll = setTimeout(async () => { if (s.view === "history") { await loadCalendar(true); quietHistory(); } }, 2000);
+        s.calTries = (s.calTries || 0) + 1;
+        if (s.calTries <= 5) s.calPoll = setTimeout(async () => { if (s.view === "history") { await loadCalendar(true); quietHistory(); } }, 2000 * s.calTries);
       }
     } catch (e) { s.cal[ym] = { error: e.message }; }
     if (!quiet) return;
   }
   function quietHistory() {
+    if (S().pstatOpen || S().viewFile) return;   // открытую шторку/просмотр не перерисовываем
     const ae = document.activeElement;
     if (ae && C().$main.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
     if (S().view === "history") C().render();
@@ -985,7 +993,13 @@
   function drawerHtml(key) {
     const s = S(), [kind, idStr] = String(key).split(":"), id = +idStr;
     let img = "", title = "", sub = "", badges = "", big = "";
-    if (kind === "pub") {
+    if (kind === "cal") {   // пост с площадки (ВК, Bluesky, e6ai…) или склейка копий — данные берём из самого календаря
+      const it = calItems()[String(key).slice(4)] || {};
+      title = (it.text || "").split("\n")[0].slice(0, 80) || "Без названия";
+      img = it.preview ? `<img src="/mthumb/${encodeURIComponent(it.preview)}?t=${tok()}" alt="">` : `<span class="hthumb">${phHtml(it)}</span>`;
+      big = it.preview ? `/media/${encodeURIComponent(it.preview)}?t=${tok()}` : "";
+      sub = it.day ? `${it.day.slice(8)}.${it.day.slice(5, 7)}.${it.day.slice(0, 4)} ${it.time}` : "";
+    } else if (kind === "pub") {
       const r = (s.hist || []).find((x) => x.id === id);
       const d = (s.pstat || {})[key];
       title = r ? (r.title || (r.text || "").split("\n")[0].slice(0, 80)) : (d && d.title) || "Публикация";
@@ -1007,9 +1021,17 @@
         <div class="dh">${img || `<div class="noimg"></div>`}
           <div style="min-width:0;display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">${esc(title || "Без названия")}</b>
             <span class="muted small">${sub}</span>${badges}
-            ${(() => { const d = (s.pstat || {})[key] || {}; if (kind === "pub") return ""; const t = d.text && d.text.length > (title || "").length ? esc(d.text.slice(0, 140)) : ""; const hint = !d.preview && d.media !== "text" ? "Превью нет: файла не было в выгрузке. Сделайте экспорт канала с включёнными фото и видео и импортируйте снова — превью добавятся." : ""; return t || hint ? `<span class="muted small">${t}${t && hint ? "<br>" : ""}${hint}</span>` : ""; })()}</div>
+            ${(() => { const d = (s.pstat || {})[key] || {}; if (kind === "pub" || kind === "cal") return ""; const t = d.text && d.text.length > (title || "").length ? esc(d.text.slice(0, 140)) : ""; const hint = !d.preview && d.media !== "text" ? "Превью нет: файла не было в выгрузке. Сделайте экспорт канала с включёнными фото и видео и импортируйте снова — превью добавятся." : ""; return t || hint ? `<span class="muted small">${t}${t && hint ? "<br>" : ""}${hint}</span>` : ""; })()}</div>
           <button class="icon-btn" data-pa="pstat-close" aria-label="Закрыть">${C().ICON.close}</button></div>
-        <div class="db">${pstatHtml(key)}</div></aside>`;
+        <div class="db">${String(key).startsWith("cal:") ? calStatHtml(String(key).slice(4)) : pstatHtml(key)}</div></aside>`;
+  }
+  function calStatHtml(ik) {
+    const it = calItems()[ik];
+    if (!it) return `<p class="muted">Пост не найден</p>`;
+    const n = C().num, parts = it.parts && it.parts.length ? it.parts : [{ plat: it.ext || it.platform, label: (it.channels || [""])[0], link: it.link, index: it.index, views: it.views, reactions: it.reactions, est: it.est }];
+    return parts.map((p) => `<div class="pdest"><div class="pdhead">${C().pbadge(p.plat)}<b>${esc(p.label || (PLAT[p.plat] || [, p.plat])[1])}</b>${p.link && /^https?:/.test(p.link) ? `<a href="#" data-open="${esc(p.link)}" class="small">открыть на площадке</a>` : ""}</div>
+      <div class="pdm">${p.views != null ? `<span>Просмотры: <b>${n(p.views)}</b></span> ` : ""}<span>Реакции: <b>${n(p.reactions || 0)}</b></span>
+      ${p.index != null ? ` <span>Успех: ${C().badges ? C().badges({ index: p.index, est: p.est, sm: true }) : "×" + Number(p.index).toFixed(2).replace(".", ",")}</span>` : ` <span class="muted small">индекс появится через несколько дней или когда на площадке наберётся достаточно постов</span>`}</div></div>`).join("");
   }
   function bigHtml(src, full, extra) {
     return `${full ? `<div class="backdrop"></div>` : ""}<div class="bigprev ${full ? "full" : ""}"><div class="bpstage"><img src="${src}" alt="" draggable="false" onload="window.Pub.bpInit(this)" onerror="this.closest('.bigprev').remove()"></div>${extra || ""}</div>`;
@@ -1123,6 +1145,7 @@
     const s = S(), api = C().api, [kind, id] = String(key).split(":");
     hideHoverCard();
     s.pstatOpen = key; s.pstatErr = ""; s.pstat = s.pstat || {}; C().render();
+    if (kind === "cal") return;
     try { s.pstat[key] = kind === "pub" ? await api("pub_stats", { pub_id: +id }) : await api("post_detail", { post_id: +id }); }
     catch (err) { s.pstat[key] = { error: err.message }; }
     C().render();
@@ -1724,7 +1747,7 @@
         C().render(); return true;
       }
       if (it && (it.pub_id || it.post_id)) await openDrawer(it.pub_id ? "pub:" + it.pub_id : "post:" + it.post_id);
-      else if (it && it.link) C().api("open_url", { url: it.link }).catch(() => {});
+      else if (it) await openDrawer("cal:" + it.key);
       return true;
     }
     const hs = e.target.closest('[data-set="hf"],[data-set="histMode"]');

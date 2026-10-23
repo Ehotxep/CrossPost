@@ -249,6 +249,15 @@ class Worker:
                             finally:
                                 self._vk_busy = False
                         threading.Thread(target=_vk, daemon=True, name="vkstats").start()
+                from app.telegram import proxy_pool
+                if proxy_pool.due(self.api.tg):   # запас прокси из открытых списков — раз в 6 часов или когда рабочих мало
+                    def _pool():
+                        try:
+                            with perf.track("запас прокси"):
+                                proxy_pool.refresh(self.api.tg)
+                        except Exception as e:  # noqa: BLE001
+                            _log(f"запас прокси: {e}")
+                    threading.Thread(target=_pool, daemon=True, name="proxypool").start()
             except Exception as e:  # noqa: BLE001
                 _log(f"замеры: {e}")
             self.stop.wait(EVERY)

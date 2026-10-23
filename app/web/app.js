@@ -1124,10 +1124,27 @@
       h += `<div class="lbl" style="margin-top:6px">Прокси в запасе (${bk.length})</div><div class="kvlist">${bk.map((x) => {
         const on = x.host === cur.host && String(x.port) === String(cur.port);
         const ftls = x.type === "mtproxy" && String(x.secret || "").toLowerCase().startsWith("ee");
-        return `<div><span>${x.type === "mtproxy" ? "MTProxy" : "SOCKS5"} · ${esc(x.host)}:${esc(x.port)}${ftls ? " · FakeTLS" : ""}${on ? " · <b>сейчас</b>" : ""}</span>
+        return `<div><span>${x.type === "mtproxy" ? "MTProxy" : "SOCKS5"} · ${esc(x.host)}:${esc(x.port)}${ftls ? " · FakeTLS" : ""}${x.ms ? ` · ${x.ms} мс` : ""}${x.fails ? ` · <span class="err">не отвечал</span>` : ""}${on ? " · <b>сейчас</b>" : ""}</span>
           <button class="btn small" data-proxyforget="${esc(x.host)}|${esc(x.port)}" ${S.tgBusy ? "disabled" : ""}>Забыть</button></div>`; }).join("")}</div>`;
       if (t.net.faketls === false && bk.some((x) => String(x.secret || "").toLowerCase().startsWith("ee")))
         h += `<p class="err small">Для прокси FakeTLS (секрет начинается с ee) нужна библиотека TelethonFakeTLS — запустите Install.bat ещё раз.</p>`;
+    }
+    const pl = t.net && t.net.pool;
+    if (pl) {
+      const ago = pl.at ? Math.max(0, Math.round((Date.now() / 1000 - pl.at) / 60)) : null;
+      const agoTxt = ago == null ? "" : ago < 1 ? "только что" : ago < 60 ? `${ago} мин назад` : `${Math.round(ago / 60)} ч назад`;
+      h += `<div class="poolbox"><div class="lbl">Запас прокси из открытых списков ${hint("Из открытых списков на GitHub скачиваются MTProxy, проверяются настоящим подключением к Telegram, и рабочие попадают в «Прокси в запасе». Раз в 6 часов запас перепроверяется и пополняется. Нужны сохранённые api_id и api_hash. Работает для статистики и для бота в режиме MTProto; обычный Bot API через MTProxy не ходит.")}</div>
+        <label class="tgl"><input type="checkbox" data-pool="enabled" ${pl.enabled ? "checked" : ""}><span>Пополнять запас автоматически</span></label>
+        <p class="muted small" style="margin:4px 0 8px">Хозяева бесплатных прокси видят ваш IP и то, что вы подключаетесь к Telegram; содержимое они не читают — оно зашифровано между вами и Telegram. Бесплатные прокси живут часами или днями, поэтому запас обновляется сам.</p>
+        ${pl.enabled && t.net.faketls === false ? `<p class="err small" style="margin:0 0 8px">Не установлена библиотека TelethonFakeTLS — прокси FakeTLS (секрет ee…, а их в списках большинство) пропускаются. Запустите Install.bat ещё раз.</p>` : ""}
+        ${pl.enabled ? `<div class="row" style="align-items:flex-end;gap:12px"><div class="field" style="flex:0 0 140px"><label for="poolt">Держать в запасе</label>
+            <select id="poolt" data-pool="target">${[5, 10, 15, 20].map((v) => `<option value="${v}" ${pl.target === v ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+          <button class="btn primary" data-action="pool-refresh" ${S.poolBusy || pl.running ? "disabled" : ""}>${S.poolBusy || pl.running ? "Проверяю…" : "Пополнить сейчас"}</button>
+          <span class="muted small">${esc(pl.msg || "")}${agoTxt ? ` · ${agoTxt}` : ""}</span></div>
+        <details class="more" style="margin-top:8px"><summary>Откуда берутся прокси</summary><div class="morebody">
+          <textarea id="poolsrc" rows="4" spellcheck="false">${esc((pl.sources || []).join("\n"))}</textarea>
+          <span class="muted small">По одной ссылке (https://) в строке: файл со ссылками tg://proxy?… или t.me/proxy?…</span>
+          <div style="display:flex;gap:8px;margin-top:6px"><button class="btn small" data-action="pool-src">Сохранить источники</button><button class="btn small ghost" data-action="pool-src-reset">Вернуть стандартные</button></div></div></details>` : ""}</div>`;
     }
     h += `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
         <button class="btn primary" data-action="net-check" ${S.tgBusy ? "disabled" : ""}>Проверить связь</button>
@@ -1389,6 +1406,26 @@
       } catch (err) { S.tgErr = err.message; }
       S.tgBusy = false; render(); return;
     }
+    const pa = e.target.closest('[data-action="pool-refresh"],[data-action="pool-src"],[data-action="pool-src-reset"]');
+    if (pa) {
+      const act = pa.dataset.action;
+      try {
+        if (act === "pool-src" || act === "pool-src-reset") {
+          S.tg = await api("tg_pool_set", { changes: { sources: act === "pool-src-reset" ? "" : (document.getElementById("poolsrc") || {}).value || "" } });
+          toast(act === "pool-src" ? "Источники сохранены" : "Стандартные источники возвращены", "ok");
+        } else {
+          S.poolBusy = true; S.tgErr = ""; render();
+          await api("tg_pool_refresh");
+          for (let i = 0; i < 200; i++) {   // ждём конца проверки (до ~10 минут)
+            await new Promise((r) => setTimeout(r, 3000));
+            S.tg = await api("tg_status"); render();
+            if (!(S.tg.net && S.tg.net.pool && S.tg.net.pool.running)) break;
+          }
+        }
+        S.netDraft = null;
+      } catch (err) { S.tgErr = err.message; }
+      S.poolBusy = false; render(); return;
+    }
     const pf = e.target.closest("[data-proxyforget]");
     if (pf) {
       const [host, port] = pf.dataset.proxyforget.split("|");
@@ -1527,6 +1564,11 @@
       try { S.info.modules = await api("modules_set_many", { changes: Object.fromEntries(f[3].map((k) => [k, on])) }); }
       catch (err) { e.target.checked = !on; return; }
       applyModules(); S.plan = null; await window.Pub.load("settings"); render(); return;
+    }
+    if (e.target.dataset.pool) {   // запас прокси: вкл/выкл, сколько держать
+      const k = e.target.dataset.pool;
+      try { S.tg = await api("tg_pool_set", { changes: { [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value } }); S.netDraft = null; } catch (err) { S.tgErr = err.message; }
+      render(); return;
     }
     if (e.target.dataset.mod) {   // переключатель модуля
       const k = e.target.dataset.mod;
