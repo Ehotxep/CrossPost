@@ -1398,4 +1398,19 @@ class Api:
     def pub_stats_refresh(self, pub_id: int):
         """Снять цифры поста прямо сейчас (Telegram, через вход по API)."""
         from app.insights import post_stats
-        return self.jobs.start(f"pubstats:{int(pub_id)}", lambda report: post_stats.refresh_publication(self.tg, int(pub_id), report))
+        from app.publish import settings as PS, vk_stats
+
+        def run(report):
+            post_stats.refresh_publication(self.tg, int(pub_id), report)
+            import json as _json
+            rows = post_stats._pubs(pub_id=int(pub_id))
+            vk = PS.load(raw=True)["vk"]
+            dests = _json.loads(rows[0]["dests"] or "[]") if rows else []
+            if any(d.get("key") == "vk" and d.get("state") == "done" for d in dests) and vk.get("browser_ok"):
+                report(message="Обновляю цифры ВК (сбор статистики через браузер)…")
+                try:
+                    vk_stats.run_and_record(headless=not vk.get("show_window", True), wait=60)
+                    report(progress=1.0, message="Цифры обновлены (Telegram и ВК)")
+                except Exception as e:  # noqa: BLE001 — Telegram уже обновлён, ВК — по возможности
+                    report(progress=1.0, message=f"Telegram обновлён, ВК не вышло: {str(e)[:160]}")
+        return self.jobs.start(f"pubstats:{int(pub_id)}", run)

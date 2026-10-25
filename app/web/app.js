@@ -234,7 +234,7 @@
   // o: {kind, n, rank, scope, index, est, kinds: false — не показывать IMG (только GIF/VID)}
   function badges(o) {
     const k = o.kind === "gif" || o.kind === "vid" ? kindBadge(o.kind) : "";   // обычные картинки без значка
-    const top = medal(o.rank, o.scope) + hotBadge(o.index, o.est);
+    const top = o.single ? (medal(o.rank, o.scope) || hotBadge(o.index, o.est)) : medal(o.rank, o.scope) + hotBadge(o.index, o.est);   // single — один значок (в календаре тесно)
     return top || k ? `<span class="bdg ${o.sm ? "sm" : ""}">${top ? `<span class="br">${top}</span>` : ""}${k}</span>` : "";
   }
   window.CP = { toast, LV, api, S, store, esc, num, plural, seg, hint, ICON, pbadge, PLAT, badges, newsStrip: () => window.CP_newsStrip ? window.CP_newsStrip() : "", pollActs: () => pollActs(), render: () => render(), $main, loadInfo: () => loadInfo(),
@@ -534,25 +534,55 @@
     const m = Math.round((Date.now() - new Date(iso)) / 60000);
     return m < 1 ? "только что" : m < 60 ? `${m} мин назад` : m < 1440 ? `${Math.round(m / 60)} ч назад` : `${Math.round(m / 1440)} дн назад`;
   };
-  function newsItemHtml(x) {
+  function newsItemHtml(x, extra) {
     const tok = encodeURIComponent(window.API_TOKEN);
-    return `<button class="nitem ${x.read ? "" : "unread"} k-${esc(x.kind)} l${x.level || 1}" data-news-pub="${x.pub_id || ""}">
+    const plats = extra && extra.plats && extra.plats.length > 1 ? extra.plats : [x.platform];
+    return `<button class="nitem ${x.read && !(extra && extra.unread) ? "" : "unread"} k-${esc(x.kind)} l${x.level || 1} ${extra && extra.sub ? "sub" : ""}" data-news-pub="${x.pub_id || ""}">
       <span class="nth">${x.pub_id ? `<img src="/pthumb/${x.pub_id}?t=${tok}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}<span class="nic">${ICON[NEWS_ICON[x.kind]] || ICON.bell}</span></span>
-      <span class="ntx"><span>${esc(x.text)}</span><span class="muted small">${pbadge(x.platform, { sm: true })} ${ago(x.at)}</span></span></button>`;
+      <span class="ntx"><span>${esc(x.text)}${extra && extra.times > 1 ? ` <span class="muted small">· ×${extra.times}</span>` : ""}</span><span class="muted small">${plats.map((p) => pbadge(p, { sm: true })).join(" ")} ${ago(x.at)}</span></span></button>`;
+  }
+  // Новости об одном арте — одной карточкой: главная (самая важная, при равенстве — свежая), остальное — по кнопке «ещё N».
+  // Повторы одного вида на одной площадке («+44 просмотров за час», потом «+36»…) сворачиваются в последний с числом повторов.
+  function newsGroups(items) {
+    const byPub = new Map(), out = [];
+    for (const x of [...(items || [])].sort((a, b) => String(b.at).localeCompare(String(a.at)))) {
+      if (!x.pub_id) { out.push({ head: x, rest: [], plats: [x.platform], unread: !x.read, at: x.at }); continue; }
+      let g = byPub.get(x.pub_id);
+      if (!g) { g = { all: [], at: x.at }; byPub.set(x.pub_id, g); out.push(g); }
+      g.all.push(x);
+    }
+    return out.map((g) => {
+      if (g.head) return g;
+      const seen = new Map();
+      for (const x of g.all) {   // items идут от новых к старым — первый встреченный и есть последний
+        const k = x.platform + "|" + x.kind;
+        if (seen.has(k)) seen.get(k).times++; else seen.set(k, { x, times: 1 });
+      }
+      const list = [...seen.values()];
+      const head = list.reduce((m, c) => ((c.x.level || 1) > (m.x.level || 1) ? c : m), list[0]);
+      return { head: head.x, headTimes: head.times, rest: list.filter((c) => c !== head), plats: [...new Set(g.all.map((x) => x.platform))],
+               unread: g.all.some((x) => !x.read), at: g.at, pub: head.x.pub_id };
+    });
+  }
+  function newsGroupHtml(g) {
+    const open = g.pub && S.newsOpen && S.newsOpen.has(g.pub);
+    return `<div class="ngrp">${newsItemHtml(g.head, { plats: g.plats, unread: g.unread, times: g.headTimes })}
+      ${g.rest.length ? `<button class="nmore" data-news-more="${g.pub}" aria-expanded="${!!open}">${open ? "Свернуть" : `Ещё по этому арту: ${g.rest.length}`}</button>` : ""}
+      ${open ? g.rest.map((c) => newsItemHtml(c.x, { sub: true, times: c.times })).join("") : ""}</div>`;
   }
   function newsPopHtml() {
     const n = S.news;
     if (!n) return `<p class="muted">Загрузка…</p>`;
     const vol = n.volume || "normal";
-    return `<div class="nhead"><b>Новости по свежим артам</b>${hint("Раз в полторы минуты смотрю публикации последних 7 дней. Что считать новостью — по вашей же истории: хит — пост лучше 90% постов канала, «много реакций» — больше, чем у 90% постов к этому же часу. «Мало» — только хиты и супер-хиты, «много» — ещё и «лучше обычного» (лучше 75%).")}
+    return `<div class="nhead"><b>Новости по свежим артам</b>${hint("Раз в полторы минуты смотрю публикации последних 7 дней. Что считать новостью — по вашей же истории: хит — пост лучше 90% постов канала, «много реакций» — больше, чем у 90% постов к этому же часу. «Мало» — только хиты и супер-хиты, «много» — ещё и «лучше обычного» (лучше 75%). Новости об одном арте собраны в одну карточку.")}
         <span style="margin-left:auto" class="seg sm">${[["few", "Мало"], ["normal", "Средне"], ["many", "Много"]].map(([k, l]) => `<button class="${k === vol ? "on" : ""}" data-nvol="${k}" aria-pressed="${k === vol}">${l}</button>`).join("")}</span></div>
-      ${n.items.length ? `<div class="nlist">${n.items.map(newsItemHtml).join("")}</div>` : `<p class="muted small" style="padding:6px 4px">Пока тихо. Здесь появятся хиты, всплески реакций и новые комментарии к свежим постам.</p>`}`;
+      ${n.items.length ? `<div class="nlist">${newsGroups(n.items).map(newsGroupHtml).join("")}</div>` : `<p class="muted small" style="padding:6px 4px">Пока тихо. Здесь появятся хиты, всплески реакций и новые комментарии к свежим постам.</p>`}`;
   }
   function newsStripHtml() {
-    const items = ((S.news && S.news.items) || []).filter((x) => Date.now() - new Date(x.at) < 3 * 864e5).slice(0, 4);
+    const items = newsGroups(((S.news && S.news.items) || []).filter((x) => Date.now() - new Date(x.at) < 3 * 864e5)).slice(0, 4);
     if (!items.length) return `<div id="newsstrip"></div>`;
     return `<section class="card newsstrip" id="newsstrip"><div class="head"><h2>${ICON.bell} Новости по свежим артам</h2><button class="btn small ghost" data-news-all="1">Все новости</button></div>
-      <div class="nrow">${items.map(newsItemHtml).join("")}</div></section>`;
+      <div class="nrow">${items.map((g) => newsItemHtml(g.head, { plats: g.plats, unread: g.unread, times: g.headTimes })).join("")}</div></section>`;
   }
   window.CP_newsStrip = newsStripHtml;
   paintTagger();
@@ -571,6 +601,13 @@
     const pop = document.getElementById("newspop");
     const all = e.target.closest("[data-news-all]");
     if (all) { pop.hidden = false; pop.innerHTML = newsPopHtml(); return; }
+    const mr = e.target.closest("[data-news-more]");
+    if (mr) {
+      const id = +mr.dataset.newsMore;
+      S.newsOpen = S.newsOpen || new Set();
+      if (S.newsOpen.has(id)) S.newsOpen.delete(id); else S.newsOpen.add(id);
+      pop.innerHTML = newsPopHtml(); return;
+    }
     const nv = e.target.closest("[data-nvol]");
     if (nv) {
       try { S.info.settings = await api("settings_save", { changes: { news_volume: nv.dataset.nvol } }); } catch (err) { alert(err.message); return; }

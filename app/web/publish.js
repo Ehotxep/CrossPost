@@ -814,10 +814,6 @@
     return out;
   }
   const PLAT = { telegram: ["TG", "Telegram"], vk: ["ВК", "ВКонтакте"], bsky: ["Bs", "Bluesky"], e6ai: ["e6", "e6ai"], e621: ["621", "e621"], da: ["DA", "DeviantArt"] };
-  function platChips(it) {
-    const set = [...new Set((it.parts || []).map((p) => p.plat))];
-    return set.length ? `<span class="cwp">${set.map((p) => `<i class="pl-${p}">${(PLAT[p] || [p])[0]}</i>`).join("")}</span>` : "";
-  }
   function suggestHtml(c) {
     const items = calItems(), ICON = C().ICON;
     const list = (c.suggestions || []).filter((x) => items[x.ka] && items[x.kb]);
@@ -862,9 +858,8 @@
       const show = list.slice(0, 4), more = list.length - show.length;
       const n = show.length;
       const works = show.map((it, i) => `<button class="cw ${(s.calSel || []).includes(it.key) ? "picked" : ""}" data-cw="${esc(it.key)}" aria-label="${esc(it.text || it.channels.join(", "))}">
-          ${platChips(it)}
           ${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : phHtml(it)}
-          ${C().badges({ kind: it.kind, n: it.n_media, kinds: false, rank: rankOf[it.key], scope: "за месяц", index: it.index, est: it.est, sm: true })}
+          ${C().badges({ kind: it.kind, n: it.n_media, kinds: false, single: true, rank: rankOf[it.key], scope: "за месяц", index: it.index, est: it.est, sm: true })}
           ${mk(it.index, it.est)}${i === 3 && more > 0 ? `<span class="more">+${more}</span>` : ""}${it.app ? "" : ""}</button>`).join("");
       const plan = sc.map((x) => `<div class="cs" draggable="true" data-sid="${x.sid}" data-tip="Запланировано: ${esc(x.title || "пост")}, ${x.time}. Перетащите на другой день, чтобы перенести.">
           ${x.file ? `<img src="/uthumb/${esc(x.file)}?t=${tok()}" alt="" onerror="this.style.display='none'">` : ""}<span>${ICON.clock}${x.time}</span></div>`).join("");
@@ -910,7 +905,7 @@
           ${it.by_views ? `<span>Реакции<b>${n(it.reactions || 0)}</b></span>` : ""}<span>Пересылки<b>${n(it.forwards || 0)}</b></span></div>
         ${it.index != null ? `<span class="small">${it.est ? `Идёт на ${mult(it.index)} к норме канала${it.proj ? `, ждём ≈${n(it.proj)} за неделю` : ""} — оценка по ${Math.round(it.age_h)} ч` : `${mult(it.index)} к норме канала`}</span>` : `<span class="muted small">Статистики нет: канал не подключён к «Статистике»</span>`}
         ${(it.parts || []).length > 1 ? `<div class="hcparts">${it.parts.map((p) => `<span><i class="pl-${p.plat}">${(PLAT[p.plat] || [p.plat])[0]}</i>${esc(p.label)}<b>${p.index != null ? mult(p.index) : "—"}</b></span>`).join("")}</div>` : ""}
-        <span class="muted small">${it.pub_id || it.post_id ? "Нажмите, чтобы открыть подробную статистику" : "Нажмите, чтобы открыть пост на площадке"}</span></div>`;
+        <span class="muted small">${it.pub_id || it.post_id ? "Нажмите, чтобы открыть статистику" : "Нажмите, чтобы открыть статистику поста"}</span></div>`;
   }
   let hcTimer = null;
   function showHoverCard(el) {

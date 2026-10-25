@@ -131,6 +131,90 @@ def save(rows: list[dict], at: int | None = None) -> int:
     return n
 
 
+# --- живые цифры со страницы «Статистика записи» ---------------------------------------------
+# Таблица в кабинете статистики отстаёт от стены, а страница записи (…?w=posts_reach_wall…) показывает текущие цифры:
+# «Просмотры записи», подписчики / не подписчики, «Обратная связь» — лайки, репосты, комментарии. Разметку не угадываем,
+# читаем текст окна по подписям: так мелкие правки вёрстки ломают меньше.
+
+def _num(t: str):
+    t = (t or "").replace("\u00a0", " ").replace("\u202f", " ").strip()
+    return int(re.sub(r"\s+", "", t)) if re.fullmatch(r"\d{1,3}(?: \d{3})*|\d+", t) else None
+
+
+def parse_post_stats(text: str) -> dict | None:
+    """Текст окна «Статистика записи» → {views, likes, reposts, comments, subs, nonsubs} или None."""
+    lines = [x.strip() for x in (text or "").replace("\r", "").split("\n") if x.strip()]
+    low = [x.lower() for x in lines]
+    try:
+        i = next(k for k, x in enumerate(low) if x.startswith("просмотры записи"))
+    except StopIteration:
+        return None
+    out: dict = {}
+    for x in lines[i + 1:i + 5]:
+        v = _num(x)
+        if v is not None:
+            out["views"] = v
+            break
+    for x in lines[i + 1:i + 8]:
+        m = re.fullmatch(r"(\d[\d ]*)\s*/\s*(\d[\d ]*)", x.replace("\u00a0", " "))
+        if m:
+            out["subs"], out["nonsubs"] = _num(m.group(1)), _num(m.group(2))
+            break
+    try:
+        j = next(k for k, x in enumerate(low) if k > i and x.startswith("обратная связь"))
+        nums = []
+        for x in lines[j + 1:j + 8]:
+            v = _num(x)
+            if v is not None:
+                nums.append(v)
+            if len(nums) == 3:
+                break
+        if len(nums) == 3:
+            out["likes"], out["reposts"], out["comments"] = nums
+    except StopIteration:
+        pass
+    return out if "views" in out else None
+
+
+def live_post(page, key: str) -> dict | None:
+    """Открыть статистику записи и прочитать текущие цифры. None — окно не открылось или текст не разобрался."""
+    from app.publish import browser as B
+    page.goto(f"https://vk.ru/wall{key}?w=posts_reach_wall{key}", wait_until="domcontentloaded", timeout=45000)
+    try:
+        page.wait_for_function("() => /Просмотры записи/i.test(document.body.innerText)", timeout=15000)
+    except Exception:  # noqa: BLE001
+        B.dump(page, "vk_post_live")
+        return None
+    for _ in range(2):   # цифры подгружаются чуть позже заголовка
+        page.wait_for_timeout(700)
+        res = parse_post_stats(page.evaluate("() => document.body.innerText"))
+        if res and "likes" in res:
+            return res
+    B.dump(page, "vk_post_live")
+    return res
+
+
+def overlay_live(page, rows: dict, report, days: int = 10, limit: int = 12) -> int:
+    """Поверх цифр таблицы — живые цифры свежих постов. Ошибка на одном посте остальных не останавливает."""
+    edge, n, tried = time.time() - days * 86400, 0, 0
+    for r in sorted(rows.values(), key=lambda x: -x["date"]):
+        if r["date"] < edge or tried >= limit:
+            break
+        tried += 1
+        report(message=f"ВК: живые цифры поста {tried}…")
+        try:
+            lv = live_post(page, r["key"])
+        except Exception:  # noqa: BLE001
+            lv = None
+        if not lv:
+            continue
+        for k in ("views", "likes", "reposts", "comments"):
+            if lv.get(k) is not None:
+                r[k] = lv[k]
+        n += 1
+    return n
+
+
 # --- открыть страницу и собрать ------------------------------------------------------------
 
 def stats_url(vk: dict) -> str:
@@ -200,16 +284,22 @@ def collect(report=lambda **kw: None, days: int = 45, max_pages: int = 15, headl
                 break
             pages += 1
             report(progress=min(0.3 + 0.6 * pages / max_pages, 0.9), message=f"Читаю таблицу постов… ({pages * 20})")
+        rows = {}
+        for t in col.tables:
+            for r in rows_of(t):
+                rows[r["key"]] = r
+        live = 0
+        if rows:
+            try:
+                live = overlay_live(page, rows, report)
+            except Exception:  # noqa: BLE001 — живые цифры — добавка, таблица всё равно сохранится
+                pass
         B.save_cookies(ctx)
-    rows = {}
-    for t in col.tables:
-        for r in rows_of(t):
-            rows[r["key"]] = r
     if not rows:
         raise PlatformError("Таблица постов пришла пустой — ВК мог поменять страницу. Нажмите «Снять образец» и пришлите архив")
     n = save(list(rows.values()))
-    report(progress=1.0, message=f"ВК: прочитано постов {len(rows)}, новых замеров {n}")
-    return {"posts": len(rows), "snaps": n}
+    report(progress=1.0, message=f"ВК: прочитано постов {len(rows)}, новых замеров {n}" + (f", живые цифры: {live}" if live else ""))
+    return {"posts": len(rows), "snaps": n, "live": live}
 
 
 # --- для экранов --------------------------------------------------------------------------

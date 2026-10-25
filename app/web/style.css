@@ -1016,10 +1016,9 @@ body.working { cursor: progress; }
 /* календарь: выбор и объединение работ, значки площадок, подсказки */
 .cw.picked { outline: 2px solid var(--accent, #7c8cff); outline-offset: -2px; }
 .cw.picked::after { content: "✓"; position: absolute; right: 3px; bottom: 3px; width: 16px; height: 16px; border-radius: 999px; background: var(--accent, #7c8cff); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
-.cwp { position: absolute; left: 3px; top: 3px; display: flex; gap: 2px; z-index: 2; }
-.cwp i, .hcparts i { font-style: normal; font-size: 9px; font-weight: 700; line-height: 13px; padding: 0 3px; border-radius: 4px; color: #fff; background: #5b6472; }
-.pl-telegram { background: #2a8fd0 !important; } .pl-vk { background: #3f6fd8 !important; } .pl-bsky { background: #1f7ae0 !important; } .pl-e6ai, .pl-e621 { background: #1f3c6e !important; } .pl-da { background: #05a36a !important; }
-@media (max-width: 900px) { .cwp { display: none; } }
+.hcparts i { font-style: normal; font-size: 9px; font-weight: 700; line-height: 13px; padding: 0 3px; border-radius: 4px; color: #fff; background: #5b6472; }
+.pl-telegram { background: #2a8fd0 !important; } .pl-vk { background: #3f6fd8 !important; } .pl-bsky { background: #2bb7f0 !important; } .pl-e6ai, .pl-e621 { background: #8a5cd6 !important; } .pl-da { background: #05a36a !important; }
+
 .selbar { display: flex; align-items: center; gap: 8px; margin: 8px 0; padding: 8px 12px; border-radius: 10px; background: var(--card-3); font-size: 13px; }
 .btn.on { background: var(--accent-soft, var(--card-3)); color: var(--accent, inherit); }
 .sugg { margin: 8px 0 12px; } .sugg h3 { margin: 0 0 6px; font-size: 13px; }
@@ -1048,3 +1047,10 @@ body.working { cursor: progress; }
 /* запас прокси */
 .poolbox { margin: 10px 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--card-3); }
 .poolbox textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; }
+
+.ngrp { display: flex; flex-direction: column; gap: 0; }
+.nmore { align-self: flex-start; margin: 0 0 4px 60px; padding: 2px 8px; border: 0; border-radius: 999px; background: var(--card-3); color: var(--ink-2, inherit); font-size: 12px; cursor: pointer; }
+.nmore:hover { background: var(--card-2); }
+.nitem.sub { margin-left: 24px; padding-top: 4px; padding-bottom: 4px; opacity: .85; }
+.nitem.sub .nth { width: 32px; height: 32px; }
+.nitem.sub { grid-template-columns: 32px minmax(0, 1fr); font-size: 13px; }
