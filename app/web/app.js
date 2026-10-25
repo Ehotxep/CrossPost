@@ -280,6 +280,8 @@
       if (Date.now() - (S.statsAt || 0) > 15000) { S.statsAt = Date.now(); await loadStats(); render(); }
       return;
     }
+    // открыта шторка поста — тоже не трогаем: перерисовка каждую секунду (пока где-то идёт фоновая задача) заставляла её «дёргаться»
+    if (S.pstatOpen) return;
     // не перерисовываем экран, пока человек печатает — иначе слетит курсор и набранный текст
     const ae = document.activeElement;
     if (ae && $main.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && ae.type !== "checkbox") return;
