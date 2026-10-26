@@ -561,17 +561,20 @@
     // красным они становятся, только если нажать «Опубликовать» раньше времени
     const soft = (e) => /рейтинг|Добавьте/.test(e);
     const e6wait = (e) => /^(e6ai|e621): теги не готовы/.test(e);   // это уже видно в строке e6ai выше
-    const errs = (p.errors || []).filter((e) => (!soft(e) || s.tried) && !e6wait(e));
+    const noPlat = Array.isArray(p.configured) && !p.configured.length;   // ни одной подключённой и включённой площадки
+    const errs = (p.errors || []).filter((e) => (!soft(e) || s.tried) && !e6wait(e) && !(noPlat && /Ни одна площадка не настроена/.test(e)));
     let h = `<div class="side-sec"><div class="head"><h2>Публикация</h2>${will.length ? `<span class="muted small">${will.length} ${C().plural(will.length, "место", "места", "мест")}</span>` : ""}</div>`;
-    if (!p.dests.length && !p.not_configured.length) h += `<p class="muted">Площадки ещё не настроены.</p>`;
-    if (!d.rating) h += `<p class="muted small">Выберите рейтинг — здесь появится список мест.</p>`;
+    if (noPlat) h += `<div class="nohint" role="note"><b>Некуда публиковать</b><span>Ни одна площадка не подключена или не включена. Добавьте площадки в настройках — и здесь появится список мест.</span>
+        <button class="btn primary small" data-view-link="settings" data-tab="telegram">Открыть настройки площадок</button></div>`;
+    if (noPlat) { /* подсказка выше; список мест пока пуст */ }
+    else if (!d.rating) h += `<p class="muted small">Выберите рейтинг — здесь появится список мест.</p>`;
     else {
       h += `<div class="dlist">${will.map(row).join("")}${needs.map(row).join("")}${off.map(row).join("")}</div>`;
       if (doneL.length) h += `<div class="dlist donel"><span class="muted small">Уже опубликовано</span>${doneL.map((x) => `<div class="drow dim">${C().pbadge(x.platform, { cls: "" })}
         <span class="dn"><b>${esc(x.name.replace(/^[^·]+· /, ""))}</b><span>✓ ${esc(x.reason)}</span></span></div>`).join("")}</div>`;
       if (skip.length) h += `<details class="more"><summary>Не уйдёт: ${skip.length}</summary><div class="dlist">${skip.map(row).join("")}</div></details>`;
     }
-    if (p.not_configured.length) h += `<span class="muted small">Не подключены: ${esc(p.not_configured.join(", "))}. <a href="#" data-view-link="platforms" data-tab="telegram">Настроить</a></span>`;
+    if (p.not_configured.length && !noPlat) h += `<span class="muted small">Не подключены: ${esc(p.not_configured.join(", "))}. <a href="#" data-view-link="platforms" data-tab="telegram">Настроить</a></span>`;
     if (errs.length) h += `<ul class="errs">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`;
     h += `</div>`;
     if (d.rating && will.some((x) => x.key.startsWith("telegram:") && x.key !== "telegram:group")) h += `<div class="side-sec" id="fcbox">${fcHtml()}</div>`;
@@ -804,7 +807,7 @@
     if (S().pstatOpen || S().viewFile) return;   // открытую шторку/просмотр не перерисовываем
     const ae = document.activeElement;
     if (ae && C().$main.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
-    if (S().view === "history") C().render();
+    if (S().view === "history") C().softRender();
   }
   // все работы месяца по ключу — для карточки при наведении и шторки
   function calItems() {
@@ -831,6 +834,12 @@
       <button class="btn small" data-pa="cal-merge" ${sel.length < 2 ? "disabled" : ""}>Объединить</button>
       <button class="btn small ghost" data-pa="cal-split" ${multi ? "" : "disabled"}>Разъединить</button>
       <button class="btn small ghost" data-pa="cal-sel-off">Готово</button></div>`;
+  }
+  function leadersHtml(c, title) {
+    if (!c || !c.leaders || !c.leaders.length) return "";
+    return `<div class="leaders"><h3>${title || "Лидеры месяца"}</h3><div class="lrow">${c.leaders.map((it, i) => `<button class="ld" data-cw="${esc(it.key)}">
+          <span class="lt">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : phHtml(it)}${C().badges({ kind: it.kind, n: it.n_media, rank: it.index != null ? i + 1 : 0, scope: "за месяц", index: it.index, est: it.est, sm: true })}${mk(it.index, it.est)}</span>
+          <span class="ln"><b>${esc((it.text || "").split("\n")[0].slice(0, 40) || it.channels.join(", "))}</b><span class="muted small">${it.day.slice(8)}.${it.day.slice(5, 7)}, ${esc(it.channels[0] || "")}</span></span></button>`).join("")}</div></div>`;
   }
   function calendarHtml() {
     const s = S(), ym = s.calYm || curYm(), c = (s.cal || {})[ym], ICON = C().ICON;
@@ -868,11 +877,7 @@
         ${n ? `<div class="cg n${Math.min(n, 4)}">${works}</div>` : ""}${plan ? `<div class="csl">${plan}</div>` : ""}</div>`;
     }
     h += `<div class="cal"><div class="cdow">${DOWS.map((x) => `<span>${x}</span>`).join("")}</div><div class="cgrid">${cells}</div></div>`;
-    if (c.leaders && c.leaders.length) {
-      h += `<div class="leaders"><h3>Лидеры месяца</h3><div class="lrow">${c.leaders.map((it, i) => `<button class="ld" data-cw="${esc(it.key)}">
-          <span class="lt">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : phHtml(it)}${C().badges({ kind: it.kind, n: it.n_media, rank: it.index != null ? i + 1 : 0, scope: "за месяц", index: it.index, est: it.est, sm: true })}${mk(it.index, it.est)}</span>
-          <span class="ln"><b>${esc((it.text || "").split("\n")[0].slice(0, 40) || it.channels.join(", "))}</b><span class="muted small">${it.day.slice(8)}.${it.day.slice(5, 7)}, ${esc(it.channels[0] || "")}</span></span></button>`).join("")}</div></div>`;
-    }
+    h += leadersHtml(c);
     return h + `</section>`;
   }
   // список работ выбранного дня (под календарём)
@@ -966,7 +971,10 @@
     if (mode === "cal") {
       h += pipelineHtml() + schedHtml() + C().newsStrip() + calendarHtml() + dayListHtml();
     } else {
+      const cm = (s.cal || {})[s.calYm || curYm()], [ly, lm] = (s.calYm || curYm()).split("-").map(Number);
+      h += pipelineHtml() + C().newsStrip();
       if (s.hf !== "hits") h += schedHtml();
+      if (cm && !cm.error && cm.leaders && cm.leaders.length) h += `<section class="card">${leadersHtml(cm, `Лидеры: ${MONTHS[lm - 1].toLowerCase()} ${ly}`)}</section>`;
       if (!rows) { C().$main.innerHTML = h + `<p class="muted">Загрузка…</p>`; return; }
       if (!rows.length) { C().$main.innerHTML = h + `<section class="card soon"><h2>Здесь появятся ваши публикации</h2><p class="muted">Со статистикой каждого поста и ссылками на все площадки.</p><div><button class="btn primary" data-view-link="post">Новый пост</button></div></section>`; return; }
       const sum = s.histSum || {};
@@ -1194,7 +1202,9 @@
       if (v >= L.hit || (pc != null && pc >= 0.9)) h += `<div class="banner-hit ${v >= L.super ? "super" : ""}">${C().ICON.trophy}<span><b>${v >= L.super ? "Супер-хит" : v >= L.hit ? "Хит канала" : "Сильный пост"}</b>${pc != null ? ` — входит в топ-${Math.max(1, Math.round((1 - pc) * 100))}% публикаций канала` : ""}${top.index ? "" : ", пока по оценке первых часов"}</span>${mk(v, !top.index, "big")}</div>`;
       else if (v < 0.77) h += `<div class="banner-hit low"><span>Пост идёт слабее обычного для канала${pc != null ? ` — лучше ${Math.round(pc * 100)}% публикаций` : ""}</span>${mk(v, !top.index, "big")}</div>`;
     }
-    for (const x of d.dests) {
+    const shown = d.dests.filter((x) => x.stats || x.e6ai || x.nums || !x.why);   // площадки без цифр по своей природе (группа Telegram, Discord) не показываем
+    if (!shown.length) h += `<p class="muted small">Площадки этого поста не отдают цифр — смотреть их можно только на самой площадке.</p>`;
+    for (const x of shown) {
       const plat = x.platform || (x.key || "").split(":")[0];
       h += `<div class="pdest"><div class="pdhead">${C().pbadge(plat)}<b>${esc(x.name)}</b>${x.link && /^https?:/.test(x.link) ? `<a href="#" data-open="${esc(x.link)}" class="small">открыть</a>` : ""}</div>`;
       if (x.stats && x.stats.ok) {
@@ -1827,7 +1837,7 @@
         try { await api("media_install"); } catch (err) { alert(err.message); }
         const poll = async () => {
           try { s.mediaSt = await api("media_status"); } catch (err) { return; }
-          if (s.view === "settings") C().render();
+          if (s.view === "settings") C().softRender();
           if (s.mediaSt.job && s.mediaSt.job.state === "running") setTimeout(poll, 1000);
         };
         poll(); return true;
@@ -1844,7 +1854,7 @@
         try { await api("e6db_update"); } catch (err) { alert(err.message); }
         const poll = async () => {
           try { s.e6db = await api("e6db_status"); } catch (err) { return; }
-          if (s.view === "post") paintE6(true); else C().render();
+          if (s.view === "post") paintE6(true); else C().softRender();
           if (s.e6db.job && s.e6db.job.state === "running") setTimeout(poll, 1000);
           else if (s.e6db.ready) { s.e6preds = {}; await loadTags(false); }
         };

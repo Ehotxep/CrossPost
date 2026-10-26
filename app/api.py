@@ -163,7 +163,7 @@ class Api:
                 st = bot.pre_state()
                 busy = [v for v in st.values() if isinstance(v, (int, float))]
                 if busy:
-                    out.append({"key": "preupload", "label": "PNG в Telegram заранее", "go": "post", "state": "running",
+                    out.append({"key": "preupload", "label": "Предварительная загрузка PNG в Telegram", "go": "post", "state": "running",
                                 "progress": sum(busy) / len(busy), "message": f"{len(busy)} из {len(st)} файлов"})
         except Exception:
             pass

@@ -18,7 +18,8 @@ from app.paths import sub
 from core.common import PlatformError
 
 EVERY_H = 3
-MIN_AGE_D = 3        # индекс — только у постов старше 3 суток (цифры уже устоялись)
+MIN_AGE_D = 3        # индекс (как оценка) — у постов старше 3 суток
+MATURE_D = 7         # «зрелый» пост (по нему считается норма): цифры устоялись — старше 7 суток, как у Telegram
 MIN_POSTS = 5        # и только если на площадке есть из чего считать норму
 LABEL = {"vk": "ВКонтакте", "bsky": "Bluesky", "e6ai": "e6ai", "e621": "e621", "da": "DeviantArt"}
 VIEWS = ("vk", "da")   # где есть просмотры — индекс по ним, иначе по реакциям
@@ -420,18 +421,76 @@ def _score(r) -> float | None:
     return float(s)
 
 
+WINDOW_D = 28   # норма — по постам ±4 недели вокруг поста (как у Telegram): аудитория растёт, старые цифры её не тянут вниз
+
+
 def _norms() -> dict:
-    """Медиана оценки по площадке — только по постам, у которых цифры уже устоялись."""
+    """Зрелые посты площадки (дата, оценка): пост старше 7 суток И последний замер сделан не раньше чем через 7 суток
+    после выхода — иначе в норму попадают ранние, ещё не набравшие цифры замеры. Норму для конкретного поста даёт base()."""
     out = {}
-    edge = time.time() - MIN_AGE_D * 86400
+    edge = time.time() - MATURE_D * 86400
     for plat in LABEL:
-        vals = [(_score(r), bool(r["platform"] in VIEWS and r["views"])) for r in
-                db.query("SELECT * FROM ext_posts WHERE platform=? AND date<?", (plat, edge))]
+        rows = db.query("SELECT * FROM ext_posts WHERE platform=? AND date<? AND updated_at-date>=? ORDER BY date",
+                        (plat, edge, MATURE_D * 86400))
         for by_views in (True, False):
-            xs = [v for v, bv in vals if bv == by_views and v is not None]
-            if len(xs) >= MIN_POSTS and statistics.median(xs) > 0:
-                out[(plat, by_views)] = statistics.median(xs)
+            xs = [(r["date"], _score(r)) for r in rows
+                  if bool(r["platform"] in VIEWS and r["views"]) == by_views and _score(r) is not None]
+            if len(xs) >= MIN_POSTS:
+                out[(plat, by_views)] = xs
     return out
+
+
+def base(series, ts: float):
+    """Норма для поста вышедшего в ts: медиана зрелых постов ±4 недели от него; если их мало — ближайшие по времени."""
+    if not series:
+        return None
+    near = [v for d, v in series if abs(d - ts) <= WINDOW_D * 86400]
+    if len(near) < MIN_POSTS:
+        near = [v for d, v in sorted(series, key=lambda x: abs(x[0] - ts))[:MIN_POSTS * 2]]
+    m = statistics.median(near)
+    return m if m > 0 else None
+
+
+VK_BINS = (72, 96, 120, 144)   # часы: по каким возрастам строим кривую набора просмотров
+
+
+def vk_curve():
+    """Доля итоговых просмотров ВК к возрасту поста — по истории замеров (vk_snap) зрелых постов. None — данных мало."""
+    try:
+        rows = db.query("""SELECT s.key AS k, s.at AS at, s.views AS v, p.date AS d FROM vk_snap s JOIN vk_posts p ON p.key = s.key
+                           WHERE s.views IS NOT NULL ORDER BY s.key, s.at""")
+    except Exception:  # noqa: BLE001 — таблиц ВК ещё нет
+        return None
+    by: dict = {}
+    for r in rows:
+        by.setdefault(r["k"], []).append(((r["at"] - r["d"]) / 3600, r["v"]))
+    fr: dict = {b: [] for b in VK_BINS}
+    for snaps in by.values():
+        ripe = [v for h, v in snaps if h >= MATURE_D * 24]
+        if not ripe or ripe[-1] <= 0:
+            continue
+        final = ripe[-1]
+        for b in VK_BINS:
+            near = [(abs(h - b), v) for h, v in snaps if abs(h - b) <= 12]
+            if near:
+                fr[b].append(min(1.0, min(near)[1] / final))
+    pts = [(b, statistics.median(x)) for b, x in fr.items() if len(x) >= MIN_POSTS]
+    if len(pts) < 2:
+        return None
+    pts.sort()
+    fixed, top = [], 0.0
+    for h, f in pts:   # доля не убывает
+        top = max(top, f); fixed.append((h, top))
+    return fixed + [(MATURE_D * 24, 1.0)]
+
+
+def frac_at(curve, h: float) -> float:
+    if h <= curve[0][0]:
+        return max(0.05, curve[0][1] * h / curve[0][0])
+    for (h0, f0), (h1, f1) in zip(curve, curve[1:]):
+        if h <= h1:
+            return max(0.05, f0 + (f1 - f0) * (h - h0) / (h1 - h0))
+    return 1.0
 
 
 def pub_links() -> dict:
@@ -468,12 +527,20 @@ def items_between(t0: float, t1: float, tz) -> list[dict]:
         return []
     from app.insights import calendar as K
     norms, pubs, now = _norms(), pub_links(), time.time()
+    vkc = vk_curve()
     out = []
     for r in rows:
         by_views = bool(r["platform"] in VIEWS and r["views"])
-        score, med = _score(r), norms.get((r["platform"], by_views))
+        score, med = _score(r), base(norms.get((r["platform"], by_views)), r["date"])
         age_d = (now - r["date"]) / 86400
-        idx = round(score / med, 2) if med and age_d >= MIN_AGE_D and score is not None else None
+        idx, est, proj = None, False, None
+        if med and age_d >= MIN_AGE_D and score is not None:
+            est = age_d < MATURE_D   # младше недели — ещё набирает: это оценка, как у Telegram
+            val = score
+            if est and r["platform"] == "vk" and by_views and vkc:   # ВК: ждём итог по кривой набора из истории замеров
+                proj = int(round(score / frac_at(vkc, age_d * 24)))
+                val = proj
+            idx = round(val / med, 2)
         local = datetime.fromtimestamp(r["date"], tz)
         react = (r["likes"] or 0) + (r["reposts"] or 0) + (r["replies"] or 0)
         pub = pubs.get(r["key"])
@@ -481,8 +548,8 @@ def items_between(t0: float, t1: float, tz) -> list[dict]:
             "key": r["key"], "post_id": None, "pub_id": pub, "app": pub is not None,
             "day": local.date().isoformat(), "time": local.strftime("%H:%M"), "ts": local.timestamp(),
             "preview": r["preview"], "text": (r["text"] or "")[:160], "channels": [LABEL[r["platform"]]], "rating": None,
-            "link": r["link"] or "", "views": r["views"], "reactions": react, "forwards": r["reposts"] or 0, "proj": None,
-            "index": idx, "est": False, "level": K._level(idx) if idx is not None else "", "by_views": by_views,
+            "link": r["link"] or "", "views": r["views"], "reactions": react, "forwards": r["reposts"] or 0, "proj": proj,
+            "index": idx, "est": est, "level": K._level(idx) if idx is not None else "", "by_views": by_views,
             "n_media": r["n_media"] or 1, "age_h": round(age_d * 24, 1), "kind": r["kind"] or "img",
             "ext": r["platform"], "stat_at": r["updated_at"],
         })

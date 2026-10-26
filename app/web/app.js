@@ -146,7 +146,7 @@
   };
 
   const S = {
-    view: store.get("view", "trends"),
+    view: "post",   // при запуске всегда «Новый пост»; выбранный раздел помним только до закрытия
     src: store.get("src", "e6ai"),
     rating: store.get("rating", "all"), cat: store.get("cat", "all"), mine: store.get("mine", false),
     sel: null, info: null, data: null, fc: null, loading: false, error: null, flash: "",
@@ -237,7 +237,7 @@
     const top = o.single ? (medal(o.rank, o.scope) || hotBadge(o.index, o.est)) : medal(o.rank, o.scope) + hotBadge(o.index, o.est);   // single — один значок (в календаре тесно)
     return top || k ? `<span class="bdg ${o.sm ? "sm" : ""}">${top ? `<span class="br">${top}</span>` : ""}${k}</span>` : "";
   }
-  window.CP = { toast, LV, api, S, store, esc, num, plural, seg, hint, ICON, pbadge, PLAT, badges, newsStrip: () => window.CP_newsStrip ? window.CP_newsStrip() : "", pollActs: () => pollActs(), render: () => render(), $main, loadInfo: () => loadInfo(),
+  window.CP = { toast, LV, api, S, store, esc, num, plural, seg, hint, ICON, pbadge, PLAT, badges, newsStrip: () => window.CP_newsStrip ? window.CP_newsStrip() : "", pollActs: () => pollActs(), render: () => render(), softRender: () => softRender(), $main, loadInfo: () => loadInfo(),
     loadWorker: () => loadWorker(), startPoll: () => { if (!poll) poll = setInterval(tick, 1000); } };
 
   // ---------------- данные ----------------
@@ -285,7 +285,7 @@
     // не перерисовываем экран, пока человек печатает — иначе слетит курсор и набранный текст
     const ae = document.activeElement;
     if (ae && $main.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && ae.type !== "checkbox") return;
-    render();
+    softRender();
   }
   async function loadOverview() {
     S.data = null; S.fc = null; S.error = null;
@@ -322,7 +322,7 @@
   function quietRender() {
     const ae = document.activeElement;
     if (ae && $main.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && ae.type !== "checkbox") return;
-    render();
+    softRender();
   }
   function progressHtml(job) {
     return `<section class="card prog" id="tgprog"><div class="head"><h2>Идёт загрузка из Telegram</h2><span class="muted small" data-pct>${Math.round(job.progress * 100)}%</span></div>
@@ -496,11 +496,48 @@
       <div class="abar ${pct == null && x.state === "running" ? "indet" : ""}"><i style="width:${x.state === "done" ? 100 : pct || 0}%"></i></div>
       ${x.message ? `<span class="am">${esc(x.state === "error" ? humanize(x.message) : x.message)}</span>` : ""}${subs ? `<div class="asubs">${subs}</div>` : ""}</div>`;
   }
+  // Плашки обновляем «на месте», а не пересоздаём каждую секунду: иначе у каждой заново играла анимация появления
+  // (всё мигало), а полоски прогресса не успевали плавно ехать.
+  function morph(a, b) {
+    if (a.nodeType === 3) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
+    if (a.nodeType !== 1) return;
+    const tag = a.tagName;
+    const chart = a.id === "growth-chart" || a.id === "fc-chart" || a.id === "niche-chart";   // график рисуется кодом — его содержимое не сверяем
+    for (const at of [...a.attributes]) if (!b.hasAttribute(at.name) && !(tag === "DETAILS" && at.name === "open")) a.removeAttribute(at.name);
+    for (const at of [...b.attributes]) {
+      if (tag === "DETAILS" && at.name === "open") continue;   // раскрыли/свернули руками — не трогаем
+      if (a.getAttribute(at.name) !== at.value) a.setAttribute(at.name, at.value);
+    }
+    if (tag === "INPUT") {   // введённое руками не затираем: меняем, только если поменялось само значение в разметке
+      if (a.type === "checkbox" || a.type === "radio") { if (b.checked !== a.defaultChecked) a.checked = b.checked; }
+      else if (b.value !== a.defaultValue && a !== document.activeElement) a.value = b.value;
+      return;
+    }
+    if (tag === "TEXTAREA") { if (b.value !== a.defaultValue && a !== document.activeElement) a.value = b.value; a.defaultValue = b.value; return; }
+    if (chart) return;
+    const ac = [...a.childNodes], bc = [...b.childNodes];
+    for (let i = 0; i < Math.min(ac.length, bc.length); i++) {
+      if (ac[i].nodeType === bc[i].nodeType && ac[i].nodeName === bc[i].nodeName) morph(ac[i], bc[i]);
+      else a.replaceChild(bc[i].cloneNode(true), ac[i]);
+    }
+    for (let i = bc.length; i < ac.length; i++) a.removeChild(ac[i]);
+    for (let i = ac.length; i < bc.length; i++) a.appendChild(bc[i].cloneNode(true));
+    if (tag === "SELECT" && a !== document.activeElement) { const o = [...b.options].find((x) => x.selected); if (o && a.value !== o.value && !a.querySelector("option:checked[data-user]")) a.value = o.value; }
+  }
   function paintActs(list) {
     const box = document.getElementById("acts");
     if (!box) return;
     const vis = list.filter((x) => !(x.state === "error" && actGone[x.key] === x.started));
-    box.innerHTML = vis.map(actHtml).join("");
+    const keep = new Set(vis.map((x) => x.key));
+    for (const el of [...box.children]) if (!keep.has(el.dataset.act)) el.remove();
+    const tpl = document.createElement("template");
+    vis.forEach((x, i) => {
+      tpl.innerHTML = actHtml(x).trim();
+      const nu = tpl.content.firstElementChild;
+      const cur = [...box.children].find((el) => el.dataset.act === x.key);
+      if (cur) { morph(cur, nu); if (box.children[i] !== cur) box.insertBefore(cur, box.children[i] || null); }
+      else box.insertBefore(nu, box.children[i] || null);
+    });
     box.classList.toggle("on", vis.length > 0);
   }
   document.getElementById("acts").addEventListener("click", async (e) => {
@@ -684,6 +721,28 @@
   }
 
   // ---------------- отрисовка ----------------
+  // Мягкая перерисовка для фоновых обновлений (опрос задач раз в секунду): страница не пересоздаётся, а подправляется на месте —
+  // не мигают картинки и полоски, не сбиваются прокрутка, раскрытые блоки и набранный текст.
+  let softMode = false, softPending = null, lastMain = null;
+  const mainDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+  Object.defineProperty($main, "innerHTML", { configurable: true, get() { return mainDesc.get.call(this); },
+    set(v) { if (softMode) { softPending = v; return; } lastMain = v; mainDesc.set.call(this, v); } });
+  function softRender() {
+    if (S.pstatOpen || S.viewFile || document.querySelector(".bigprev")) return;   // поверх страницы открыто окно — её не трогаем
+    softMode = true; softPending = null;
+    try { renderMain(); } finally { softMode = false; }
+    if (softPending === null) return;
+    if (softPending === lastMain) return;   // ничего не изменилось
+    lastMain = softPending;
+    const t = document.createElement("template"); t.innerHTML = softPending;
+    const ac = [...$main.childNodes], bc = [...t.content.childNodes];
+    for (let i = 0; i < Math.min(ac.length, bc.length); i++) {
+      if (ac[i].nodeType === bc[i].nodeType && ac[i].nodeName === bc[i].nodeName) morph(ac[i], bc[i]); else $main.replaceChild(bc[i].cloneNode(true), ac[i]);
+    }
+    for (let i = bc.length; i < ac.length; i++) $main.removeChild(ac[i]);
+    for (let i = ac.length; i < bc.length; i++) $main.appendChild(bc[i].cloneNode(true));
+    drawCharts();
+  }
   function render() {
     renderMain();
     if (S.view === "stats" && S.pstatOpen && window.Pub) $main.insertAdjacentHTML("beforeend", window.Pub.drawerHtml(S.pstatOpen));
@@ -698,6 +757,9 @@
     else if (S.view === "post") window.Pub.renderPost();
     else if (S.view === "history") window.Pub.renderHistory();
     else renderSoon();
+    if (!softMode) drawCharts();
+  }
+  function drawCharts() {
     if (S.view === "stats" && S.stats && S.stats.channels) {
       const el = document.getElementById("growth-chart");
       if (el) window.Charts.lineChart(el, S.stats.channels.map((c, i) => ({ name: c.title, color: ["var(--s1)", "var(--s2)", "var(--s3)"][i % 3], points: c.monthly })));

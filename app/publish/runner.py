@@ -392,7 +392,7 @@ def plan(draft: dict) -> dict:
     elif files and rating in S.RATINGS and configured and not will:
         errors.append("С этим рейтингом пост никуда не уйдёт")
     return {"kind": kind, "mature": mature, "rating": rating, "dests": dests, "errors": errors,
-            "not_configured": missing, "notes": notes,
+            "not_configured": missing, "configured": configured, "notes": notes,
             "texts": {p: signed_text(cfg, draft, p) for p in ("telegram", "discord", "vk", "bluesky", "deviantart")},
             "hashtags": HT.final(cfg, draft), "hashtags_suggested": HT.suggest(cfg, draft),
             "hashtags_on": bool(cfg["hashtags"].get("enabled", True))}
