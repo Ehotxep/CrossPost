@@ -184,6 +184,7 @@ def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=N
     """files — [(name, data, mime)]. Возвращает ссылки на работы."""
     if rating == "explicit":
         raise PlatformError("DeviantArt не принимает откровенный контент")
+    from core import retry
     tok = _token(c)
     auth = {"Authorization": f"Bearer {tok}"}
     tags = clean_tags(tags)
@@ -195,7 +196,8 @@ def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=N
                "is_ai_generated": _b(c.get("is_ai_generated", True)), "noai": _b(c.get("noai", True))}
         if tags:
             sub["tags[]"] = tags
-        j = _json(requests.post(f"{API}/stash/submit", data=sub, files={"file": (name, data, mime)}, headers=auth, timeout=600), "загрузка")
+        j = _json(retry.post(f"{API}/stash/submit", idempotent=True, what="DeviantArt: загрузка", data=sub,
+                             files={"file": (name, data, mime)}, headers=auth, timeout=600), "загрузка")
         if not j.get("itemid"):
             raise PlatformError(f"DeviantArt (загрузка): {j}")
         if progress:
@@ -211,22 +213,13 @@ def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=N
             pub["tags[]"] = tags
         if c.get("gallery_id"):
             pub["galleryids[]"] = [c["gallery_id"]]
-        res = _json(requests.post(f"{API}/stash/publish", data=pub, headers=auth, timeout=120), "публикация")
+        res = _json(retry.post(f"{API}/stash/publish", idempotent=False, what="DeviantArt: публикация", data=pub, headers=auth, timeout=120), "публикация")
         urls.append({"url": res.get("url") or "", "id": res.get("deviationid") or ""})
         if progress:
             progress((i + 1) / len(files))
     return urls
 
 
-# --- для консольной версии (crosspost.py) ---------------------------------------------------
-
-def limits(c: dict) -> dict:
-    return {"max_bytes": FILE_MAX_BYTES, "formats": ("JPEG", "PNG", "GIF")}
-
-
-def post(c: dict, images, p) -> list[str]:
-    return [x["url"] for x in publish(c, [(im.name, im.data, im.mime) for im in images], p.title, p.text,
-                                      p.tags or c.get("default_tags", []), "erotic" if p.mature else "sfw")]
 
 
 def stats(c: dict, ids: list[str]) -> dict:

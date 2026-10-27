@@ -5,6 +5,7 @@
 """
 import base64
 import hashlib
+import json
 import http.server
 import secrets
 import time
@@ -15,7 +16,6 @@ import requests
 
 import app.publish  # noqa: F401
 from core.common import PlatformError, save_token
-from core.oauth import _parse
 
 TIMEOUT = 300
 _pending: dict = {}   # начатый вход: verifier, state — ждём адрес из браузера
@@ -160,3 +160,15 @@ def group_info(group_id: str, app_id: str, access_token: str = "") -> dict:
         except Exception:
             is_admin = None
     return {"id": str(g["id"]), "name": g.get("name"), "is_admin": is_admin}
+
+
+def _parse(url: str) -> dict:
+    """Параметры адреса возврата; некоторые версии VK ID присылают всё в JSON-поле payload."""
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    res = {k: v[0] for k, v in q.items()}
+    if "payload" in res:
+        try:
+            res.update(json.loads(res["payload"]))
+        except ValueError:
+            pass
+    return res

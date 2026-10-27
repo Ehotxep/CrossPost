@@ -71,8 +71,10 @@ def upload(cfg, path, tags, rating: str, sources=(), description: str = "", pare
     if parent_id:
         data["upload[parent_id]"] = str(parent_id)
     with open(path, "rb") as f:
-        r = requests.post(f"{base(cfg)}/uploads.json", data=data, files={"upload[file]": (filename or os.path.basename(path), f)},
-                          auth=(cfg["username"], cfg["api_key"]), headers=_ua(cfg), timeout=600)
+        from core import retry   # сайт сам отсекает повторную загрузку того же файла (reason=duplicate) — повторять после обрыва безопасно
+        r = retry.post(f"{base(cfg)}/uploads.json", idempotent=True, what=f"{name(cfg)}: загрузка", data=data,
+                       files={"upload[file]": (filename or os.path.basename(path), f)},
+                       auth=(cfg["username"], cfg["api_key"]), headers=_ua(cfg), timeout=600)
     try:
         j = r.json()
     except ValueError:

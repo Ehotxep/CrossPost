@@ -58,7 +58,12 @@ def run(report, target: str, *args, **kwargs):
         elif "err" in msg:
             error = msg["err"]
         else:
-            report(**{k: v for k, v in (("progress", msg.get("p")), ("message", msg.get("m"))) if v is not None})
+            try:
+                report(**{k: v for k, v in (("progress", msg.get("p")), ("message", msg.get("m"))) if v is not None})
+            except BaseException:   # отмена (или сбой отчёта) — дочерний процесс не оставляем работать
+                p.kill()
+                p.wait()
+                raise
     p.wait()
     if error:
         raise RuntimeError(error)

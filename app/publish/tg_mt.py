@@ -35,6 +35,8 @@ class MtBot:
         self.client = None
         self._lock = None      # одно подключение на файл сессии: два клиента на одном файле → «database is locked»
         self._made = []        # все когда-либо открытые клиенты — чтобы при сбое закрыть и «потерянные»
+        self.resent: dict = {}  # (чат, пост) → {номер пачки: итог}: какие пачки PNG уже ушли
+        self.resume: dict = {}  # (ключ файла, размер) → {"file_id", "next"}: докачка большого файла после обрыва
         self.pre: dict = {}    # id файла поста → {"fut", "at", "size", "name", "frac"} — PNG, залитые заранее
 
     # --- заранее залить PNG-оригинал, пока пишется пост ---
@@ -53,9 +55,40 @@ class MtBot:
 
             def cb(cur, total):
                 rec["frac"] = cur / total if total else 0.0
-            return await c.upload_file(_bio(data, name), file_name=name, progress_callback=cb)
+            return await self._upload_resumable(c, key, data, name, cb)
         rec["fut"] = asyncio.run_coroutine_threadsafe(go(), self.tg._loop)
         self.pre[key] = rec
+
+    BIG = 10 * 1024 * 1024    # с этого размера Telegram принимает файл по частям (SaveBigFilePart) — их можно докачивать
+    PART = 512 * 1024
+    WINDOW = 4                # частей одновременно
+
+    async def _upload_resumable(self, c, key, data: bytes, name: str, cb=None):
+        """Файл → сервер Telegram с докачкой: при обрыве следующая попытка продолжит с первой непринятой части,
+        а не с нуля (для слабых каналов это главное). Мелкие файлы (до 10 МБ) — обычной загрузкой Telethon."""
+        import random
+        from telethon.tl import functions, types
+        size = len(data)
+        if size <= self.BIG:
+            return await c.upload_file(_bio(data, name), file_name=name, progress_callback=cb)
+        parts = (size + self.PART - 1) // self.PART
+        st = self.resume.get((key, size))
+        if st is None or st["parts"] != parts:
+            st = self.resume[(key, size)] = {"file_id": random.randrange(-2**63, 2**63), "next": 0, "parts": parts}
+
+        async def one(i):
+            ok = await c(functions.upload.SaveBigFilePartRequest(
+                file_id=st["file_id"], file_part=i, file_total_parts=parts, bytes=data[i * self.PART:(i + 1) * self.PART]))
+            if not ok:
+                raise RuntimeError("Telegram не принял часть файла")
+        while st["next"] < parts:
+            batch = range(st["next"], min(st["next"] + self.WINDOW, parts))
+            await asyncio.gather(*(one(i) for i in batch))
+            st["next"] = batch[-1] + 1   # продвигаемся только когда принято всё окно целиком
+            if cb:
+                cb(min(st["next"] * self.PART, size), size)
+        self.resume.pop((key, size), None)
+        return types.InputFileBig(id=st["file_id"], parts=parts, name=name)
 
     def pre_state(self) -> dict:
         out = {}
@@ -63,6 +96,14 @@ class MtBot:
             f = r["fut"]
             out[k] = "ready" if f.done() and not f.exception() else "error" if f.done() else round(r["frac"], 2)
         return out
+
+    def pre_error(self, key) -> str:
+        """Почему не залился файл (для решения «повторять или это не лечится повтором»)."""
+        r = self.pre.get(key)
+        if r and r["fut"].done() and not r["fut"].cancelled() and r["fut"].exception():
+            e = r["fut"].exception()
+            return f"{type(e).__name__}: {e}"
+        return ""
 
     def forget_pre(self, keep: set):
         for k in [k for k in self.pre if k not in keep]:
@@ -133,7 +174,7 @@ class MtBot:
         from app.telegram.backend import client_kwargs
         keys = self.tg.keys()
         if not keys:
-            raise PlatformError("Для связи с Telegram по MTProto нужны api_id и api_hash — «Настройки» → «Импорт для статистики» → «Подключение через API»")
+            raise PlatformError("Для связи с Telegram по MTProto нужны api_id и api_hash — «Настройки» → «Статистика и тренды» → «Telegram: статистика» → «Подключение через API»")
         import os
         name = os.environ.get("CROSSPOST_BOT_SESSION", "telegram_bot")
         sess = data_dir() / name
@@ -336,15 +377,55 @@ class MtBot:
                             await send(peer, files[k:k + 10], reply_to=first.id)
                         out["note"] = f"{len(files)} PNG ответом на пост"
                 except Exception as e:  # noqa: BLE001 — пост уже вышел, повторять нельзя
-                    out["note"] = f"⚠ пост вышел, но PNG не отправлены: {e} — добавьте вручную"
+                    out["note"] = f"⚠ пост вышел, но PNG не отправлены: {e} — их можно дослать кнопкой «Дослать PNG»"
+                    out["originals_failed"] = True
             return out
 
         holder = []
         try:
-            return self.run(go(), 1800)
+            return self.run(go(), 4 * 3600)
         finally:
             if holder and self.client is not None:
                 self.client.remove_event_handler(holder[0])
+
+    def send_originals(self, cfg: dict, mode: str, originals: list, chat_id, first_id: int, keys: list, log) -> dict:
+        """PNG к уже вышедшему посту (без нового поста). comments — в комментарии через comment_to, иначе ответом."""
+        silent = cfg.get("silent_originals", True)
+
+        async def go():
+            c = await self._client()
+            peer = await c.get_input_entity(self._peer_arg(chat_id))
+            files = []
+            for i, o in enumerate(originals):   # большие файлы — с докачкой: следующая попытка продолжит, а не начнёт с нуля
+                files.append(await self._upload_resumable(c, f"re:{chat_id}:{first_id}:{i}", o.data, o.name))
+            note = f"{len(files)} PNG ответом на пост"
+            sent = self.resent.setdefault((str(chat_id), first_id), {})   # пачка → как ушла; уже ушедшая при повторе не дублируется
+            for k in range(0, len(files), 10):
+                chunk = files[k:k + 10]
+                if k in sent:
+                    note = sent[k]
+                    continue
+                if mode == "comments":
+                    try:
+                        await c.send_file(peer, chunk, force_document=True, silent=silent, comment_to=first_id)
+                        note = sent[k] = f"{len(files)} PNG в комментариях"
+                        continue
+                    except OSError:
+                        raise
+                    except Exception as e:  # noqa: BLE001 — у канала нет обсуждения/копии: отвечаем в самом канале
+                        if "ConnectionError" in type(e).__name__ or "Timeout" in type(e).__name__:
+                            raise
+                        note = f"{len(files)} PNG ответом на пост (комментарии недоступны)"
+                await c.send_file(peer, chunk, force_document=True, silent=silent, reply_to=first_id)
+                sent[k] = note
+            self.resent.pop((str(chat_id), first_id), None)
+            for i in range(len(originals)):
+                self.resume.pop((f"re:{chat_id}:{first_id}:{i}", len(originals[i].data)), None)
+            return {"note": note, "ok": True}
+        try:
+            return self.run(go(), 4 * 3600)
+        except Exception as e:  # noqa: BLE001
+            return {"note": f"⚠ PNG не отправлены: {e}", "ok": False}
 
     @staticmethod
     def _multi_cb(files, up_cb, sent):

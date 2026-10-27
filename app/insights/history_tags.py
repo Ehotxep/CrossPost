@@ -58,12 +58,3 @@ def run(report):
         report(progress=0.02 + 0.98 * n / len(todo), message=f"Размечаю посты теггером: {n} из {len(todo)}")
     report(progress=1.0, message=f"Размечено постов: {len(todo)}")
 
-
-def tags_of(post_ids: list[int], min_prob: float = 0.5) -> dict[int, list[str]]:
-    if not post_ids:
-        return {}
-    out: dict[int, list[str]] = {}
-    q = ",".join("?" * len(post_ids))
-    for r in db.query(f"SELECT post_id, tag FROM post_tags WHERE prob>=? AND post_id IN ({q})", (min_prob, *post_ids)):
-        out.setdefault(r["post_id"], []).append(r["tag"])
-    return out

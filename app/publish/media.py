@@ -10,7 +10,6 @@
 Готовые переделки кешируются рядом с файлом (uploads/<id>.conv-*.{mp4,webm}) и удаляются вместе с ним.
 """
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -437,16 +436,21 @@ def edit(src, dst, o: dict, report=lambda **kw: None) -> dict:
                   ["-vf", ",".join(ch), "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4", str(tmp)]
         with open(err_f, "w", encoding="utf-8", errors="replace") as ef:
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=ef, text=True, creationflags=NOWIN)
-            for line in p.stdout:
-                if line.startswith(("out_time_us=", "out_time_ms=")):
-                    try:
-                        done = int(line.split("=", 1)[1]) / 1e6
-                    except ValueError:
-                        continue
-                    frac = max(0.0, min(done / max(out_len, 0.1), 1.0))
-                    report(progress=(((attempt - 1) + frac) / 4 if max_bytes else frac) * 0.98,
-                           message=("Делаю GIF… " if gif else "Обрабатываю видео… ") + f"{int(frac * 100)}%" + (f" (попытка {attempt})" if attempt > 1 else ""))
-            code = p.wait()
+            try:
+                for line in p.stdout:
+                    if line.startswith(("out_time_us=", "out_time_ms=")):
+                        try:
+                            done = int(line.split("=", 1)[1]) / 1e6
+                        except ValueError:
+                            continue
+                        frac = max(0.0, min(done / max(out_len, 0.1), 1.0))
+                        report(progress=(((attempt - 1) + frac) / 4 if max_bytes else frac) * 0.98,
+                               message=("Делаю GIF… " if gif else "Обрабатываю видео… ") + f"{int(frac * 100)}%" + (f" (попытка {attempt})" if attempt > 1 else ""))
+                code = p.wait()
+            finally:   # ошибка в отчёте о ходе или отмена — ffmpeg не остаётся висеть в фоне
+                if p.poll() is None:
+                    p.kill()
+                    p.wait()
         if code != 0:
             tail = "\n".join(err_f.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-3:])
             tmp.unlink(missing_ok=True)

@@ -178,11 +178,6 @@ class SessionLock:
             pass
         f.close()
 
-    @property
-    def held(self) -> bool:
-        return self.f is not None
-
-
 class TelethonBackend:
     LOCK_WAIT = 90   # сколько ждать, пока другая часть Crosspost отключится от Telegram
 

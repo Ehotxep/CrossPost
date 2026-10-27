@@ -189,10 +189,7 @@ def _one(pub, d, curve, PS):
                      ("comments", 1, "comment", "{t}: новые комментарии на DeviantArt — +{d}")], "DeviantArt")
 
 
-def _plural(n, a, b, c):
-    n = abs(int(n)) % 100
-    k = n % 10
-    return c if 10 < n < 20 else a if k == 1 else b if 2 <= k <= 4 else c
+from app.textutil import plural as _plural  # noqa: E402
 
 
 def _age(h: float) -> str:

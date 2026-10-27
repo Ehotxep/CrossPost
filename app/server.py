@@ -18,7 +18,11 @@ WEB = Path(__file__).resolve().parent / "web"
 def make_server(api, port: int = 0):
     token = secrets.token_urlsafe(24)
 
+    MAX_JSON = 64 * 1024 * 1024   # тело вызова API (черновики, списки id) — килобайты; больше — ошибка клиента, не повод читать всё в память
+
     class Handler(BaseHTTPRequestHandler):
+        timeout = 600   # соединение, из которого ничего не приходит 10 минут, закрываем — иначе поток висит вечно
+
         def log_message(self, *args):
             pass
 
@@ -74,7 +78,17 @@ def make_server(api, port: int = 0):
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass   # окно перемотало или закрыло видео на полпути
 
+        def _host_ok(self):
+            """Принимаем только обращения по 127.0.0.1 / localhost: чужой сайт с подменой DNS не должен достать до страницы с токеном."""
+            import re as _re
+            if _re.fullmatch(r"(127\.0\.0\.1|localhost)(:\d+)?", self.headers.get("Host") or ""):
+                return True
+            self._send(403, b'{"ok":false,"error":"forbidden host"}')
+            return False
+
         def do_GET(self):
+            if not self._host_ok():
+                return
             path = self.path.split("?", 1)[0]
             if path in ("/", "/index.html"):
                 from app import ui_state
@@ -190,6 +204,8 @@ def make_server(api, port: int = 0):
             self._send(404, b'{"ok":false,"error":"not found"}')
 
         def do_POST(self):
+            if not self._host_ok():
+                return
             if self.path.startswith("/upload"):   # файл для нового поста: тело запроса — сами байты
                 from urllib.parse import parse_qs, unquote, urlsplit
                 if self.headers.get("X-Token") != token:
@@ -198,16 +214,9 @@ def make_server(api, port: int = 0):
                     from app.publish import uploads
                     name = unquote(parse_qs(urlsplit(self.path).query).get("name", ["file"])[0])
                     length = int(self.headers.get("Content-Length") or 0)
-                    if length > uploads.MAX_BYTES:
-                        raise ValueError("Файл больше 500 МБ")
-                    chunks, left = [], length
-                    while left > 0:
-                        chunk = self.rfile.read(min(left, 1 << 20))
-                        if not chunk:
-                            break
-                        chunks.append(chunk)
-                        left -= len(chunk)
-                    info = uploads.save(name, b"".join(chunks))
+                    if length <= 0:
+                        raise ValueError("пустой файл")
+                    info = uploads.save_stream(name, self.rfile, length)
                     body = json.dumps({"ok": True, "result": info}, ensure_ascii=False)
                 except Exception as e:
                     body = json.dumps({"ok": False, "error": str(e) or type(e).__name__}, ensure_ascii=False)
@@ -219,6 +228,8 @@ def make_server(api, port: int = 0):
             name = self.path[len("/api/"):].split("?", 1)[0]
             try:
                 length = int(self.headers.get("Content-Length") or 0)
+                if length < 0 or length > MAX_JSON:
+                    raise ValueError("слишком большой запрос")
                 args = json.loads(self.rfile.read(length) or b"{}") if length else {}
                 result = api.call(name, args)
                 from app.cache import clean

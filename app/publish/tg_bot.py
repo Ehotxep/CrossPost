@@ -46,19 +46,6 @@ def norm_chat(s) -> str:
     raise PlatformError(f"Не понимаю адрес канала: {s!r}. Нужен @username, ссылка t.me/… или id вида -100…")
 
 
-def topic_id(s) -> int:
-    """Номер темы или ссылка на неё (t.me/c/123/45 → 45)."""
-    s = str(s or "").strip()
-    if not s:
-        return 0
-    m = re.search(r"/(\d+)/?$", s)
-    if m:
-        return int(m.group(1))
-    if s.isdigit():
-        return int(s)
-    raise PlatformError(f"Номер темы — число или ссылка на тему вида t.me/c/123/45, а не {s!r}")
-
-
 def check_chat(token: str, chat: str, need_post: bool = True) -> dict:
     """Название чата и права бота в нём."""
     chat = norm_chat(chat)
@@ -136,7 +123,22 @@ def send_to_channel(token: str, cfg: dict, ch: dict, media: dict, text: str, tit
             tail = T._send_originals(token, cfg, dict(ch, id=chat, originals=mode), chat, first, media["originals"],
                                      cfg.get("silent_originals", True), float(cfg.get("comments_wait_seconds", 60)))
             out["note"] = tail.strip(" ·")
+            out["originals_failed"] = "⚠" in tail
     return out
+
+
+def send_originals_only(cfg: dict, ch: dict, originals: list, chat_id, first_id: int, log=lambda m: None, original_ids=None) -> dict:
+    """Дослать PNG-оригиналы к УЖЕ вышедшему посту (нового поста не создаёт). {"note", "ok"}."""
+    mode = ch.get("originals", "reply")
+    if mode == "none" or not originals:
+        return {"note": "", "ok": True}
+    log("кладу PNG-оригиналы " + ("в комментарии" if mode == "comments" else "ответом на пост"))
+    if cfg.get("transport") == "mtproto":
+        return _mt(cfg["bot_token"]).send_originals(cfg, mode, originals, chat_id, first_id, original_ids or [], log)
+    first = {"chat": {"id": chat_id}, "message_id": first_id}
+    tail = T._send_originals(cfg["bot_token"], cfg, dict(ch, id=chat_id, originals=mode), chat_id, first, originals,
+                             cfg.get("silent_originals", True), float(cfg.get("comments_wait_seconds", 60)))
+    return {"note": tail.strip(" ·"), "ok": "⚠" not in tail}
 
 
 def forward_to_topic(token: str, group_id: str, topic: int, from_chat, message_ids: list[int]) -> str:
@@ -220,3 +222,54 @@ def preupload(cfg: dict, files: list) -> dict:
         bot.preupload(uid, o.data, o.name)
     bot.forget_pre({uid for uid, _ in files})   # убранные из поста — больше не нужны
     return bot.pre_state()
+
+
+import re as _re
+_NET = _re.compile(r"(?i)(связ|connection|timeout|timed out|time out|reset|proxy|прокси|network|сеть|оборв|обрыв|unreachable|refused|"
+                   r"eof|broken pipe|ssl|dns|resolve|\b50[234]\b|\b429\b|flood|too many|disconnect|closed|не отвечает|part)")
+PERMANENT_AFTER = 5   # столько одинаковых «не сетевых» ошибок подряд — повторять бессмысленно
+
+
+def is_network_error(text: str) -> bool:
+    return bool(_NET.search(text or ""))
+
+
+def wait_originals(cfg: dict, originals: list, ids: list, max_wait, tick) -> None:
+    """Режим «публиковать после загрузки оригиналов» (только MTProto): заливает PNG на сервер Telegram и ждёт конца.
+    Попыток при обрывах СКОЛЬКО УГОДНО (с паузой до минуты) — выйти из ожидания можно только кнопкой «Отмена».
+    tick(доля, пояснение) зовётся каждые полсекунды; через него работает «Отмена»."""
+    import time
+    bot = _mt(cfg["bot_token"])
+    for uid, o in zip(ids, originals):
+        bot.preupload(uid, o.data, o.name)
+    attempt, pause_until, t0 = 0, 0.0, time.time()
+    last_err, same = "", 0
+    while True:
+        if max_wait and time.time() - t0 > max_wait:
+            raise PlatformError("PNG-оригиналы не загрузились за отведённое время (по расписанию без вас долго не ждём) — пост в Telegram не отправлен")
+        st = bot.pre_state()
+        mine = [st.get(i) for i in ids]
+        if "error" in mine:
+            if not pause_until:   # обрыв: пауза (1, 2, 4 … 60 с) и заливаем заново только упавшие, готовые не трогаем
+                attempt += 1
+                err = next((bot.pre_error(i) for i, m in zip(ids, mine) if m == "error"), "")
+                same = same + 1 if (err and err == last_err and not is_network_error(err)) else 1
+                last_err = err
+                if same >= PERMANENT_AFTER:   # не обрыв связи, а отказ Telegram — сколько ни жди, не пройдёт
+                    raise PlatformError(f"Telegram не принимает файл: {err} — пост не отправлен")
+                pause_until = time.time() + min(60, 2 ** min(attempt - 1, 6))
+            if time.time() >= pause_until:
+                pause_until = 0.0
+                for uid, o in zip(ids, originals):
+                    bot.preupload(uid, o.data, o.name)
+            else:
+                tick(0.0, f"обрыв связи при загрузке PNG — попытка {attempt + 1} через {int(pause_until - time.time()) + 1} с")
+            time.sleep(0.5)
+            continue
+        pause_until = 0.0
+        fr = [1.0 if m == "ready" else float(m or 0) for m in mine]
+        f = sum(fr) / len(fr) if fr else 1.0
+        tick(f, f"Загружаю PNG-оригиналы в Telegram: {int(f * 100)}%" + (f" (попытка {attempt + 1})" if attempt else ""))
+        if all(m == "ready" for m in mine):
+            return
+        time.sleep(0.5)

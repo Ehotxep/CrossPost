@@ -17,10 +17,6 @@ API = "https://api.vk.com/method/"
 V = "5.199"
 
 
-def limits(c: dict) -> dict:
-    return {"max_bytes": 50 * 1024 * 1024, "formats": ("JPEG", "PNG", "GIF"), "max_sum": 14000}
-
-
 def _token(c: dict) -> str:
     if c.get("access_token"):  # вариант «вставил токен руками», без автообновления
         return c["access_token"]
@@ -50,7 +46,10 @@ def _token(c: dict) -> str:
 
 
 def _call(token, method, **params):
-    r = requests.post(API + method, data={**params, "access_token": token, "v": V}, timeout=60)
+    from core import retry
+    # wall.post создаёт запись — после обрыва её нельзя слать второй раз; остальные методы (получить адрес, сохранить фото) безопасны
+    r = retry.post(API + method, idempotent=method != "wall.post", what=f"ВК ({method})",
+                   data={**params, "access_token": token, "v": V}, timeout=60)
     j = check_json(r, NAME)
     if "error" in j:
         raise PlatformError(f"VK ({method}): {j['error'].get('error_msg')}")
@@ -66,7 +65,9 @@ def post(c: dict, images, p, progress=None) -> list[str]:
         if progress:
             progress(i / (len(images) + 1))
         srv = _call(token, "photos.getWallUploadServer", group_id=gid)
-        up = requests.post(srv["upload_url"], files={"photo": (img.name, img.data, img.mime)}, timeout=120).json()
+        from core import retry
+        up = retry.post(srv["upload_url"], idempotent=True, what=f"ВК: загрузка {img.name}",
+                        files={"photo": (img.name, img.data, img.mime)}, timeout=300).json()
         if not up.get("photo") or up["photo"] == "[]":
             raise PlatformError(f"VK: сервер не принял файл {img.name}: {up}")
         saved = _call(token, "photos.saveWallPhoto", group_id=gid,
@@ -95,7 +96,8 @@ def post_media(c: dict, path, kind: str, p, progress=None) -> list[str]:
     with open(path, "rb") as fh:
         if kind == "gif":
             srv = _call(token, "docs.getWallUploadServer", group_id=gid)
-            up = requests.post(srv["upload_url"], files={"file": (path.name, fh, "image/gif")}, timeout=900).json()
+            from core import retry
+            up = retry.post(srv["upload_url"], idempotent=True, what="ВК: загрузка GIF", files={"file": (path.name, fh, "image/gif")}, timeout=900).json()
             if not up.get("file"):
                 raise PlatformError(f"VK: сервер не принял GIF: {up}")
             saved = _call(token, "docs.save", file=up["file"], title=p.title or path.stem)
@@ -103,7 +105,8 @@ def post_media(c: dict, path, kind: str, p, progress=None) -> list[str]:
             att = f"doc{doc['owner_id']}_{doc['id']}"
         else:
             sv = _call(token, "video.save", group_id=gid, name=(p.title or path.stem)[:128], wallpost=0, is_private=0)
-            up = requests.post(sv["upload_url"], files={"video_file": (path.name, fh, "video/mp4")}, timeout=3600)
+            from core import retry
+            up = retry.post(sv["upload_url"], idempotent=True, what="ВК: загрузка видео", files={"video_file": (path.name, fh, "video/mp4")}, timeout=3600)
             j = check_json(up, NAME)
             if "error" in j:
                 raise PlatformError(f"VK: сервер не принял видео: {j['error']}")

@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-KEEP = {"config.toml", "tokens.json", "Файлы", "data", "lpub", ".git", ".update-backup", "venv", ".venv", "__pycache__"}
+KEEP = {"config.toml", "tokens.json", "Файлы", "Files", "data", "lpub", ".git", ".update-backup", "venv", ".venv", "__pycache__"}
 
 
 def pid_alive(pid: int) -> bool:

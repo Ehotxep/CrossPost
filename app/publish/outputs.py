@@ -1,7 +1,7 @@
 """Готовые файлы: JPEG-превью, GIF и видео, которые программа сделала сама, — копией в понятной папке.
 
-По умолчанию это папка «Файлы» в каталоге программы (если туда нельзя писать — «Изображения\\Crosspost»),
-в ней три подпапки: «JPEG-превью», «GIF», «Видео». Можно указать свою папку и раскладывать по датам.
+По умолчанию это папка «Files» в каталоге программы (если туда нельзя писать — «Изображения\\Crosspost»),
+в ней три подпапки: «JPEG previews», «GIF», «Video» (до 0.2.10 назывались по-русски — переименовываются сами). Можно указать свою папку и раскладывать по датам.
 Файлы здесь не удаляются автоматически — это ваша библиотека. Рабочие копии в uploads (кеш) по-прежнему чистятся.
 
 Каждый файл сохраняется один раз: что сохранено, помнит outputs.json в папке данных. Удалили файл руками —
@@ -17,8 +17,11 @@ from pathlib import Path
 
 from app.paths import app_dir, data_dir
 
-KINDS = {"jpeg": "JPEG-превью", "gif": "GIF", "video": "Видео"}
-FOLDER_NAME = "Файлы"
+KINDS = {"jpeg": "JPEG previews", "gif": "GIF", "video": "Video"}   # имена папок на диске — английские (не ломаются в чужих кодировках и скриптах)
+FOLDER_NAME = "Files"
+LEGACY_KINDS = {"jpeg": "JPEG-превью", "gif": "GIF", "video": "Видео"}   # так папки назывались до 0.2.10
+LEGACY_FOLDER = "Файлы"
+_migrated = set()
 _lock = threading.RLock()
 
 
@@ -41,14 +44,67 @@ def _writable(p: Path) -> bool:
 
 
 def default_root() -> Path:
-    """Каталог программы\\Файлы (при запуске с CROSSPOST_DATA — рядом с данными: так живут тесты и переносимые копии)."""
+    """Каталог программы\\Files (при запуске с CROSSPOST_DATA — рядом с данными: так живут тесты и переносимые копии)."""
     if os.environ.get("CROSSPOST_DATA"):
         return data_dir() / FOLDER_NAME
     return app_dir() / FOLDER_NAME
 
 
+def _rename_dir(old: Path, new: Path, idx: dict) -> bool:
+    """Переименовать папку и поправить пути в памяти о сохранённом (outputs.json). Не затирает существующее."""
+    try:
+        if not old.is_dir() or new.exists():
+            return False
+        old.rename(new)
+    except OSError:
+        return False
+    o, n = str(old), str(new)
+    for k, v in list(idx.items()):
+        if v == o or v.startswith(o + os.sep):
+            idx[k] = n + v[len(o):]
+    return True
+
+
+def migrate_names(base: Path) -> None:
+    """Папки со старыми русскими названиями («Файлы», «JPEG-превью», «Видео») → английские. Один раз за запуск на каждую папку."""
+    key = str(base)
+    if key in _migrated:
+        return
+    _migrated.add(key)
+    try:
+        with _lock:
+            idx = _load()
+            changed = False
+            for k, old in LEGACY_KINDS.items():
+                if old != KINDS[k]:
+                    changed |= _rename_dir(base / old, base / KINDS[k], idx)
+            if changed:
+                _store(idx)
+    except Exception:  # noqa: BLE001 — переименование не должно мешать работе
+        pass
+
+
+def _migrate_top() -> None:
+    """Сама папка «Файлы» рядом с программой → «Files» (до выбора корня — иначе создадим пустую «Files» рядом со старой)."""
+    for parent in {app_dir(), data_dir()}:
+        old, new = parent / LEGACY_FOLDER, parent / FOLDER_NAME
+        if old.is_dir() and not new.exists() and ("top", str(old)) not in _migrated:
+            _migrated.add(("top", str(old)))
+            with _lock:
+                idx = _load()
+                if _rename_dir(old, new, idx):
+                    _store(idx)
+
+
 def root() -> tuple[Path, str]:
     """(папка, откуда): custom — своя, default — по умолчанию, fallback — запасная, раз в основную писать нельзя."""
+    _migrate_top()
+    r = _root()
+    migrate_names(r[0])
+    return r
+
+
+def _root() -> tuple[Path, str]:
     c = cfg()
     if c["dir"] and _writable(Path(c["dir"]).expanduser()):
         return Path(c["dir"]).expanduser(), "custom"

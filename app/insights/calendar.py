@@ -6,7 +6,7 @@
 """
 import json
 import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 import numpy as np
 
@@ -91,14 +91,6 @@ def _rules():
         else:
             splits.add(frozenset((r["a"], r["b"])))
     return joins, splits
-
-
-def _set_rule(a: str, b: str, kind: str | None):
-    """kind: 'join' | 'split' | None (убрать правило)."""
-    with db.tx() as c:
-        c.execute("DELETE FROM cal_rules WHERE (a=? AND b=?) OR (a=? AND b=?)", (a, b, b, a))
-        if kind:
-            c.execute("INSERT INTO cal_rules (a, b, kind) VALUES (?,?,?)", (a, b, kind))
 
 
 def merge(keys: list) -> int:

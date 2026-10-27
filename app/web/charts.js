@@ -196,7 +196,7 @@
         const dot = svg.querySelector(".hd" + k), v = maps[k][m];
         if (v === undefined) { dot.setAttribute("visibility", "hidden"); return; }
         dot.setAttribute("cx", X(i)); dot.setAttribute("cy", Y(v)); dot.setAttribute("visibility", "visible");
-        rows += `<br><span style="color:${sr.color}">●</span> ${esc(sr.name)}: <b>${v.toLocaleString("ru-RU")}</b>`;
+        rows += `<br><span style="color:${sr.color}">●</span> ${esc(sr.name)}: <b>${v.toLocaleString(LOC)}</b>`;
       });
       showTip(`${esc(m)} — медиана просмотров${rows}`, e.clientX, e.clientY);
     });

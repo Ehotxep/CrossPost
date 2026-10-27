@@ -32,6 +32,7 @@ def main():
             return
 
     api = Api()
+    api.window_expected = not args.browser and not args.no_open   # окно ещё будет создано — второй запуск должен его дождаться
     server, url = serve_in_background(api, args.port)
     instance.publish(url, getattr(server, "cp_token", ""))
     from app import perf
@@ -43,10 +44,13 @@ def main():
     except Exception:
         pass
     if not args.no_open:
-        try:
-            api._auto_refresh()
-        except Exception as e:  # нет интернета и т.п. — не мешаем запуску
-            print(f"Автообновление трендов не удалось: {e}")
+        def _refresh():   # в фоне: без интернета это ждёт таймаутов, а окно не должно появляться позже из-за этого
+            try:
+                api._auto_refresh()
+            except Exception as e:  # нет интернета и т.п. — не мешаем запуску
+                print(f"Автообновление трендов не удалось: {e}")
+        import threading
+        threading.Thread(target=_refresh, daemon=True, name="auto-refresh").start()
     print(f"Crosspost {__version__}: {url}", flush=True)
 
     if args.no_open:
@@ -57,6 +61,7 @@ def main():
         try:
             import webview  # pywebview
         except ImportError:
+            api.window_expected = False
             print("pywebview не установлен — открываю в браузере. Установка: pip install pywebview")
         else:
             from app import icon

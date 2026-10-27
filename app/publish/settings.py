@@ -9,27 +9,48 @@ DEST_RATINGS = ("sfw", "nsfw", "all")            # рейтинг места: т
 ORIGINALS = ("reply", "comments", "none")
 
 PLATFORM_MODULES = ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")
+
+
+def platform_order(cfg: dict | None = None) -> list:
+    """Порядок площадок, выбранный пользователем: без неизвестных и повторов, недостающие — в конец."""
+    raw = (cfg or {}).get("platform_order") if cfg is not None else None
+    out = []
+    for k in (raw if isinstance(raw, list) else []):
+        if k in PLATFORM_MODULES and k not in out:
+            out.append(k)
+    return out + [k for k in PLATFORM_MODULES if k not in out]
 SCREEN_MODULES = ("history", "stats", "trends")
 # дополнительные функции — всё, кроме самого кросспостинга
-EXTRA_MODULES = ("tagger", "collect", "news", "forecast", "crosspost")   # crosspost — экраны «Новый пост» и «История»
+EXTRA_MODULES = ("tagger", "collect", "news", "forecast", "crosspost", "targeting", "translation")   # crosspost — экраны «Новый пост» и «История»
 
 DEFAULTS = {
+    "platform_order": list(PLATFORM_MODULES),   # в каком порядке показывать площадки: настройки, подписи, окно поста
     # отключаемые модули: площадки (не участвуют в публикации, не показываются) и экраны
     "modules": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": True, "e6ai": True,
                 "history": True, "stats": True, "trends": True,
                 # теггер; сбор цифр (замеры, цифры с сайтов, сверка правок модераторов); новости; прогноз и лучшее время
-                "tagger": True, "collect": True, "news": True, "forecast": True, "crosspost": True},
+                "tagger": True, "collect": True, "news": True, "forecast": True, "crosspost": True,
+                # необязательные возможности поста, по умолчанию выключены — обычный пост без лишнего:
+                # targeting — «Умное таргетирование» (версии файлов по площадкам), translation — английский текст, подписи и перевод
+                "targeting": False, "translation": False},
     "light": {"scale": 0.5, "quality": 88, "subsampling": "4:4:4", "sharpen": False, "background": "#FFFFFF"},
-    # готовые файлы (JPEG-превью, GIF, видео): своя папка (пусто — «Файлы» в каталоге программы), по датам, что сохранять
+    # готовые файлы (JPEG-превью, GIF, видео): своя папка (пусто — «Files» в каталоге программы), по датам, что сохранять
     "outputs": {"dir": "", "by_date": False, "jpeg": True, "gif": True, "video": True},
     "signatures": {
         # своя подпись для каждой площадки; ссылки можно писать как [Текст](https://…)
-        "platforms": {"telegram": {"sfw": "", "nsfw": ""}, "discord": {"sfw": "", "nsfw": ""}, "vk": {"sfw": "", "nsfw": ""},
-                      "bluesky": {"sfw": "", "nsfw": ""}, "deviantart": {"sfw": "", "nsfw": ""}},
+        # у каждой площадки: основная подпись (sfw / 18+) и английская (en) — она берётся, когда на площадку уходит английский текст
+        "platforms": {k: {"sfw": "", "nsfw": "", "en": {"sfw": "", "nsfw": ""}} for k in ("telegram", "discord", "vk", "bluesky", "deviantart")},
         "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": True},
     },
+    # на какие площадки уходит английский вариант текста поста (остальные — основной текст)
+    "text_lang": {"telegram": "main", "discord": "main", "vk": "main", "bluesky": "main", "deviantart": "main", "e6ai": "main"},
+    # какие версии файлов (комикс: ru / en / clean — без надписей) уходят на площадку; пусто — любые.
+    # Работает только в постах, где включён переключатель «Умное таргетирование»
+    "versions": {"telegram": [], "discord": [], "vk": [], "bluesky": [], "deviantart": [], "e6ai": []},
+    # автоперевод описания (DeepSeek): текст уходит на серверы DeepSeek, поэтому только по кнопке
+    "translate": {"api_key": "", "model": "deepseek-flash", "base": "https://api.deepseek.com", "style": ""},
     "hashtags": {
-        "enabled": True, "position": "start",          # start — первой строкой, как в ваших постах; end — в конце
+        "enabled": True, "position": "start",         # start — первой строкой, как в ваших постах; end — в конце
         "rating_tags": {"sfw": "sfw", "erotic": "nsfw", "explicit": "nsfw"},
         "constant": [], "max_species": 3, "min_prob": 0.5,
         "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": False},
@@ -38,6 +59,7 @@ DEFAULTS = {
         "enabled": False, "bot_token": "", "bot_name": "",
         "transport": "botapi",   # botapi — HTTPS к api.telegram.org; mtproto — как Telegram Desktop (нужны api_id/api_hash)
         "include_title": True, "spoiler_nsfw": True, "silent_originals": True, "comments_wait_seconds": 60,
+        "originals_first": False,   # MTProto: не публиковать, пока PNG-оригиналы не загружены на сервер Telegram
         "preupload": True,       # MTProto: заливать PNG-оригиналы заранее, пока пишется пост
         "channels": [],          # [{"id", "title", "rating", "originals"}]
         "group": {"id": "", "title": "", "sfw_topic": 0, "nsfw_topic": 0, "sfw_topic_title": "", "nsfw_topic_title": ""},
@@ -128,7 +150,8 @@ def load(raw: bool = False) -> dict:
     """Настройки. Без raw отключённые модули-площадки выглядят выключенными (enabled=False) — так их пропускают
     и публикация, и фоновая отправка, и цифры. Сохраняем всегда «сырые» (raw=True), чтобы ничего не потерять."""
     p = _path()
-    data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    from core.fsutil import read_json
+    data = read_json(p)
     cfg = _merge(DEFAULTS, _migrate(data))
     if not raw:
         e6 = cfg["e6ai"]
@@ -142,6 +165,8 @@ def load(raw: bool = False) -> dict:
         for k in PLATFORM_MODULES:
             if not cfg["modules"].get(k, True) and isinstance(cfg.get(k), dict):
                 cfg[k]["enabled"] = False
+        if not cfg["modules"].get("translation"):   # язык текста выключен: везде основной текст и основная подпись
+            cfg["text_lang"] = {k: "main" for k in cfg["text_lang"]}
     return cfg
 
 
@@ -176,7 +201,8 @@ def module_on(key: str) -> bool:
 
 def save(cfg: dict) -> dict:
     cfg = _merge(DEFAULTS, cfg)
-    _path().write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    from core.fsutil import atomic_write
+    atomic_write(_path(), json.dumps(cfg, ensure_ascii=False, indent=2))
     return cfg
 
 
@@ -208,6 +234,9 @@ def public(cfg: dict) -> dict:
         acc["has_key"] = bool(acc.get("api_key"))
         acc["api_key"] = ""
     out["vk"]["access_token"] = ""
+    out["platform_order"] = platform_order(out)
+    out["translate"]["has_key"] = bool(out["translate"].get("api_key"))
+    out["translate"]["api_key"] = ""
     out["deviantart"]["has_secret"] = bool(out["deviantart"].get("client_secret"))
     out["deviantart"]["client_secret"] = ""
     return out

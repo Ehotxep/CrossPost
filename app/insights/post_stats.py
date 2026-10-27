@@ -14,7 +14,7 @@ import numpy as np
 
 from app import db, stats
 from app.insights import model as M
-from app.paths import data_dir, sub
+from app.paths import sub
 
 TRACK_DAYS = 8
 _e6_cache: dict = {}

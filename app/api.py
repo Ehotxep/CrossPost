@@ -7,7 +7,6 @@ import threading
 from app import __version__, settings
 from app.jobs import Jobs
 from app import stats
-from app.telegram.backend import AuthError
 from app.telegram.service import TgService
 from app.trends import aggregate, dumps, metrics
 
@@ -30,7 +29,7 @@ class Api:
                 "trends": {src: self._trends_state(src) for src in dumps.SOURCES},
                 "tg_job": self.jobs.get("tg:sync"), "pub_job": self.jobs.get("publish"),
                 "ins_job": self.jobs.get("insights:tag"),
-                "vk_job": self.jobs.get("vk:auth"), "vk_stats_job": self.jobs.get("vk:stats"), "modules": self.modules(), "levels": self._levels(),
+                "vk_job": self.jobs.get("vk:auth"), "vk_stats_job": self.jobs.get("vk:stats"), "modules": self.modules(), "tagger_paused": __import__("app.tagger.remote", fromlist=["x"]).paused, "levels": self._levels(),
                 "update": self._update_info()}
 
     def _update_info(self):
@@ -66,7 +65,7 @@ class Api:
                 except Exception:  # noqa: BLE001
                     pass
             icon.focus_window(w.title if hasattr(w, "title") else "")
-        return {"window": w is not None}
+        return {"window": w is not None, "starting": w is None and bool(getattr(self, "window_expected", False))}
 
     def ui_set(self, changes: dict):
         """Запомнить состояние окна (экран, черновик, фильтры) — в файл, чтобы пережило перезапуск."""
@@ -137,7 +136,7 @@ class Api:
             label, go = self.JOB_LABELS.get(key, (None, ""))
             if key.startswith(("poststats:", "pubstats:")):
                 label, go = "Обновление цифр поста", "history"
-            out.append({"key": key, "label": label or key, "go": go, "state": j["state"], "progress": j.get("progress") or 0,
+            out.append({"key": key, "label": label or key, "go": go, "state": j["state"], "cancelling": bool(j.get("cancel")) and j["state"] == "running", "progress": j.get("progress") or 0,
                         "message": j.get("error") if j["state"] == "error" else j.get("message"), "started": j.get("started")})
             if key == "publish":   # у публикации — своя полоска у каждого места
                 try:
@@ -177,11 +176,6 @@ class Api:
         return out
 
     # --- обновления ---
-    def update_status(self):
-        from app import updates
-        updates.check_async()
-        return updates.status()
-
     def update_check(self):
         from app import updates
         updates.check(force=True)
@@ -278,6 +272,10 @@ class Api:
 
     def job(self, key: str):
         return self.jobs.get(key)
+
+    def job_cancel(self, key: str):
+        """Кнопка «Отмена» на прогресс-баре: фоновая задача остановится при ближайшем шаге."""
+        return self.jobs.cancel(key)
 
     def pick_files(self, title: str = "Выберите файлы", kind: str = "dumps"):
         if self.window is None:
@@ -549,6 +547,20 @@ class Api:
             changes.pop("access_token", None)
         if section == "deviantart" and not changes.get("client_secret"):
             changes.pop("client_secret", None)
+        if section == "translate":
+            clear = bool(changes.pop("clear_key", False))
+            key = str(changes.get("api_key") or "").strip()
+            if key:
+                changes["api_key"] = key
+            elif clear:
+                changes["api_key"] = ""        # «Удалить ключ»
+            else:
+                changes.pop("api_key", None)   # пустое поле = оставить сохранённый ключ
+        if section == "platform_order":   # список площадок целиком; чистим от лишнего
+            lst = changes if isinstance(changes, list) else (changes or {}).get("order")
+            changes = PS.platform_order({"platform_order": lst})
+        if section == "versions":   # только известные метки
+            changes = {p: [v for v in (vs or []) if v in ("ru", "en", "clean")] for p, vs in changes.items()}
         PS.update(section, changes)
         return self.pub_settings()
 
@@ -556,6 +568,26 @@ class Api:
         from app.publish import tg_bot
         tg_bot.TG_SERVICE = self.tg
         return tg_bot
+
+    def pub_translate(self, title: str = "", text: str = "", src: str = "ru", dst: str = "en"):
+        """Перевод описания через DeepSeek. Ключ берём из настроек, наружу он не уходит."""
+        from app import translate
+        from app.publish import settings as PS
+        from app.jobs import mask_secrets
+        if not PS.module_on("translation"):
+            return {"ok": False, "error": "Перевод выключен: «Настройки» → «Функции» → «Языки и перевод»"}
+        cfg = PS.load()["translate"]
+        try:
+            return dict(translate.translate(cfg, title, text, src if src in ("ru", "en") else "ru", dst if dst in ("ru", "en") else "en"), ok=True)
+        except Exception as e:  # noqa: BLE001 — в интерфейс уходит понятный текст, без ключа
+            msg = mask_secrets(str(e))
+            if cfg.get("api_key"):
+                msg = msg.replace(cfg["api_key"], "***")
+            return {"ok": False, "error": msg}
+
+    def pub_translate_check(self):
+        """Проверка ключа: короткий пробный перевод."""
+        return self.pub_translate(title="", text="Привет, это проверка.")
 
     def pub_tg_bot(self, token: str, transport: str = "auto"):
         """Проверяет токен и сохраняет. auto: сначала Bot API, если api.telegram.org недоступен — MTProto."""
@@ -573,7 +605,7 @@ class Api:
                     raise
                 if not self.tg.keys():
                     raise ValueError("api.telegram.org недоступен из вашей сети. Бот может работать как Telegram Desktop (MTProto), "
-                                     "но для этого нужны api_id и api_hash: «Настройки» → «Импорт для статистики» → «Подключение через API».")
+                                     "но для этого нужны api_id и api_hash: «Настройки» → «Статистика и тренды» → «Telegram: статистика» → «Подключение через API».")
                 me, used = tg_bot.bot_me(token, "mtproto"), "mtproto"
                 note = "api.telegram.org недоступен — бот подключён через MTProto, как Telegram Desktop."
         else:
@@ -833,7 +865,15 @@ class Api:
         st = jtp.status()
         st["job"] = self.jobs.get("tagger:install")
         st["run_job"] = self.jobs.get("tagger:run")
+        from app.tagger import remote
+        st["paused"] = remote.paused
         return st
+
+    def tagger_pause(self, on: bool = True):
+        """Кнопка «Теггер» справа вверху: выключить/включить работу теггера сейчас (модуль «Подбор тегов» не трогает)."""
+        from app.tagger import remote
+        remote.set_paused(bool(on))
+        return self.tagger_status()
 
     # --- ffmpeg для GIF и видео ---
     def media_status(self):
@@ -999,6 +1039,9 @@ class Api:
         import json as _json
         if not self._mod("tagger"):
             return None   # теггер выключен в «Модулях»
+        from app.tagger import remote as _rm
+        if _rm.paused:
+            return None   # выключен кнопкой «Теггер» справа вверху
         todo = [i for i in ids or [] if not (sub("uploads") / f"{i}.tags.json").exists()]
         if not todo:
             return True
@@ -1258,6 +1301,12 @@ class Api:
         self._tg_ctx()
         return self.jobs.start("publish", runner.retry)
 
+    def post_resend_originals(self, pub_id: int):
+        """Дослать PNG-оригиналы к уже вышедшему посту Telegram (нового поста не создаёт)."""
+        from app.publish import runner
+        self._tg_ctx()
+        return self.jobs.start("publish", lambda report: runner.resend_originals(int(pub_id), report))
+
     def post_state(self):
         from app.publish import runner
         return {"job": self.jobs.get("publish"), "state": runner.state()}
@@ -1302,6 +1351,8 @@ class Api:
         """Разметить теггером превью старых постов (в фоне, один раз; потом — только новые)."""
         if not self._mod("tagger"):
             raise ValueError("Подбор тегов выключен в «Настройки» → «Функции»")
+        if __import__("app.tagger.remote", fromlist=["x"]).paused:
+            raise ValueError("Теггер выключен кнопкой «Теггер» справа вверху — включите её")
         from app import subproc
         def run(report):   # модель теггера грузится в отдельный процесс и уходит из памяти вместе с ним
             subproc.run(report, "app.trends.jobs:history_tags")
@@ -1360,7 +1411,8 @@ class Api:
         try:
             ext_posts.mirror_vk()   # свежие замеры ВК — сразу, без ожидания 3-часового круга (локально, без сети)
         except Exception:  # noqa: BLE001
-            pass
+            from app.applog import log
+            log("календарь: не удалось подтянуть замеры ВК")
         ext_posts.sync_async()   # посты ВК и Bluesky, вышедшие мимо Crosspost, — раз в 3 часа, в фоне
         r = cache.get(W.calendar_name(ym), W.calendar_compute(ym), W.calendar_key(), max_age=1800)
         return dict(r["data"], _cache={"at": r["at"], "stale": r["stale"], "refreshing": r["refreshing"]},
@@ -1380,11 +1432,6 @@ class Api:
         """Ответ на подсказку «Похоже на тот же арт»."""
         from app.insights import calendar
         return calendar.decide(a, b, bool(yes))
-
-    def ext_sync(self):
-        """Обновить посты ВК и Bluesky для календаря сейчас."""
-        from app.insights import ext_posts
-        return self.jobs.start("ext:sync", lambda report: ext_posts.sync(force=True))
 
     def post_detail(self, post_id: int):
         """Статистика импортированного поста (без публикации из Crosspost) — для шторки календаря."""

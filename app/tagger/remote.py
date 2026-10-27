@@ -6,6 +6,7 @@ IDLE секунд без работы (или кнопкой «Выгрузит�
 import atexit
 import json
 import os
+import queue
 import subprocess
 import threading
 import time
@@ -16,7 +17,17 @@ _lock = threading.Lock()
 _proc = None
 _last = 0.0
 _device = None
+paused = False     # «Теггер» справа вверху выключен на время работы приложения (при запуске всегда включён)
 starting = False   # модель как раз грузится в видеокарту — для панели процессов
+
+
+def set_paused(on: bool) -> None:
+    """Выключить/включить работу теггера сейчас: при выключении процесс с моделью закрывается."""
+    global paused
+    paused = bool(on)
+    if paused:
+        with _lock:
+            stop()
 
 
 def alive() -> bool:
@@ -47,7 +58,9 @@ def _start_inner():
     _proc = subprocess.Popen([subproc.python_exe(), "-m", "app.tagger.serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, cwd=root, env=env, creationflags=subproc.NOWIN,
                              text=True, encoding="utf-8", errors="replace", bufsize=1)
-    first = _read()
+    _q.clear()
+    threading.Thread(target=_pump, args=(_proc,), daemon=True, name="tagger-out").start()
+    first = _read(START_TIMEOUT)
     if "ready" not in first:
         stop()
         raise RuntimeError(first.get("err") or "теггер не запустился")
@@ -55,10 +68,30 @@ def _start_inner():
     threading.Thread(target=_watch, daemon=True).start()
 
 
-def _read() -> dict:
+START_TIMEOUT = 300   # загрузка модели на видеокарту: обычно до минуты, на слабом железе дольше
+PREDICT_TIMEOUT = 180  # одна картинка
+_q: dict = {}
+
+
+def _pump(proc):
+    """Читает вывод процесса в очередь: чтение с таймаутом, чтобы зависший теггер не вешал окно навсегда."""
+    q = _q.setdefault(id(proc), queue.Queue())
+    for line in proc.stdout:
+        q.put(line)
+    q.put(None)
+
+
+def _read(timeout: float | None = None) -> dict:
+    timeout = PREDICT_TIMEOUT if timeout is None else timeout
+    q = _q.setdefault(id(_proc), queue.Queue())
+    end = time.time() + timeout
     while True:
-        line = _proc.stdout.readline()
-        if not line:
+        try:
+            line = q.get(timeout=max(0.1, end - time.time()))
+        except queue.Empty:
+            stop(force=True)   # завис (драйвер видеокарты, нехватка памяти): убиваем, следующий запрос запустит заново
+            return {"err": f"теггер не ответил за {int(timeout)} с — процесс остановлен, попробуйте ещё раз"}
+        if line is None:
             return {"err": "процесс теггера закрылся"}
         line = line.strip()
         if line.startswith("{"):
@@ -80,11 +113,15 @@ def _watch():
                 return
 
 
-def stop():
+def stop(force: bool = False):
     global _proc
     p, _proc = _proc, None
+    if p is not None:
+        _q.pop(id(p), None)
     if p and p.poll() is None:
         try:
+            if force:
+                raise OSError   # завис: не ждём вежливого выхода
             p.stdin.close()
             p.wait(timeout=10)
         except Exception:
@@ -93,6 +130,8 @@ def stop():
 
 def predict(path, min_prob: float = 0.1) -> list:
     global _last
+    if paused:
+        raise RuntimeError("теггер выключен переключателем «Теггер»")
     with _lock:
         if not alive():
             _start()

@@ -482,6 +482,7 @@ def _wait_uploaded(page, n: int, timeout: int = 180, before: int = 0):
 
 def post(group_id: str, files: list[str], text: str, dry_run: bool = False, headless: bool = False,
          progress=lambda f: None, log=lambda m: None, kind: str = "images") -> dict:
+    sent = {"v": False}   # «Опубликовать» уже нажато: что бы ни случилось дальше, запись могла выйти — повторять вслепую нельзя
     with B.session(headless=headless) as (ctx, page):
         try:
             log("открываю группу")
@@ -528,11 +529,13 @@ def post(group_id: str, files: list[str], text: str, dry_run: bool = False, head
             log("публикую")
             first_label = (btn.inner_text() or "").strip().lower()
             btn.click()
+            sent["v"] = not first_label.startswith("далее")
             page.wait_for_timeout(800)
             if first_label.startswith("далее"):   # бывает два шага: «Далее» → «Опубликовать»
                 nxt = _find_in(page, PUBLISH[:1], 5000)
                 if nxt:
                     nxt.click()
+                    sent["v"] = True
             progress(0.85)
             link = ""
             deadline = time.time() + 60   # если ВК спросит капчу — в окне браузера её можно ввести
@@ -550,9 +553,15 @@ def post(group_id: str, files: list[str], text: str, dry_run: bool = False, head
                 return {"link": "", "title": title, "note": f"запись, скорее всего, вышла, но ссылку найти не удалось (снимок {shot})"}
             B.save_cookies(ctx)
             return {"link": link, "title": title, "note": ""}
-        except PlatformError as e:
-            shot = B.dump(page, "vk-error")
-            raise PlatformError(f"ВК в браузере: {e}" + (f" (снимок экрана: {shot})" if shot else ""))
         except Exception as e:  # noqa: BLE001
+            if sent["v"]:   # после нажатия «Опубликовать» ошибка не значит «не вышло»: не роняем место, а просим проверить стену
+                try:
+                    shot = B.dump(page, "vk-after-error")
+                except Exception:  # noqa: BLE001
+                    shot = ""
+                return {"link": "", "title": locals().get("title", ""), "note": f"⚠ после нажатия «Опубликовать» связь с браузером прервалась "
+                        f"({type(e).__name__}): запись, возможно, вышла — проверьте стену группы, второй раз не публикуйте"
+                        + (f" (снимок экрана: {shot})" if shot else "")}
             shot = B.dump(page, "vk-error")
-            raise PlatformError(f"ВК в браузере: {type(e).__name__}: {str(e).splitlines()[0]}" + (f" (снимок экрана: {shot})" if shot else ""))
+            what = str(e) if isinstance(e, PlatformError) else f"{type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}"
+            raise PlatformError(f"ВК в браузере: {what}" + (f" (снимок экрана: {shot})" if shot else ""))

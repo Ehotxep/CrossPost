@@ -86,20 +86,35 @@ def _download(url: str, dest: Path, report, label: str, limit: int):
     import requests
     if not url.startswith(DL_PREFIX):
         raise ValueError("адрес файла не из репозитория Crosspost — отказываюсь качать")
-    with requests.get(url, stream=True, timeout=30, headers={"User-Agent": f"Crosspost/{__version__}"}) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("Content-Length") or 0)
-        if total > limit:
-            raise ValueError("файл слишком большой")
-        got = 0
-        with open(dest, "wb") as f:
-            for chunk in r.iter_content(1 << 20):
-                got += len(chunk)
-                if got > limit:
+    import time
+    got, attempt = 0, 0
+    dest.unlink(missing_ok=True)
+    while True:   # обрыв связи — докачиваем с того же места (Range); сколько угодно попыток, останавливает только «Отмена»
+        try:
+            hdr = {"User-Agent": f"Crosspost/{__version__}", **({"Range": f"bytes={got}-"} if got else {})}
+            with requests.get(url, stream=True, timeout=30, headers=hdr) as r:
+                r.raise_for_status()
+                if got and r.status_code != 206:   # сервер не умеет докачку — начинаем сначала
+                    got = 0
+                total = got + int(r.headers.get("Content-Length") or 0)
+                if total > limit:
                     raise ValueError("файл слишком большой")
-                f.write(chunk)
-                if total:
-                    report(0.05 + 0.6 * got / total, f"{label}: {got // (1 << 20)} из {total // (1 << 20)} МБ")
+                with open(dest, "ab" if got else "wb") as f:
+                    for chunk in r.iter_content(1 << 20):
+                        got += len(chunk)
+                        if got > limit:
+                            raise ValueError("файл слишком большой")
+                        f.write(chunk)
+                        report(0.05 + 0.6 * got / total if total else None,
+                               f"{label}: {got // (1 << 20)} из {total // (1 << 20)} МБ" if total else None)
+                if total and got < total:
+                    raise requests.ConnectionError("соединение закрылось раньше времени")
+                return
+        except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError) as e:
+            attempt += 1
+            for left in range(min(30, 2 * attempt), 0, -1):
+                report(message=f"{label}: обрыв связи, продолжу с {got // (1 << 20)} МБ через {left} с (попытка {attempt + 1})")
+                time.sleep(1)
 
 
 def _sha256(p: Path) -> str:

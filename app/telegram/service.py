@@ -24,12 +24,7 @@ def _link(chat_id: str, username: str | None, msg_id: int) -> str:
     return f"https://t.me/c/{cid[4:] if cid.startswith('-100') else cid.lstrip('-')}/{msg_id}"
 
 
-def _plural(n: int, one: str, few: str, many: str) -> str:
-    n = abs(n) % 100
-    if 10 < n < 20:
-        return many
-    n %= 10
-    return one if n == 1 else few if 2 <= n <= 4 else many
+from app.textutil import plural as _plural  # noqa: E402
 
 
 def _net_error(e: Exception) -> str:
@@ -212,13 +207,14 @@ class TgService:
 
     # --- настройки соединения (zapret, прокси) ---
     def _cfg(self) -> dict:
-        p = self._keys_path
-        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        from core.fsutil import read_json
+        return read_json(self._keys_path)
 
     def _write_cfg(self, **changes):
         cfg = self._cfg()
         cfg.update(changes)
-        self._keys_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        from core.fsutil import atomic_write
+        atomic_write(self._keys_path, json.dumps(cfg, ensure_ascii=False))
 
     def net(self) -> dict:
         return self._cfg().get("net") or {"transport": "obfuscated", "proxy": {}}

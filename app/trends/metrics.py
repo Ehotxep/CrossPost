@@ -133,13 +133,7 @@ def _fmt_date(dt: datetime) -> str:
     return dt.strftime("%d.%m")
 
 
-def plural(n: int, one: str, few: str, many: str) -> str:
-    n = abs(int(n))
-    if n % 10 == 1 and n % 100 != 11:
-        return one
-    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
-        return few
-    return many
+from app.textutil import plural  # noqa: E402,F401  (общий помощник)
 
 
 # --- Прогноз --------------------------------------------------------------------

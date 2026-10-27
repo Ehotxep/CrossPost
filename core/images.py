@@ -32,10 +32,6 @@ class Prepared:
         return f"{self.name} {self.width}x{self.height}, {mb:.1f} МБ ({note})"
 
 
-def _dims_ok(w, h, max_side, max_sum):
-    return (not max_side or max(w, h) <= max_side) and (not max_sum or w + h <= max_sum)
-
-
 def _fit_dims(im, max_side, max_sum):
     w, h = im.size
     scale = 1.0
@@ -52,55 +48,6 @@ def _encode(im, fmt, **kw) -> bytes:
     buf = BytesIO()
     im.save(buf, fmt, **kw)
     return buf.getvalue()
-
-
-def prepare(path: Path, max_bytes: int, formats=("JPEG", "PNG"),
-            max_side: int | None = None, max_sum: int | None = None) -> Prepared:
-    raw = path.read_bytes()
-    with Image.open(path) as im:
-        fmt = im.format
-        w, h = im.size
-        animated = getattr(im, "is_animated", False)
-
-    if fmt in formats and len(raw) <= max_bytes and _dims_ok(w, h, max_side, max_sum):
-        return Prepared(path.name, raw, MIME.get(fmt, "application/octet-stream"), w, h, False)
-
-    if animated:
-        raise ValueError(
-            f"{path.name}: анимацию нельзя пережать без потерь, а в лимиты площадки она не влезает"
-        )
-
-    stem = path.stem
-    with Image.open(path) as src:
-        im = ImageOps.exif_transpose(src)
-        im.load()
-    im = _fit_dims(im, max_side, max_sum)
-
-    has_alpha = im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info)
-    if has_alpha and "PNG" in formats:
-        data = _encode(im, "PNG", optimize=True)
-        if len(data) <= max_bytes:
-            return Prepared(stem + ".png", data, "image/png", *im.size, True)
-
-    # Дальше — JPEG. Прозрачность заливаем белым.
-    if has_alpha:
-        rgba = im.convert("RGBA")
-        bg = Image.new("RGB", rgba.size, (255, 255, 255))
-        bg.paste(rgba, mask=rgba.split()[-1])
-        im = bg
-    else:
-        im = im.convert("RGB")
-
-    while True:
-        for q in (95, 92, 88, 84, 80):
-            data = _encode(im, "JPEG", quality=q, optimize=True,
-                           subsampling=0 if q >= 92 else 2)
-            if len(data) <= max_bytes:
-                return Prepared(stem + ".jpg", data, "image/jpeg", *im.size, True)
-        w, h = im.size
-        if min(w, h) < 300:
-            raise ValueError(f"{path.name}: не удалось ужать до {max_bytes // 1024 // 1024} МБ")
-        im = im.resize((int(w * 0.85), int(h * 0.85)), Image.LANCZOS)
 
 
 # --- Лёгкая версия и оригинал -------------------------------------------------

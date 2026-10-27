@@ -7,9 +7,17 @@ import traceback
 _TOKEN = re.compile(r"\d{6,}:[A-Za-z0-9_-]{30,}")
 
 
+_OTHER = re.compile(r"(?i)((?:access_token|refresh_token|api_key|password|client_secret|authorization)[\"']?\s*[:=]\s*[\"']?(?:bearer\s+)?)[A-Za-z0-9._~+/=-]{12,}")
+_JWT = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}")
+_HOOK = re.compile(r"(discord(?:app)?\.com/api/webhooks/\d+/)[\w-]{20,}")
+
+
 def mask_secrets(text: str) -> str:
-    """Токены ботов не должны попадать на экран и в скриншоты."""
-    return _TOKEN.sub("<токен скрыт>", text or "")
+    """Токены ботов, ключи, пароли и адреса вебхуков не должны попадать на экран, в скриншоты и в журнал."""
+    t = _TOKEN.sub("<токен скрыт>", text or "")
+    t = _JWT.sub("<токен скрыт>", t)
+    t = _HOOK.sub(r"\1<скрыто>", t)
+    return _OTHER.sub(r"\1<скрыто>", t)
 
 
 _DNS = re.compile(r"Failed to resolve '([^']+)'|Name or service not known|getaddrinfo failed|NameResolutionError")
@@ -27,6 +35,10 @@ def friendly(text: str) -> str:
     return text
 
 
+class Cancelled(BaseException):
+    """Пользователь нажал «Отмена». BaseException — чтобы общие `except Exception` в задачах не проглотили отмену."""
+
+
 class Jobs:
     def __init__(self):
         self._lock = threading.Lock()
@@ -39,11 +51,13 @@ class Jobs:
             if j and j["state"] == "running":
                 return False
             job = {"state": "running", "progress": 0.0, "message": "Запуск…", "error": None,
-                   "started": time.time(), "finished": None}
+                   "started": time.time(), "finished": None, "cancel": False}
             self._jobs[key] = job
 
         def report(progress=None, message=None):
             with self._lock:
+                if job["cancel"] and not (progress is not None and progress >= 1.0):
+                    raise Cancelled()
                 if progress is not None:
                     job["progress"] = max(0.0, min(1.0, float(progress)))
                 if message is not None:
@@ -56,6 +70,9 @@ class Jobs:
                     fn(report, *args)
                 with self._lock:
                     job.update(state="done", progress=1.0, finished=time.time())
+            except Cancelled:
+                with self._lock:
+                    job.update(state="cancelled", message="Отменено", finished=time.time())
             except Exception as e:  # показываем пользователю понятную ошибку, подробности — в лог
                 traceback.print_exc()
                 with self._lock:
@@ -63,6 +80,16 @@ class Jobs:
 
         threading.Thread(target=run, daemon=True, name=f"job:{key}").start()
         return True
+
+    def cancel(self, key: str) -> bool:
+        """Просит задачу остановиться: она прервётся при ближайшем отчёте о прогрессе."""
+        with self._lock:
+            j = self._jobs.get(key)
+            if not j or j["state"] != "running":
+                return False
+            j["cancel"] = True
+            j["message"] = "Отменяю…"
+            return True
 
     def all(self) -> dict:
         with self._lock:

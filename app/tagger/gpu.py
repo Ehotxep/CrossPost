@@ -103,13 +103,6 @@ def choose(info: dict | None = None) -> dict:
                       "затем нажмите здесь «Проверить видеокарту»."}
 
 
-def summary_line(c: dict) -> str:
-    g = c.get("gpu") or {}
-    if c.get("ok"):
-        return f"{g.get('name')} · драйвер {g.get('driver')} → PyTorch {c['build']}"
-    return c.get("why") or ""
-
-
 if __name__ == "__main__":   # python -m app.tagger.gpu — для отладки
     d = detect()
     print(json.dumps({"detect": d, "choose": choose(d)}, ensure_ascii=False, indent=1))

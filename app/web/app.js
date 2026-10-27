@@ -17,9 +17,9 @@
   const OK_TEXT = {
     e6_check_now: "Сверка тегов запущена", pub_e6_site: "Сайт для загрузки переключён", e6_forget: "Забыто", e6_never: "Больше не буду предлагать этот тег",
     e6db_update: "Скачивание базы тегов запущено", hide_tag: "Тег скрыт из трендов", insights_tag_history: "Разметка истории запущена",
-    outputs_set: "Сохранено", media_install: "Установка ffmpeg запущена", modules_set: "Сохранено", create_shortcuts: "Ярлыки созданы: на рабочем столе и в меню «Пуск»", modules_set_many: "Готово", tagger_unload: "Теггер выгружен — память освобождена", tagger_check: "Проверено", tagger_cpu_ok: "Сохранено", perf_report: "Отчёт сохранён — папка открыта",
+    outputs_set: "Сохранено", media_install: "Установка ffmpeg запущена", modules_set: "Сохранено", create_shortcuts: "Ярлыки созданы: на рабочем столе и в меню «Пуск»", modules_set_many: "Готово", tagger_pause: "Готово", tagger_unload: "Теггер выгружен — память освобождена", tagger_check: "Проверено", tagger_cpu_ok: "Сохранено", perf_report: "Отчёт сохранён — папка открыта",
     tg_forget_proxy: "Прокси убран из запаса", open_debug_folder: "Папка открыта", open_light_folder: "Папка открыта", post_publish: "Публикация началась",
-    post_remove_file: "Файл убран из поста", post_retry: "Повторяю неудачные", post_schedule: "Пост запланирован",
+    post_remove_file: "Файл убран из поста", post_retry: "Повторяю неудачные", post_resend_originals: "Досылаю PNG", post_schedule: "Пост запланирован",
     post_schedule_cancel: "Запланированный пост отменён", post_schedule_move: "Время перенесено", post_schedule_now: "Публикую сейчас",
     pub_bluesky_login: "Вход в Bluesky выполнен", pub_bluesky_logout: "Вы вышли из Bluesky",
     pub_da_finish: "Вход в DeviantArt выполнен", pub_da_login: "Открыла DeviantArt — подтвердите доступ в браузере",
@@ -68,6 +68,7 @@
     if (!text) return;
     const now = Date.now();
     if (toastSeen[text] && now - toastSeen[text] < 3000) return;   // одно и то же сообщение дважды подряд не показываем
+    if (Object.keys(toastSeen).length > 100) toastSeen = {};
     toastSeen[text] = now;
     let box = document.getElementById("toasts");
     if (!box) { box = document.createElement("div"); box.id = "toasts"; box.setAttribute("aria-live", "polite"); document.body.appendChild(box); }
@@ -81,6 +82,10 @@
     while (box.children.length > 5) box.firstChild.remove();
     setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, kind === "error" ? 12000 : kind === "info" ? 7000 : 2600);
   }
+  // Необработанные ошибки (в обработчике кнопки, в запросе): раньше они пропадали молча — теперь видны в окне и в консоли
+  const jsErr = (m) => { m = String(m || "").trim(); if (m && !/ResizeObserver|Script error/i.test(m)) toast("Ошибка: " + m, "error"); };
+  window.addEventListener("unhandledrejection", (e) => { const r = e.reason; jsErr(r && r.message ? r.message : r); });
+  window.addEventListener("error", (e) => { if (e.message) jsErr(e.message); });
   window.alert = (m) => toast(m, "error");   // все прежние alert — тоже в этот вид
   function busy(on) {
     let bar = document.getElementById("fbbar");
@@ -156,18 +161,21 @@
     stats: null, sp: store.get("sp", "90"), sc: store.get("sc", ""), statsLoading: false,
   };
   // переключатель «Теггер» в шапке — это та же настройка, что «Подбор тегов» в «Функциях»
-  Object.defineProperty(S, "taggerOn", { get: () => !(S.info && S.info.modules && S.info.modules.tagger === false) });
+  // taggerMaster — принципиальный переключатель «Подбор тегов» (Настройки → Функции); taggerOn — теггер работает прямо сейчас
+  // (мастер включён и кнопка «Теггер» справа вверху не выключена на время работы приложения)
+  Object.defineProperty(S, "taggerMaster", { get: () => !(S.info && S.info.modules && S.info.modules.tagger === false) });
+  Object.defineProperty(S, "taggerOn", { get: () => S.taggerMaster && !(S.info && S.info.tagger_paused) });
   let poll = null;
 
   const CAT_LABEL = { all: "Все", species: "Виды", character: "Персонажи", franchise: "Франшизы", general: "Темы" };
   const pct = (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v * 100)) + "%";
-  const mult = (v) => "×" + Number(v).toFixed(2).replace(".", ",");
-  const plural = (n, a, b, c) => { n = Math.abs(n) % 100; const k = n % 10; return n > 10 && n < 20 ? c : k === 1 ? a : k >= 2 && k <= 4 ? b : c; };
-  const num = (n) => Number(n).toLocaleString("ru-RU");
+  const mult = (v) => "×" + Number(v).toFixed(2).replace(".", DEC);
+  const plural = (n, a, b, c) => { if (window.I18N.lang === "en") return Math.abs(n) === 1 ? a : c; n = Math.abs(n) % 100; const k = n % 10; return n > 10 && n < 20 ? c : k === 1 ? a : k >= 2 && k <= 4 ? b : c; };
+  const num = (n) => Number(n).toLocaleString(LOC);
   const seg = (name, opts, cur) => `<div class="seg" role="radiogroup">${opts.map(([k, l]) =>
     `<button role="radio" aria-checked="${k === cur}" class="${k === cur ? "on" : ""}" data-set="${name}" data-val="${k}">${l}</button>`).join("")}</div>`;
   const LV = () => (S.info && S.info.levels) || { good: 1.3, hit: 2, super: 3 };   // ступени индекса — из вашей истории
-  const xf = (v) => "×" + Number(v).toFixed(2).replace(/0$/, "").replace(".", ",");
+  const xf = (v) => "×" + Number(v).toFixed(2).replace(/0$/, "").replace(".", DEC);
   const hideBtn = (tag) => `<button class="hide" data-hide="${esc(tag)}" title="Скрыть тег из трендов" aria-label="Скрыть тег ${esc(tag)}">×</button>`;
   const catDot = (c) => `<span class="dot" style="background:${{ species: "var(--s1)", general: "var(--s2)" }[c] || "var(--s3)"}"></span>`;
   // подсказка «?»: пояснение показывается при наведении или фокусе, а не занимает место на экране
@@ -227,7 +235,7 @@
   }
   function hotBadge(index, est) {
     if (index == null || index < LV().hit) return "";
-    const sup = index >= LV().super, x = String(index.toFixed(1)).replace(".", ",");
+    const sup = index >= LV().super, x = String(index.toFixed(1)).replace(".", DEC);
     const tip = est ? `Горячий прямо сейчас: свежий пост идёт на ×${x} к норме канала` : sup ? `Супер-хит: ×${x} к норме канала` : `Хит: ×${x} к норме канала`;
     return `<span class="hot ${sup ? "super" : ""} ${est ? "live" : ""}" data-tip="${tip}">${ICON.flame}</span>`;
   }
@@ -339,6 +347,7 @@
   }
   // ----- окно «вышла новая версия» при запуске: установить / позже / пропустить -----
   function updModal() {
+    if (document.getElementById("langfirst")) return;   // сначала выбор языка (после него окно перезагружается)
     const u = S.info && S.info.update, old = document.getElementById("updmodal");
     const j = u && u.job, rd = u && u.ready && u.latest && u.ready.version === u.latest.version;
     if (u && u.show && !S.updPrompted && !(j && j.state === "running")) { S.updPrompted = true; S.updOpen = true; }   // один раз за запуск
@@ -394,7 +403,7 @@
   function updHtml() {
     const u = S.info.update, hint = window.CP.hint;
     if (!u) return "";
-    const lt = u.latest, ago = u.last ? new Date(u.last * 1000).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "";
+    const lt = u.latest, ago = u.last ? new Date(u.last * 1000).toLocaleString(LOC, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "";
     let st;
     if (u.newer) st = `<p><b>Вышла версия ${esc(lt.version)}</b>${lt.date ? ` <span class="muted">от ${esc(lt.date)}</span>` : ""}. У вас ${esc(u.current)}.</p>
       ${lt.notes ? `<div class="notes">${esc(lt.notes)}</div>` : ""}
@@ -420,10 +429,13 @@
   }
   function paintTagger() {
     const b = document.getElementById("tgind"); if (!b) return;
-    const on = S.taggerOn !== false;
-    b.className = "wkind tgind " + (on ? "on" : "off"); b.setAttribute("aria-pressed", on ? "true" : "false");
-    b.dataset.tip = on ? "Подбор тегов включён: теггер подбирает теги картинкам в фоне. К посту они привязываются, только когда включена отправка на e6ai. Нажмите, чтобы выключить (это та же настройка, что «Подбор тегов» в «Настройки» → «Функции»)."
-                       : "Подбор тегов выключен — теги картинкам не подбираются. Нажмите, чтобы включить.";
+    const master = S.taggerMaster, on = S.taggerOn;
+    b.className = "wkind tgind " + (S.taggerStopping ? "stopping" : on ? "on" : "off"); b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.disabled = !master;
+    b.dataset.tip = !master ? "Подбор тегов выключен в «Настройки» → «Функции» — теггер не работает. Включите его там, и эта кнопка заработает."
+      : S.taggerStopping ? "Теггер останавливается: закрываю процесс с моделью…"
+      : on ? "Теггер работает: подбирает теги картинкам. Нажмите, чтобы остановить его до перезапуска приложения (настройка «Подбор тегов» в «Функции» не меняется)."
+           : "Теггер остановлен (до перезапуска приложения): теги не подбираются, модель выгружена, видеопамять освобождена. Нажмите, чтобы включить.";
   }
   function paintWorker() {
     const b = document.getElementById("wkind"), w = S.worker;
@@ -491,7 +503,8 @@
         <span class="ab"><i class="${d.state === "error" ? "bad" : d.state === "done" ? "ok" : ""}" style="width:${Math.round((d.progress || 0) * 100)}%"></i></span>
         <span class="ap">${d.state === "done" ? "✓" : d.state === "error" ? "✕" : Math.round((d.progress || 0) * 100) + "%"}</span></div>`).join("");
     return `<div class="act ${x.state}" data-act="${esc(x.key)}" ${x.go ? `data-go="${esc(x.go)}" role="button" tabindex="0"` : ""}>
-      <div class="ah"><b>${esc(x.label)}</b><span class="ap">${x.state === "done" ? "✓ готово" : x.state === "error" ? "ошибка" : pct == null ? "" : pct + "%"}</span>
+      <div class="ah"><b>${esc(x.label)}</b><span class="ap">${x.state === "done" ? "✓ готово" : x.state === "error" ? "ошибка" : x.state === "cancelled" ? "отменено" : pct == null ? "" : pct + "%"}</span>
+        ${x.state === "running" ? `<button class="acancel" data-actcancel="${esc(x.key)}" ${x.cancelling ? "disabled" : ""}>${x.cancelling ? "Отменяю…" : "Отмена"}</button>` : ""}
         ${x.state === "error" ? `<button class="ax" data-actx="${esc(x.key)}" aria-label="Скрыть">×</button>` : ""}</div>
       <div class="abar ${pct == null && x.state === "running" ? "indet" : ""}"><i style="width:${x.state === "done" ? 100 : pct || 0}%"></i></div>
       ${x.message ? `<span class="am">${esc(x.state === "error" ? humanize(x.message) : x.message)}</span>` : ""}${subs ? `<div class="asubs">${subs}</div>` : ""}</div>`;
@@ -532,7 +545,7 @@
     for (const el of [...box.children]) if (!keep.has(el.dataset.act)) el.remove();
     const tpl = document.createElement("template");
     vis.forEach((x, i) => {
-      tpl.innerHTML = actHtml(x).trim();
+      tpl.innerHTML = actHtml(x).trim(); window.I18N.dom(tpl.content);
       const nu = tpl.content.firstElementChild;
       const cur = [...box.children].find((el) => el.dataset.act === x.key);
       if (cur) { morph(cur, nu); if (box.children[i] !== cur) box.insertBefore(cur, box.children[i] || null); }
@@ -541,6 +554,12 @@
     box.classList.toggle("on", vis.length > 0);
   }
   document.getElementById("acts").addEventListener("click", async (e) => {
+    const cx = e.target.closest("[data-actcancel]");
+    if (cx) {
+      e.stopPropagation(); cx.disabled = true; cx.textContent = I18N.t("Отменяю…");
+      try { await api("job_cancel", { key: cx.dataset.actcancel }); } catch (err) { toast(err.message, "error"); }
+      return;
+    }
     const x = e.target.closest("[data-actx]");
     if (x) { const it = (S.acts || []).find((a) => a.key === x.dataset.actx); if (it) actGone[it.key] = it.started; paintActs(S.acts || []); return; }
     const g = e.target.closest("[data-go]"); if (!g) return;
@@ -626,8 +645,13 @@
   window.CP_newsStrip = newsStripHtml;
   paintTagger();
   document.getElementById("tgind").addEventListener("click", async () => {
-    try { S.info.modules = await api("modules_set", { key: "tagger", on: !S.taggerOn }); } catch (e) { return; }
-    applyModules(); paintTagger();
+    if (!S.taggerMaster) return;
+    if (S.taggerStopping) return;
+    const stop = S.taggerOn;
+    if (stop) { S.taggerStopping = true; paintTagger(); }   // жёлтый: процесс закрывается
+    try { await api("tagger_pause", { on: stop }); S.info.tagger_paused = stop; } catch (e) { return; }
+    finally { S.taggerStopping = false; }
+    paintTagger();   // красный — остановлен, видеопамять свободна
     if (S.view === "settings") render();
     if (S.taggerOn && S.view === "post" && window.Pub) { await window.Pub.loadTags(true); render(); }
   });
@@ -734,7 +758,7 @@
     if (softPending === null) return;
     if (softPending === lastMain) return;   // ничего не изменилось
     lastMain = softPending;
-    const t = document.createElement("template"); t.innerHTML = softPending;
+    const t = document.createElement("template"); t.innerHTML = softPending; window.I18N.dom(t.content);
     const ac = [...$main.childNodes], bc = [...t.content.childNodes];
     for (let i = 0; i < Math.min(ac.length, bc.length); i++) {
       if (ac[i].nodeType === bc[i].nodeType && ac[i].nodeName === bc[i].nodeName) morph(ac[i], bc[i]); else $main.replaceChild(bc[i].cloneNode(true), ac[i]);
@@ -960,7 +984,7 @@
     </div>`;
   }
 
-  const fmtBytes = (b) => b >= 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " ГБ" : b >= 1e6 ? Math.round(b / 1e6) + " МБ" : Math.max(0, Math.round(b / 1e3)) + " КБ";
+  const fmtBytes = (b) => b >= 1e9 ? (b / 1e9).toFixed(1).replace(".", DEC) + " ГБ" : b >= 1e6 ? Math.round(b / 1e6) + " МБ" : Math.max(0, Math.round(b / 1e3)) + " КБ";
   function trendsSettingsHtml() {
     const s = S.info.settings;
     return `<section class="card"><div class="head"><h2>Настройки трендов</h2><button class="icon-btn" data-action="trends-settings" aria-label="Закрыть">${ICON.close}</button></div>
@@ -977,35 +1001,44 @@
           <button class="btn" data-pa="nick-save">Сохранить ник</button></div>
         <div class="cardfoot"><button class="btn primary" data-action="save-settings">Сохранить</button><span class="ok small">${esc(S.flash)}</span></div></section>`;
   }
-  function appSettingsHtml() {
+  function langCard() {   // язык интерфейса: переключатель переехал сюда из шапки; при первом запуске выбор — в окне приветствия
+    const cur = (window.I18N && window.I18N.lang) || "ru";
+    return `<section class="card setc"><div class="head"><h2>Язык интерфейса</h2></div>
+      <div class="seg" role="radiogroup" aria-label="Язык интерфейса">${[["ru", "Русский"], ["en", "English"]].map(([k, l]) => `<button role="radio" aria-checked="${cur === k}" class="${cur === k ? "on" : ""}" data-lang="${k}">${l}</button>`).join("")}</div>
+      <p class="muted small" style="margin:0">Окно перезагрузится; настройки и черновик сохранятся.</p></section>`;
+  }
+  function workerHtml() {   // «Фоновая отправка»
     const w = S.worker;
-    if (!S.storage && !S.storageLoading) { S.storageLoading = true; api("storage_info").then((r) => { S.storage = r; S.storageLoading = false; if (S.view === "settings") render(); }).catch(() => { S.storageLoading = false; }); }
     return `<section class="card setc"><div class="head"><h2>Фоновая отправка ${hint("Отдельный маленький процесс со значком у часов. Публикует запланированные посты и снимает цифры свежих постов, даже когда окно Crosspost закрыто.")}</h2>
           ${w ? `<span class="badge ${w.running ? "ok" : "warn"}" style="padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600">${w.running ? "работает" : "выключена"}</span>` : ""}</div>
         ${w ? `<div class="status"><span>${w.running ? esc(w.next || "Работает") : "Запланированные посты выйдут, только пока открыто окно Crosspost."}</span><span class="grow1"></span>
             ${w.running ? `<button class="btn small danger" data-wk="stop">Выключить</button>` : `<button class="btn small primary" data-wk="start">Включить</button>`}</div>
-          <label class="tgl"><input type="checkbox" data-pa="wk-auto" ${w.autostart ? "checked" : ""} ${w.platform === "win32" ? "" : "disabled"}><span>Запускать вместе с Windows</span></label>` : `<p class="muted">Проверяю…</p>`}</section>
-      ${updHtml()}
+          <label class="tgl"><input type="checkbox" data-pa="wk-auto" ${w.autostart ? "checked" : ""} ${w.platform === "win32" ? "" : "disabled"}><span>Запускать вместе с Windows</span></label>` : `<p class="muted">Проверяю…</p>`}</section>`;
+  }
+  function appSettingsHtml() {   // «Общие»: язык, тема, обновления, ярлык
+    return langCard() + `${updHtml()}
       <section class="card setc"><div class="head"><h2>Оформление</h2></div>
         <div class="field" style="max-width:260px"><label for="themesel">Тема</label><select id="themesel"><option value="dark" ${store.get("theme", "dark") !== "light" ? "selected" : ""}>Тёмная</option><option value="light" ${store.get("theme", "dark") === "light" ? "selected" : ""}>Светлая</option></select></div></section>
       <section class="card setc"><div class="head"><h2>Значок и ярлык ${hint("Ярлык запускает Crosspost напрямую, без файла Crosspost.bat — поэтому Windows не показывает окно «Не удаётся проверить издателя», а в панели задач виден значок Crosspost. Закрепить на панели задач: правой кнопкой по ярлыку → «Закрепить на панели задач».")}</h2></div>
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap"><img src="/appicon.ico" alt="Значок приложения" width="40" height="40" style="border-radius:10px">
           <button class="btn" data-action="mk-shortcut">Создать ярлык на рабочем столе и в «Пуске»</button></div>
         <p class="muted small" style="margin:0">Если значок у ярлыка старый — создайте ярлык заново.</p></section>
-      <section class="card setc"><div class="head"><h2>Место на диске ${hint("Файлы, добавленные в пост, копируются в папку приложения — поэтому перемещение исходников ничего не ломает. Тяжёлые копии удаляются через 7 дней после публикации; миниатюры и JPEG-превью остаются.")}</h2></div>
+      <p class="note">Версия ${esc(S.info.version)}. Данные хранятся только на вашем компьютере.</p>`;
+  }
+  function diskHtml() {   // «Хранение файлов»: сколько места занимают копии, превью и готовые файлы
+    if (!S.storage && !S.storageLoading) { S.storageLoading = true; api("storage_info").then((r) => { S.storage = r; S.storageLoading = false; if (S.view === "settings") render(); }).catch(() => { S.storageLoading = false; }); }
+    return `<section class="card setc"><div class="head"><h2>Место на диске ${hint("Файлы, добавленные в пост, копируются в папку приложения — поэтому перемещение исходников ничего не ломает. Тяжёлые копии удаляются через 7 дней после публикации; миниатюры и JPEG-превью остаются.")}</h2></div>
         ${S.storage ? `<div class="kvlist"><div><span>Копии оригиналов</span><b>${fmtBytes(S.storage.originals)}</b></div>
           <div><span>JPEG-превью</span><b>${fmtBytes(S.storage.light)}</b></div>
           <div><span>Миниатюры и превью</span><b>${fmtBytes(S.storage.thumbs + S.storage.previews)}</b></div>
-          <div><span>Готовые файлы (не удаляются) ${hint("Папка «Готовые файлы» в «Настройки» → «Пост»: JPEG-превью, GIF и видео, которые сделала программа.")}</span><b>${fmtBytes(S.storage.outputs || 0)}</b></div></div>
-          <div class="cardfoot"><button class="btn" data-action="storage-free">Освободить сейчас</button><span class="muted small">${esc(S.flash2 || "Удалит копии оригиналов всех опубликованных постов. Запланированные не трогаются.")}</span></div>` : `<p class="muted">Считаю…</p>`}</section>
-      ${perfHtml()}
-      <p class="note">Версия ${esc(S.info.version)}. Данные хранятся только на вашем компьютере.</p>`;
+          <div><span>Готовые файлы (не удаляются) ${hint("Папка «Готовые файлы» в «Настройки» → «Файлы» → «Хранение файлов»: JPEG-превью, GIF и видео, которые сделала программа.")}</span><b>${fmtBytes(S.storage.outputs || 0)}</b></div></div>
+          <div class="cardfoot"><button class="btn" data-action="storage-free">Освободить сейчас</button><span class="muted small">${esc(S.flash2 || "Удалит копии оригиналов всех опубликованных постов. Запланированные не трогаются.")}</span></div>` : `<p class="muted">Считаю…</p>`}</section>`;
   }
   // ----- производительность: память и процессор частей Crosspost, медленные фоновые задачи -----
   function loadPerf() {
     if (S.perfLoading) return;
     S.perfLoading = true;
-    api("perf_status").then((r) => { S.perf = r; S.perfLoading = false; if (S.view === "settings" && S.platSec === "app") render(); })
+    api("perf_status").then((r) => { S.perf = r; S.perfLoading = false; if (S.view === "settings" && S.platSec === "diag") render(); })
       .catch(() => { S.perfLoading = false; });
   }
   function perfHtml() {
@@ -1016,15 +1049,15 @@
       <button class="btn small ghost" data-action="perf-refresh" ${S.perfLoading ? "disabled" : ""}>Обновить</button></div>`;
     if (!n.psutil) h += `<p class="muted small">${esc(n.note || "")}</p>`;
     else {
-      h += `<div class="kvlist">${n.groups.map((g) => `<div><span>${esc(g.name)}${g.n > 1 ? ` <span class="muted small">×${g.n}</span>` : ""}</span><span>${num(g.mb)} МБ · процессор ${String(g.cpu).replace(".", ",")}%</span></div>`).join("")}
+      h += `<div class="kvlist">${n.groups.map((g) => `<div><span>${esc(g.name)}${g.n > 1 ? ` <span class="muted small">×${g.n}</span>` : ""}</span><span>${num(g.mb)} МБ · процессор ${String(g.cpu).replace(".", DEC)}%</span></div>`).join("")}
         <div><span><b>Всего Crosspost</b></span><b>${num(n.total_mb)} МБ</b></div></div>
-        <p class="muted small">Память компьютера занята на ${n.system.ram_used}% из ${String(n.system.ram_gb).replace(".", ",")} ГБ.</p>`;
+        <p class="muted small">Память компьютера занята на ${n.system.ram_used}% из ${String(n.system.ram_gb).replace(".", DEC)} ГБ.</p>`;
       if (n.groups.some((g) => /Браузер/.test(g.name))) h += `<div class="callout"><p>Открыт браузер Crosspost (сбор статистики ВК или публикация). Если сейчас ничего не идёт — его можно закрыть.</p><button class="btn small" data-action="perf-kill">Закрыть браузер</button></div>`;
     }
     const mem = (sm.memory || []).filter((m) => m.hours >= 0.5);
-    if (mem.length) h += `<h3>Память за сутки</h3><div class="kvlist">${mem.map((m) => `<div><span>${roleName[m.role] || m.role}</span><span>было ${num(m.first)} МБ → сейчас ${num(m.last)} МБ, максимум ${num(m.max)} МБ · процессор в среднем ${String(m.cpu_avg).replace(".", ",")}%</span></div>`).join("")}</div>`;
+    if (mem.length) h += `<h3>Память за сутки</h3><div class="kvlist">${mem.map((m) => `<div><span>${roleName[m.role] || m.role}</span><span>было ${num(m.first)} МБ → сейчас ${num(m.last)} МБ, максимум ${num(m.max)} МБ · процессор в среднем ${String(m.cpu_avg).replace(".", DEC)}%</span></div>`).join("")}</div>`;
     const slow = (sm.tasks || []).slice(0, 6);
-    if (slow.length) h += `<h3>Фоновые задачи за сутки</h3><div class="kvlist">${slow.map((t) => `<div><span>${esc(t.name)} <span class="muted small">${roleName[t.role] || t.role}</span></span><span>${t.n} раз · всего ${String(t.s).replace(".", ",")} с · дольше всего ${String(t.max_s).replace(".", ",")} с${t.errors ? ` · <span class="err">ошибок ${t.errors}</span>` : ""}</span></div>`).join("")}</div>`;
+    if (slow.length) h += `<h3>Фоновые задачи за сутки</h3><div class="kvlist">${slow.map((t) => `<div><span>${esc(t.name)} <span class="muted small">${roleName[t.role] || t.role}</span></span><span>${t.n} раз · всего ${String(t.s).replace(".", DEC)} с · дольше всего ${String(t.max_s).replace(".", DEC)} с${t.errors ? ` · <span class="err">ошибок ${t.errors}</span>` : ""}</span></div>`).join("")}</div>`;
     h += `<div class="cardfoot"><button class="btn" data-action="perf-report">Сохранить отчёт</button>
       ${(n.groups || []).some((g) => g.name === "Теггер") ? `<button class="btn ghost" data-action="perf-tagger">Выгрузить теггер</button>` : ""}
       <span class="muted small">Чтобы поймать тормоза, оставьте Crosspost открытым на час, потом сохраните отчёт.</span></div></section>`;
@@ -1035,26 +1068,28 @@
   }
 
   // меню настроек: группа, пункты, когда группа видна (по включённым функциям)
-  const PSECS = [["Приложение", [["app", "Общие"], ["features", "Функции"], ["net", "Соединение"]], () => true],
+  const PSECS = [["Программа", [["app", "Общие"], ["features", "Функции"], ["worker", "Фоновая отправка"]], () => true],
     ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "e6ai / e621"]], () => true],
-    ["Текст поста", [["signatures", "Подписи"], ["hashtags", "Хэштеги"]], () => modOn("crosspost")],
-    ["Файлы поста", [["light", "JPEG-превью"], ["media", "Видео и GIF"], ["files", "Готовые файлы"]], () => modOn("crosspost")],
+    ["Оформление поста", [["signatures", "Подписи"], ["hashtags", "Хэштеги"], ["translate", "Перевод", () => modOn("translation")]], () => modOn("crosspost")],
+    ["Файлы", [["light", "JPEG-превью"], ["media", "Видео и GIF"], ["versions", "Умное таргетирование", () => modOn("targeting")], ["files", "Хранение файлов"]], () => modOn("crosspost")],
     ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || modOn("e6ai")],
-    ["Статистика", [["collect", "Сбор статистики"], ["import", "Импорт из Telegram"]], () => statsOn()],
-    ["Тренды", [["trends", "Тренды"]], () => modOn("trends")]];
+    ["Статистика и тренды", [["collect", "Сбор статистики", () => statsOn()], ["trends", "Тренды", () => modOn("trends")]], () => statsOn() || modOn("trends")],
+    ["Дополнительно", [["net", "Прокси и соединение"], ["diag", "Диагностика"]], () => true]];
   // четыре функции приложения; у каждой — модули, которые она включает и выключает разом
   const FEATURES = [
-    ["crosspost", "Кросспостинг", "Новый пост, публикация на площадки, расписание и «История».", ["crosspost", "history"]],
-    ["tags", "Подбор тегов", "Теггер подбирает теги по картинке — для хэштегов и e6ai / e621. Без него теги вписываются вручную.", ["tagger"]],
-    ["stats", "Статистика", "Замеры просмотров, цифры с площадок, индекс успеха, новости и прогноз.", ["stats", "collect", "news", "forecast"]],
-    ["trends", "Тренды", "Что набирает популярность на e6ai и e621, ниши и «мой стиль».", ["trends"]]];
+    ["crosspost", "Кросспостинг", "Публикация одного поста сразу на несколько площадок, отложенная отправка по расписанию и история публикаций.", ["crosspost", "history"]],
+    ["tags", "Подбор тегов", "Автоматически предлагает теги по картинке — для хэштегов и для e6ai / e621. Без неё теги вводятся вручную.", ["tagger"]],
+    ["stats", "Статистика", "Просмотры и реакции по площадкам, лучшие работы и время публикации, уведомления о всплесках и прогноз.", ["stats", "collect", "news", "forecast"]],
+    ["trends", "Тренды", "Что сейчас популярно на e6ai и e621: растущие теги, ниши и сравнение с вашим стилем.", ["trends"]],
+    ["targeting", "Умное таргетирование", "Для постов в нескольких версиях (например, комикс с русскими и английскими надписями): отметьте версию у каждого файла, и на каждую площадку уйдут подходящие.", ["targeting"]],
+    ["translation", "Языки и перевод", "Отдельный английский текст и подписи для англоязычных площадок. Автоперевод — через DeepSeek, по кнопке.", ["translation"]]];
   const featOn = (f) => f[3].some((k) => modOn(k));
   const statsOn = () => modOn("stats") || modOn("collect");
-  const MODS = { platforms: [["telegram", "Telegram", "публикация в каналы и группу"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "e6ai / e621", "загрузка, теги, теггер и база тегов"]],
-    extras: [["tagger", "Теггер", "подбирает теги по картинке для e6ai / e621 и хэштегов; без него теги вписываются вручную"],
-      ["collect", "Сбор статистики", "замеры просмотров, цифры с сайтов, сверка правок модераторов, досылка превью"],
-      ["news", "Новости по свежим артам", "колокольчик вверху: хиты, всплески реакций, комментарии"],
-      ["forecast", "Прогноз", "ожидаемые просмотры и лучшее время на экране поста"]],
+  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "e6ai / e621", "загрузка, теги, теггер и база тегов"]],
+    extras: [["tagger", "Теггер", "предлагает теги по картинке для e6ai / e621 и хэштегов; без него теги вводятся вручную"],
+      ["collect", "Сбор статистики", "регулярно сохраняет просмотры и реакции опубликованных постов, учитывает правки модераторов и догружает превью"],
+      ["news", "Новости по свежим артам", "уведомления в колокольчике: популярные работы, всплески реакций, новые комментарии"],
+      ["forecast", "Прогноз", "ожидаемые просмотры и подсказка лучшего времени публикации"]],
     screens: [["history", "История", "календарь и список публикаций"], ["stats", "Статистика", "просмотры и индекс успеха каналов"], ["trends", "Тренды", "e6ai и e621, обновление выгрузок"]] };
   const modOn = (k) => !(S.info && S.info.modules) || S.info.modules[k] !== false;
   // какие экраны видны: «Новый пост» и «История» — кросспостинг, «Статистика» и «Тренды» — свои функции, «Настройки» — всегда
@@ -1068,25 +1103,23 @@
     return false;
   }
   function featuresHtml() {
-    const row = ([k, l, sub]) => `<label class="tgl modrow"><input type="checkbox" data-mod="${k}" ${modOn(k) ? "checked" : ""}><span><b>${l}</b>${sub ? ` <span class="muted small">${esc(sub)}</span>` : ""}</span></label>`;
-    return `<section class="card setc"><div class="head"><h2>Функции ${hint("Выключенная функция не работает ни в окне, ни в фоновой отправке и не обращается к сайтам; её экраны и настройки скрываются. Накопленные данные и ключи не удаляются — включите обратно, и всё на месте.")}</h2></div>
+    return `<section class="card setc"><div class="head"><h2>Функции ${hint("Выключенная функция не работает ни в окне, ни в фоновой отправке и не обращается к сайтам; её экраны и настройки скрываются. Накопленные данные и ключи не удаляются — включите обратно, и всё на месте. Площадки включаются и выключаются переключателями в меню слева, в группе «Площадки».")}</h2></div>
         <div class="featlist">${FEATURES.map((f) => { const on = featOn(f); return `<label class="feat ${on ? "on" : ""}">
           <span class="tgl"><input type="checkbox" data-feat="${f[0]}" ${on ? "checked" : ""} aria-label="${f[1]}"></span>
-          <span><b>${f[1]}</b><span class="muted small">${esc(f[2])}</span></span></label>`; }).join("")}</div></section>
-      <section class="card setc"><div class="head"><h2>Площадки ${hint("Выключенная площадка пропадает из списка «Публикация», в неё ничего не публикуется (и фоновой отправкой тоже), цифры с неё не собираются. Ключи и настройки не стираются.")}</h2></div>
-        <div class="modlist">${MODS.platforms.map(row).join("")}</div></section>`;
+          <span><b>${f[1]}</b><span class="muted small">${esc(f[2])}</span></span></label>`; }).join("")}</div></section>`;
   }
   function netSecHtml() {
     const t = S.tg;
     if (!t || t.unknown) return `<section class="card setc"><p class="muted">Проверяю…</p></section>`;
     if (!t.configured) return `<section class="card setc"><div class="head"><h2>Соединение с Telegram</h2></div>
-      <p class="muted">Соединение настраивается после того, как сохранены ключи API Telegram: ${statsOn() ? `<a href="#" data-view-link="settings" data-tab="import">«Статистика» → «Импорт из Telegram»</a>` : `включите «Статистика» в <a href="#" data-view-link="settings" data-tab="features">«Функциях»</a> — ключи вводятся там`}. Боту по Bot API оно не нужно.</p></section>`;
+      <p class="muted">Соединение настраивается после того, как сохранены ключи API Telegram: ${statsOn() ? `<a href="#" data-view-link="settings" data-tab="import">«Telegram» → «Статистика»</a>` : `включите «Статистика» в <a href="#" data-view-link="settings" data-tab="features">«Функциях»</a> — ключи вводятся там`}. Боту по Bot API оно не нужно.</p></section>`;
     return `<section class="card setc"><div class="head"><h2>Соединение с Telegram ${hint("Для входа в аккаунт Telegram (статистика) и для бота, который работает через MTProto. zapret, прокси и ссылки на прокси из Telegram Desktop.")}</h2></div>
       ${S.tgErr ? `<p class="err">${esc(S.tgErr)}</p>` : ""}${netHtml(t, true)}</section>`;
   }
   function platNav() {
     const st = (k) => {
-      if (k === "app") { const w = S.worker; return [w && w.running ? "ok" : "", w ? (w.running ? "фоновая отправка работает" : "фоновая отправка выключена") : ""]; }
+      if (k === "worker") { const w = S.worker; return [w && w.running ? "ok" : "", w ? (w.running ? "фоновая отправка работает" : "фоновая отправка выключена") : ""]; }
+      if (k === "diag") return ["", "память и фоновые задачи"];
       if (k === "trends") return ["", "мой стиль, частота обновления"];
       if (k === "features") return ["", FEATURES.filter(featOn).map((f) => f[1].toLowerCase()).join(", ") || "всё выключено"];
       if (k === "net") { const n = S.tg && S.tg.net, p = n && n.proxy; return ["", p && p.type ? (p.type === "mtproxy" ? "MTProxy" : p.type.toUpperCase()) + " " + (p.host || "") : "напрямую"]; }
@@ -1097,30 +1130,36 @@
       return window.Pub.platStatus(k);
     };
     const isPlat = (k) => MODS.platforms.some((m) => m[0] === k);
-    return `<nav class="platnav" aria-label="Разделы настроек">${PSECS.filter((g) => g[2]()).map(([g, items]) => `${g ? `<h3>${g}</h3>` : ""}${items.map(([k, l]) => {
+    return `<nav class="platnav" aria-label="Разделы настроек">${PSECS.filter((g) => g[2]()).map(([g, items0]) => { const items = g === "Площадки" ? window.Pub.byOrder(items0) : items0.filter((x) => !x[2] || x[2]()); return `${g ? `<h3>${g}</h3>` : ""}${items.map(([k, l], ix) => {
       const off = isPlat(k) && !modOn(k);
       const [lamp, sub] = off ? ["", "выключена"] : st(k);
-      const btn = `<button class="pn ${S.platSec === k ? "on" : ""} ${off ? "off" : ""} ${isPlat(k) ? "hassw" : ""}" data-psec="${k}" aria-current="${S.platSec === k}"><span class="lamp ${lamp}"></span><span><b>${l}</b>${sub ? `<span>${esc(sub)}</span>` : ""}</span></button>`;
-      return isPlat(k) ? `<div class="pnwrap">${btn}<span class="tgl pnsw" data-tip="${off ? "Включить" : "Выключить"} площадку «${l}»"><input type="checkbox" data-mod="${k}" ${off ? "" : "checked"} aria-label="Площадка ${l}"></span></div>` : btn;
-    }).join("")}`).join("")}</nav>`;
+      const btn = `<button class="pn ${S.platSec === k || (k === "telegram" && S.platSec === "import") ? "on" : ""} ${off ? "off" : ""} ${isPlat(k) ? "hassw" : ""}" data-psec="${k}" aria-current="${S.platSec === k || (k === "telegram" && S.platSec === "import")}"><span class="lamp ${lamp}"></span><span><b>${l}</b>${sub ? `<span>${esc(sub)}</span>` : ""}</span></button>`;
+      const ord = window.Pub.order(), pos = ord.indexOf(k);
+      return isPlat(k) ? `<div class="pnwrap">${btn}<span class="pnord"><button data-pord="up" data-k="${k}" ${pos <= 0 ? "disabled" : ""} aria-label="Выше: ${l}" data-tip="Выше">▲</button><button data-pord="down" data-k="${k}" ${pos >= ord.length - 1 ? "disabled" : ""} aria-label="Ниже: ${l}" data-tip="Ниже">▼</button></span><span class="tgl pnsw" data-tip="${off ? "Включить" : "Выключить"} площадку «${l}»"><input type="checkbox" data-mod="${k}" ${off ? "" : "checked"} aria-label="Площадка ${l}"></span></div>` : btn;
+    }).join("")}`; }).join("")}</nav>`;
+  }
+  function tgTabs() {   // Telegram: вкладки «Публикация» и «Статистика» (статистика — только если она включена)
+    if (!statsOn()) return "";
+    return `<div class="seg" role="tablist" aria-label="Telegram" style="margin-bottom:12px">${[["telegram", "Публикация"], ["import", "Статистика"]].map(([k, l]) => `<button role="tab" aria-selected="${S.platSec === k}" class="${S.platSec === k ? "on" : ""}" data-psec="${k}">${l}</button>`).join("")}</div>`;
   }
   function renderPlatforms() {
     const head = `<div class="toolbar"><h1>Настройки</h1><span class="muted small">Ключи и токены хранятся только на этом компьютере</span></div>`;
     if (S.platSec === "modules") S.platSec = "features";   // раздел переименован
-    const visible = PSECS.filter((g) => g[2]()).flatMap((g) => g[1].map((x) => x[0]));
+    const visible = PSECS.filter((g) => g[2]()).flatMap((g) => g[1].filter((x) => !x[2] || x[2]()).map((x) => x[0]));
+    if (statsOn()) visible.push("import");   // «Статистика Telegram» — вкладка внутри раздела Telegram, в меню отдельно её нет
     if (!visible.includes(S.platSec)) S.platSec = "features";   // раздел скрыт выключенной функцией
     const offPlat = MODS.platforms.find((m) => m[0] === S.platSec && !modOn(m[0]));
     const body = offPlat ? `<section class="card setc"><div class="head"><h2>${offPlat[1]} выключена</h2></div>
         <p class="muted">Площадка скрыта из публикации, фоновой отправки и сбора цифр. Ключи и настройки сохранены.</p>
         <div class="cardfoot" style="border:0;padding:0"><button class="btn primary" data-modon="${offPlat[0]}">Включить ${esc(offPlat[1])}</button></div></section>`
-      : S.platSec === "features" ? featuresHtml() : S.platSec === "app" ? appSettingsHtml() : S.platSec === "trends" ? trendsSecHtml()
-      : S.platSec === "net" ? netSecHtml() : S.platSec !== "import" ? window.Pub.settingsHtml(S.platSec) : null;
+      : S.platSec === "features" ? featuresHtml() : S.platSec === "app" ? appSettingsHtml() : S.platSec === "worker" ? workerHtml() : S.platSec === "diag" ? perfHtml() : S.platSec === "trends" ? trendsSecHtml()
+      : S.platSec === "net" ? netSecHtml() : S.platSec === "files" ? window.Pub.settingsHtml("files") + diskHtml() : S.platSec === "telegram" ? tgTabs() + window.Pub.settingsHtml("telegram") : S.platSec !== "import" ? window.Pub.settingsHtml(S.platSec) : null;
     if (body !== null) {
       $main.innerHTML = head + `<div class="platlayout">${platNav()}<div class="platbody">${body}</div></div>`;
       return;
     }
     const t = S.tg, job = S.info.tg_job, running = job && job.state === "running";
-    let h = `<section class="card" style="max-width:900px"><div class="head"><h2>${pbadge("telegram")} Telegram — статистика каналов ${hint("Здесь приложение только читает ваши каналы — ничего не публикует и не пишет от вашего имени.")}</h2>
+    let h = tgTabs() + `<section class="card" style="max-width:900px"><div class="head"><h2>${pbadge("telegram")} Telegram — статистика каналов ${hint("Здесь приложение только читает ваши каналы — ничего не публикует и не пишет от вашего имени.")}</h2>
       ${S.tgCh.some((c) => c.posts) ? `<span class="badge ok" style="padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600">есть данные</span>` : ""}</div>`;
     // 1. Импорт выгрузки Telegram Desktop — основной способ, без ключей
     const pick = S.info.can_pick_files ? `<button class="btn" data-action="tg-pickjson">Выбрать файл…</button>` : "";
@@ -1143,7 +1182,7 @@
         <div class="chlist">${S.tgCh.map((c) => `<div class="chrow">
           <label class="tgl" style="flex:1;min-width:200px" data-tip="Учитывать в статистике"><input type="checkbox" data-chsel="${esc(c.chat_id)}" ${c.selected ? "checked" : ""}>
             <span><b>${esc(c.title || c.chat_id)}</b>${c.username ? ` <span class="muted small">@${esc(c.username)}</span>` : ""}<br>
-            <span class="muted small">${c.posts ? num(c.posts) + " " + plural(c.posts, "пост", "поста", "постов") : "ещё не импортирован"}${c.synced_at ? " · обновлён " + new Date(c.synced_at).toLocaleString("ru-RU") : ""}</span></span></label>
+            <span class="muted small">${c.posts ? num(c.posts) + " " + plural(c.posts, "пост", "поста", "постов") : "ещё не импортирован"}${c.synced_at ? " · обновлён " + new Date(c.synced_at).toLocaleString(LOC) : ""}</span></span></label>
           <div class="seg" role="radiogroup" aria-label="Что публикуется в канале">${[["sfw", "SFW"], ["nsfw", "18+"], ["all", "Любой"]].map(([k, l]) =>
             `<button role="radio" aria-checked="${c.rating === k}" class="${c.rating === k ? "on" : ""}" data-chrating="${esc(c.chat_id)}" data-val="${k}">${l}</button>`).join("")}</div>
         </div>`).join("")}</div>`;
@@ -1165,7 +1204,7 @@
         <div><button class="btn primary" data-action="tg-keys" ${S.tgBusy ? "disabled" : ""}>Сохранить ключи</button></div>
         <p class="note">Эти ключи — пропуск программы в Telegram, а не пароль от аккаунта. Не публикуйте их.</p>`;
     } else if (!t.authorized) {
-      h += `<p class="muted small">Не подключается? Настройте zapret или прокси: <a href="#" data-view-link="settings" data-tab="net">«Приложение» → «Соединение»</a>.</p>`;
+      h += `<p class="muted small">Не подключается? Настройте zapret или прокси: <a href="#" data-view-link="settings" data-tab="net">«Дополнительно» → «Прокси и соединение»</a>.</p>`;
       if (t.need_password) {
         h += `<div class="field" style="max-width:360px"><label for="tgpw">Облачный пароль (двухэтапная проверка)</label><input id="tgpw" type="password"></div>
           <div><button class="btn primary" data-action="tg-password" ${S.tgBusy ? "disabled" : ""}>Войти</button></div>`;
@@ -1279,13 +1318,13 @@
     if (!S.tgCh.some((c) => c.selected && c.posts)) {
       $main.innerHTML = `<div class="toolbar"><h1>Статистика</h1></div>
         <section class="card soon"><h2>Пока нет данных</h2><p class="muted">Импортируйте посты Telegram — из выгрузки Telegram Desktop или через API.</p>
-        <div><button class="btn primary" data-view-link="platforms" data-tab="import">Импортировать посты</button></div></section>`;
+        <div><button class="btn primary" data-view-link="settings" data-tab="import">Импортировать посты</button></div></section>`;
       return;
     }
     const chans = S.tgCh.filter((c) => c.selected);
     let h = `<div class="toolbar"><h1>Статистика</h1>
       ${st && st.excluded ? `<button class="chipbtn" data-unexclude-all data-tip="Анонсы и другие посты, которые вы отметили «не учитывать». Нажмите, чтобы вернуть все.">${ICON.eyeoff} Не учитываются: ${num(st.excluded)}</button>` : ""}
-      <span class="spacer"></span>${freshHtml(st)}
+      <span class="spacer"></span>${freshHtml(st)}${modOn("telegram") ? `<button class="btn small ghost" data-view-link="settings" data-tab="import" data-tip="Каналы Telegram, из которых берётся статистика">Настройки Telegram</button>` : ""}
       ${seg("sp", [["7", "7 дн"], ["30", "30 дн"], ["90", "90 дн"], ["365", "Год"], ["all", "Всё"]], S.sp)}
       <select class="sm" id="statch" aria-label="Канал"><option value="">Все каналы</option>${chans.map((c) => `<option value="${esc(c.chat_id)}" ${S.sc === c.chat_id ? "selected" : ""}>${esc(c.title || c.chat_id)}</option>`).join("")}</select></div>`;
     const tj = S.info.tg_job;
@@ -1330,7 +1369,7 @@
     h += `<section class="card"><div class="head"><h2>Рост каналов ${hint(`Медиана ${metricWord} на пост по месяцам. Посты моложе недели не учитываются — они ещё набирают.`)}</h2></div>
       <div class="chart" id="growth-chart"></div>
       <div class="legend">${st.channels.map((c, i) => `<span><span class="sw" style="background:${["var(--s1)", "var(--s2)", "var(--s3)"][i % 3]}"></span>${esc(c.title)} ${ratingPill(c.rating)}</span>`).join("")}</div>
-      <div class="kvlist">${st.channels.map((c) => `<div><span>${esc(c.title)}</span><span class="muted">${num(c.posts)} ${plural(c.posts, "пост", "поста", "постов")}, ${c.by_views ? `обычно ${num(c.median_views || 0)} просм., реакций ${c.react_rate !== null ? (c.react_rate * 100).toFixed(1).replace(".", ",") + "% от просмотров" : "—"}` : `обычно ${num(c.median_reactions)} ${plural(c.median_reactions, "реакция", "реакции", "реакций")}, без просмотров`}</span></div>`).join("")}</div>
+      <div class="kvlist">${st.channels.map((c) => `<div><span>${esc(c.title)}</span><span class="muted">${num(c.posts)} ${plural(c.posts, "пост", "поста", "постов")}, ${c.by_views ? `обычно ${num(c.median_views || 0)} просм., реакций ${c.react_rate !== null ? (c.react_rate * 100).toFixed(1).replace(".", DEC) + "% от просмотров" : "—"}` : `обычно ${num(c.median_reactions)} ${plural(c.median_reactions, "реакция", "реакции", "реакций")}, без просмотров`}</span></div>`).join("")}</div>
     </section>`;
     h += insightsHtml(st, S.ins);
     $main.innerHTML = h;
@@ -1383,7 +1422,7 @@
       if (q) h += `<section class="card"><div class="head"><h2>Прогноз популярности ${hint("Проверка честная: модель угадывает посты, которых не видела при обучении. Чем больше постов и тегов, тем точнее. Сам прогноз — в «Новом посте».")}</h2><span class="muted small">учится на ${pl(q.n)}</span></div>
         <p><span class="badge ${q.level === "good" ? "ok" : q.level === "mid" ? "warn" : "off"}" style="padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600">${q.level === "good" ? "Работает" : q.level === "mid" ? "Грубый ориентир" : "Пока слабый"}</span> <span class="muted">${esc(q.text)}</span></p>
         <div class="kvlist"><div><span>Угадывает «лучше или хуже обычного»</span><b>${Math.round(q.direction * 100)}% постов</b></div>
-          <div><span>Обычная ошибка в цифре</span><b>в ${q.typical_err.toFixed(1).replace(".", ",")} раза</b></div>
+          <div><span>Обычная ошибка в цифре</span><b>в ${q.typical_err.toFixed(1).replace(".", DEC)} раза</b></div>
           <div><span>Постов с тегами картинки</span><b>${num(q.n_tagged)} из ${num(q.n)}</b></div>
           ${acc && acc.n ? `<div><span>Прогнозы при публикации попали в диапазон</span><b>${acc.inside} из ${acc.n}</b></div>` : ""}</div>
         ${acc && acc.items && acc.items.length ? `<h3>Прогноз и факт</h3><div class="kvlist">${acc.items.slice(0, 6).map((i) => `<div><span class="clip">${esc(i.title || "без названия")} <span class="muted small">${esc(i.channel || "")}</span></span><span>${num(i.expected)} → <b>${num(i.actual)}</b>${i.mature ? "" : ` <span class="muted small">набирает</span>`}</span></div>`).join("")}</div>` : ""}</section>`;
@@ -1459,6 +1498,14 @@
     }
     if (e.target.closest('[data-action="mk-shortcut"]')) { try { await api("create_shortcuts"); } catch (err) { /* ошибка уже показана */ } return; }
 
+    const po = e.target.closest("[data-pord]");
+    if (po) {   // порядок площадок: сдвиг на одну позицию
+      const o = window.Pub.order().slice(), i = o.indexOf(po.dataset.k), j = i + (po.dataset.pord === "up" ? -1 : 1);
+      if (i < 0 || j < 0 || j >= o.length) return;
+      [o[i], o[j]] = [o[j], o[i]];
+      try { await window.Pub.setOrder(o); } catch (err) { alert(err.message); }
+      render(); return;
+    }
     const mon = e.target.closest("[data-modon]");
     if (mon) { S.info.modules = await api("modules_set", { key: mon.dataset.modon, on: true }); S.plan = null; await window.Pub.load("settings"); render(); return; }
     const ps = e.target.closest("[data-psec]");

@@ -21,10 +21,13 @@
     const st = window.CP && window.CP.S, e6 = st && st.pub && st.pub.e6ai;
     return (e6 && e6.site_name) || "e6ai";
   };
-  const mb = (b) => b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + " КБ" : (b / 1024 / 1024).toFixed(b < 10 * 1024 * 1024 ? 1 : 0).replace(".", ",") + " МБ";
+  const mb = (b) => b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + " КБ" : (b / 1024 / 1024).toFixed(b < 10 * 1024 * 1024 ? 1 : 0).replace(".", DEC) + " МБ";
   const tok = () => encodeURIComponent(window.API_TOKEN);
   const ratingPill = (r) => r === "sfw" ? `<span class="pill sfw">SFW</span>` : r === "erotic" ? `<span class="pill erotic">Эротика</span>` : r === "explicit" ? `<span class="pill nsfw">18+</span>` : "";
 
+  // необязательные возможности поста (настройки → «Функции»): выключены — пост обычный, без лишних полей
+  const featOn = (k) => ((S().pub || {}).modules || {})[k] === true;
+  const multiOn = () => featOn("targeting") && !!draft().multi;
   function draft() {
     const s = S();
     if (!s.draft) s.draft = C().store.get("draft", null) || { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
@@ -33,7 +36,7 @@
   function saveDraft() { C().store.set("draft", S().draft); }
   function apiDraft() {
     const d = draft();
-    return { files: d.files.map((f) => f.id), title: d.title, text: d.text, rating: d.rating, signature: d.signature, exclude: d.exclude, e6ai_tags: d.e6tags || {}, e6ai_meta: d.e6meta || {}, hashtags: d.hashtags == null ? null : d.hashtags, tagger: S().taggerOn !== false, extend: d.extend ? d.extend.pub_id : undefined };
+    return { files: d.files.map((f) => f.id), variants: featOn("translation") ? (d.variants || {}) : {}, title: d.title, text: d.text, rating: d.rating, signature: d.signature, exclude: d.exclude, e6ai_tags: d.e6tags || {}, e6ai_meta: d.e6meta || {}, hashtags: d.hashtags == null ? null : d.hashtags, multi: multiOn(), marks: multiOn() ? (d.marks || {}) : {}, tagger: S().taggerOn !== false, extend: d.extend ? d.extend.pub_id : undefined };
   }
   const EMPTY = () => ({ files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} });
   // досылка опубликованного поста на другие площадки: черновик этого поста открывается на экране «Новый пост»,
@@ -43,8 +46,8 @@
     const cur = draft();
     if (!cur.extend) C().store.set("draft_saved", cur);
     const x = r.draft || {};
-    s.draft = { files: r.files, title: x.title || "", text: x.text || "", rating: x.rating, signature: x.signature !== false,
-      exclude: x.exclude || [], hashtags: x.hashtags == null ? null : x.hashtags, e6tags: x.e6ai_tags || {}, e6meta: x.e6ai_meta || {},
+    s.draft = { files: r.files, variants: x.variants || {}, title: x.title || "", text: x.text || "", rating: x.rating, signature: x.signature !== false,
+      exclude: x.exclude || [], hashtags: x.hashtags == null ? null : x.hashtags, e6tags: x.e6ai_tags || {}, e6meta: x.e6ai_meta || {}, multi: !!x.multi, marks: x.marks || {},
       extend: { pub_id: r.pub_id, title: r.title, done: r.done, failed: r.failed, missing: r.missing } };
     saveDraft();
     s.pstatOpen = null; s.postMode = "edit"; s.when = "now"; s.tried = false; s.schedMsg = "";
@@ -153,7 +156,7 @@
       s.pubState = st.state; s.pubJob = st.job;
       const dd = (st.state && st.state.dests) || [];
       if (was && st.job && st.job.state !== "running" && dd.some((d) => d.state === "error" && /api\.telegram\.org/.test(d.message || "")))
-        C().toast("Публикация в Telegram не прошла: нет связи с api.telegram.org. Включите MTProto или запас прокси в «Настройки» → «Соединение»", "error");
+        C().toast("Публикация в Telegram не прошла: нет связи с api.telegram.org. Включите MTProto или запас прокси в «Настройки» → «Дополнительно» → «Прокси и соединение»", "error");
     }
     if (s.view === "settings" && s.tagger && ((s.tagger.job && s.tagger.job.state === "running") || s.tagWaiting)) {
       s.tagger = await C().api("tagger_status");
@@ -169,28 +172,75 @@
 
   // ---------------- Новый пост ----------------
   const RATING_TIP = { sfw: "Без обнажённости", erotic: "Обнажённость и откровенные позы без половых актов", explicit: "Всё, что дальше" };
+  // порядок площадок — из «Настроек» (стрелки у площадок в меню): подписи, версии, язык, предпросмотр, значки
+  const porder = () => (S().pub && S().pub.platform_order) || ["telegram", "discord", "vk", "bluesky", "deviantart", "e6ai"];
+  const byOrder = (arr, key = (x) => x[0]) => { const o = porder(), ix = (x) => { const i = o.indexOf(key(x)); return i < 0 ? 99 : i; }; return arr.slice().sort((a, b) => ix(a) - ix(b)); };
   const pfor = (list) => {   // значки площадок; отключённые модули не показываем
     const m = (S().pub && S().pub.modules) || {};
-    const l = list.filter((p) => m[p] !== false);
+    const l = byOrder(list.filter((p) => m[p] !== false), (x) => x);
     return l.length ? `<span class="pfor">${l.map((p) => C().pbadge(p, { sm: true })).join("")}</span>` : "";
   };
   const fmtDur = (s) => { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+  // ----- комикс в нескольких версиях: метка у каждого файла, на площадку уходят файлы её версий (настройки → «Умное таргетирование») -----
+  const VERS = [["", "для всех"], ["ru", "RU"], ["en", "EN"], ["clean", "без надписей"]];
+  const vlabel = (v) => (VERS.find((x) => x[0] === (v || "")) || VERS[0])[1];
+  const maxFiles = () => (multiOn() ? 40 : 10);
+  // имя файла → версия: _ru / _en / _clean и похожее; если в имени встречаются две версии сразу — не угадываем
+  function guessVersion(name) {
+    const base = String(name || "").toLowerCase().replace(/\.[a-z0-9]+$/, ""), found = new Set();
+    base.split(/[^a-zа-яё0-9]+/).filter(Boolean).forEach((t) => {
+      if (["ru", "rus", "russian", "ру", "рус", "русский"].includes(t)) found.add("ru");
+      else if (["en", "eng", "english", "анг", "англ", "английский"].includes(t)) found.add("en");
+      else if (["clean", "notext", "textless", "blank", "empty", "чистый", "чистая"].includes(t)) found.add("clean");
+    });
+    if (/no[^a-z0-9]?text/.test(base) || /без[^а-яё0-9]*(текст|надпис)/.test(base)) found.add("clean");
+    return found.size === 1 ? [...found][0] : "";
+  }
+  function autoDetect(overwrite) {   // метки по именам: только немеченым, а по кнопке — всем, чьё имя что-то говорит
+    const d = draft(), s = S(); d.marks = d.marks || {};
+    let hit = 0;
+    d.files.forEach((f) => { const g = guessVersion(f.name); if (!g) return; hit++; if (overwrite || !d.marks[f.id]) d.marks[f.id] = g; });
+    s.autoMsg = !d.files.length ? "" : hit ? `Метки по именам файлов: распознано ${hit} из ${d.files.length}.` + (hit < d.files.length ? " Остальные идут на все площадки — разметьте их кистью." : "")
+      : "По именам файлов ничего не распознано (ищу _ru, _en, _clean и похожее). Разметьте кистью.";
+  }
+  function paintIdx(i) {
+    const s = S(), d = draft(), f = d.files[i];
+    if (!f || !s.brush) return;
+    d.marks = d.marks || {};
+    if (s.brush === "all") delete d.marks[f.id]; else d.marks[f.id] = s.brush;
+    const el = document.querySelector(`.gt[data-gi="${i}"] .vmark`);   // без перерисовки: ведём мышью — всё должно быть плавно
+    if (el) { el.className = "vmark v-" + (d.marks[f.id] || "all"); el.textContent = vlabel(d.marks[f.id]); }
+  }
+  function versionsBar() {
+    const d = draft(), s = S(), cnt = {};
+    d.files.forEach((f) => { const k = (d.marks || {})[f.id] || ""; cnt[k] = (cnt[k] || 0) + 1; });
+    return `<div class="vbar" id="vbar">
+      <div class="vrow"><span class="small muted">Кисть:</span>
+        <div class="seg sm" role="group" aria-label="Кисть версии">${VERS.map(([k, l]) => `<button class="${(s.brush || "") === (k || "all") ? "on" : ""}" aria-pressed="${(s.brush || "") === (k || "all")}" data-pa="vbrush" data-val="${k || "all"}"><span class="vdot v-${k || "all"}"></span>${l}</button>`).join("")}</div>
+        <span class="spacer"></span><button class="btn small ghost" data-pa="vauto" data-tip="Расставить метки по именам файлов: _ru, _en, _clean">Определить по именам</button></div>
+      <div class="vrow small muted">${s.brush ? "Кликайте по плиткам или ведите мышью с зажатой кнопкой. Shift+клик — диапазон. Нажмите кисть ещё раз, чтобы вернуть просмотр по клику." : "Выберите кисть и красьте плитки. Без кисти клик по плитке открывает просмотр."}</div>
+      ${s.autoMsg ? `<div class="vauto small">${esc(s.autoMsg)}</div>` : ""}
+      <div class="vrow"><span class="small muted">Сейчас: ${VERS.map(([k, l]) => `${l} — ${cnt[k] || 0}`).join(" · ")}</span>
+        <span class="spacer"></span><span class="small muted">Новые файлы:</span>
+        <div class="seg sm" role="radiogroup" aria-label="Метка для новых файлов">${VERS.map(([k, l]) => `<button role="radio" aria-checked="${(s.nextMark || "") === k}" class="${(s.nextMark || "") === k ? "on" : ""}" data-pa="vnext" data-val="${k}">${l}</button>`).join("")}</div></div></div>`;
+  }
   function galleryHtml() {
     const s = S(), d = draft();
     const prep = s.prep || {};
     const tile = (f, i) => {
       const ar = f.width && f.height ? `aspect-ratio:${f.width}/${f.height};` : "width:160px;";
       const ready = f.kind === "image" && prep[f.id] === "ready";
-      return `<figure class="gt" draggable="true" data-gi="${i}" style="${ar}" data-tip="${esc(f.name)}${f.width ? "\n" + f.width + "×" + f.height : ""} · ${mb(f.size)}${d.files.length > 1 ? "\nПеретащите, чтобы поменять порядок" : ""}">
+      return `<figure class="gt" draggable="${multiOn() && s.brush ? "false" : "true"}" data-gi="${i}" style="${ar}" data-tip="${esc(f.name)}${f.width ? "\n" + f.width + "×" + f.height : ""} · ${mb(f.size)}${d.files.length > 1 ? "\nПеретащите, чтобы поменять порядок" : ""}">
         ${f.kind === "video" ? `<img src="/uthumb/${f.id}?t=${tok()}" alt="${esc(f.name)}" draggable="false" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'vid',textContent:'${esc(f.format || "MP4")}'}))">` : `<img src="/uthumb/${f.id}?t=${tok()}" alt="${esc(f.name)}" draggable="false">`}
         ${f.kind === "video" ? `<span class="play" aria-hidden="true">▶</span>` : ""}
+        ${multiOn() ? `<button class="vmark v-${(d.marks || {})[f.id] || "all"}" data-pa="vmark" data-id="${f.id}" data-tip="Версия файла: нажмите, чтобы сменить">${vlabel((d.marks || {})[f.id])}</button>` : ""}
         ${f.kind === "video" || f.kind === "gif" ? `<button class="gifbtn" data-pa="ved-open" data-i="${i}" data-tip="Обрезать, повернуть, уменьшить, сделать GIF из видео или видео из GIF">Изменить</button>` : ""}
         <button class="x" data-pa="rmfile" data-i="${i}" aria-label="Убрать ${esc(f.name)}">×</button>
         <span class="gm">${f.kind === "gif" ? "<span>GIF</span>" : f.kind === "video" ? `<span>видео${f.duration ? " · " + fmtDur(f.duration) : ""}</span>` : ""}
           ${f.kind === "image" ? `<span class="${ready ? "ready" : ""}" data-prep="${f.id}">${ready ? "✓ превью" : "готовлю…"}</span>${preBadge(f.id)}` : ""}</span></figure>`;
     };
-    return `<div class="gallery">${d.files.map(tile).join("")}
-      ${d.files.length < 10 ? `<label class="addtile" id="drop" tabindex="0"><input type="file" id="fileinp" multiple accept="${ACCEPT}" hidden><b>+</b>Добавить<span>${d.files.length} из 10</span></label>` : ""}</div>`;
+    return `<div class="gallery ${multiOn() ? "multi" : ""} ${multiOn() && s.brush ? "brush" : ""}">${d.files.map(tile).join("")}
+      ${d.files.length < maxFiles() ? `<label class="addtile" id="drop" tabindex="0"><input type="file" id="fileinp" multiple accept="${ACCEPT}" hidden><b>+</b>Добавить<span>${d.files.length} из ${maxFiles()}</span></label>` : ""}</div>${multiOn() ? versionsBar() : ""}`;
   }
   function renderPost() {
     const s = S();
@@ -215,23 +265,20 @@
       <div class="postgrid"><div class="postmain">
         <section class="card"><div class="cardhead"><h2>Файлы</h2>
             ${d.files.some((f) => f.kind !== "image") ? `<span class="optline">GIF и видео уходят как есть ${C().hint("Переделываются только там, где площадка иначе не примет: ужать под лимит Discord или Telegram, перекодировать в H.264 или в WebM для " + BN() + ". Подробности — «Настройки» → «Видео и GIF».")}</span>` :
-            `<span class="optline">JPEG-превью для соцсетей, PNG-оригинал в Telegram и на ${BN()} ${C().hint("Оригиналы не меняются. Для постов делается JPEG-превью по рецепту из «Настроек» → «JPEG-превью»; он готовится сразу, пока вы пишете текст. PNG-оригиналы уходят файлами в Telegram и на e6ai.")}</span>`}</div>
+            `<span class="optline">JPEG-превью для соцсетей, PNG-оригинал в Telegram и на ${BN()} ${C().hint("Оригиналы не меняются. Для постов делается JPEG-превью по рецепту из «Настроек» → «JPEG-превью»; он готовится сразу, пока вы пишете текст. PNG-оригиналы уходят файлами в Telegram и на e6ai.")}</span>`}
+            ${featOn("targeting") ? `<label class="tgl multitgl"><input type="checkbox" data-dfield="multi" ${d.multi ? "checked" : ""}><span>Умное таргетирование ${C().hint("Для работ в нескольких вариантах: с русскими надписями, с английскими, без надписей. Отметьте версию у каждого файла — на каждую площадку уйдут только её версии. Какие версии куда — «Настройки» → «Файлы поста» → «Умное таргетирование». Обычные посты это не затрагивает.")}</span></label>` : ""}</div>
           ${d.files.length ? galleryHtml() : `<label class="drop" id="drop" tabindex="0">
             <input type="file" id="fileinp" multiple accept="${ACCEPT}" hidden>
             <b>Перетащите картинки, GIF или MP4</b>
-            <span class="muted small">или нажмите, чтобы выбрать. Ctrl+V вставит из буфера. До 10 файлов.</span></label>`}
-          ${s.uploading ? `<p class="muted small">Загружаю ${s.uploading} ${C().plural(s.uploading, "файл", "файла", "файлов")}…</p>` : ""}
+            <span class="muted small">или нажмите, чтобы выбрать. Ctrl+V вставит из буфера. До ${maxFiles()} файлов.</span></label>`}
+          ${s.uploading ? `<p class="muted small">Загружаю ${s.uploading} ${C().plural(s.uploading, "файл", "файла", "файлов")}… <button class="btn small" data-pa="upload-cancel">Отмена</button></p>` : ""}
           ${s.uploadErr ? `<p class="err small">${esc(s.uploadErr)}</p>` : ""}
           <div class="cardhead" style="padding-top:4px"><div class="rseg ${s.tried && !d.rating ? "need" : ""}" role="radiogroup" aria-label="Рейтинг">${RATINGS.map(([k, l]) =>
             `<button role="radio" aria-checked="${d.rating === k}" class="${d.rating === k ? "on" : ""}" data-pa="rating" data-val="${k}" ${X && d.rating !== k ? "disabled" : ""} data-tip="${RATING_TIP[k]}"><span class="dot ${k}"></span>${l}</button>`).join("")}</div>
             ${d.rating ? "" : `<span class="${s.tried ? "err" : "muted"} small">Выберите рейтинг — от него зависит, куда уйдёт пост ${C().hint("18+ работы уходят только туда, где разрешено 18+, и под спойлер. ВК — только SFW.")}</span>`}</div>
         </section>
         <section class="card"><h2>Текст</h2>
-          <div class="field"><label for="ptitle">Заголовок ${titleFor.length ? pfor(titleFor) : ""} ${C().hint("Необязательно. Жирным в начале поста на отмеченных площадках.")}</label>
-            <input id="ptitle" data-dfield="title" value="${esc(d.title)}" placeholder="Закат над пустыней"></div>
-          <div class="field"><label for="ptext">Описание</label>
-            <textarea id="ptext" data-dfield="text" rows="5" placeholder="Пара слов о работе">${esc(d.text)}</textarea>
-            <div id="pcount">${countHtml()}</div></div>
+          ${textColsHtml(titleFor)}
           <label class="tgl"><input type="checkbox" data-dfield="signature" ${d.signature ? "checked" : ""}>
             <span>Подпись со ссылками ${sigOn.length ? pfor(sigOn) : `<a href="#" data-view-link="platforms" data-tab="signatures">задать</a>`}</span></label>
         </section>
@@ -250,10 +297,45 @@
     d.files.splice(i, 1, nf);
     if (d.e6tags && d.e6tags[job.src]) { d.e6tags[nf.id] = d.e6tags[job.src]; delete d.e6tags[job.src]; }
     if (d.e6meta && d.e6meta[job.src]) { d.e6meta[nf.id] = d.e6meta[job.src]; delete d.e6meta[job.src]; }
+    if (d.marks && d.marks[job.src]) { d.marks[nf.id] = d.marks[job.src]; delete d.marks[job.src]; }
     C().api("post_remove_file", { file_id: job.src }).catch(() => {});
     saveDraft(); await refreshPlan();
     C().toast(`${nf.kind === "gif" ? "GIF" : "Видео"} готов${nf.kind === "gif" ? "" : "о"}: ${mb(nf.size)}, ${nf.width}×${nf.height}` + (r.over ? ". Тяжелее заказанного лимита — возьмите отрезок короче" : ""), r.over ? "info" : "ok");
     if (s.view === "post") C().render();
+  }
+  // ----- второй язык: английский вариант заголовка и описания, на какие площадки он уходит -----
+  const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "e6ai / e621"]];
+  function trHtml() {
+    const s = S(), t = (s.pub && s.pub.translate) || {};
+    const m = (s.trMsg || "").match(/^(err|warn|ok):([\s\S]*)$/);
+    if (!t.has_key) return `<p class="muted small">Стрелки между колонками переводят текст через DeepSeek: <a href="#" data-view-link="settings" data-tab="translate">подключить</a>.</p>`;
+    return `<p class="small ${m ? (m[1] === "err" ? "err" : m[1] === "warn" ? "warnline" : "ok") : "muted"}">${m ? esc(m[2]) : "Стрелки переводят текст через DeepSeek (он уходит на их серверы). Результат можно править в любой колонке."}</p>`;
+  }
+  // две колонки: основной текст и английский; между ними стрелки-переводы; обе стороны правятся независимо
+  const titleField = (titleFor) => `<div class="field"><label for="ptitle">Заголовок ${titleFor.length ? pfor(titleFor) : ""} ${C().hint("Необязательно. Жирным в начале поста на отмеченных площадках.")}</label>
+      <input id="ptitle" data-dfield="title" value="${esc(draft().title)}" placeholder="Закат над пустыней"></div>`;
+  const descField = () => `<div class="field"><label for="ptext">Описание</label>
+      <textarea id="ptext" data-dfield="text" rows="5" placeholder="Пара слов о работе">${esc(draft().text)}</textarea>
+      <div id="pcount">${countHtml()}</div></div>`;
+  function textColsHtml(titleFor) {
+    if (!featOn("translation")) return titleField(titleFor) + descField();   // обычный пост: одно поле заголовка и одно — описания
+    const s = S(), d = draft(), v = (d.variants && d.variants.en) || {}, tl = (s.pub && s.pub.text_lang) || {}, m = (s.pub && s.pub.modules) || {};
+    const list = byOrder(LANGP.filter(([p]) => m[p] !== false));
+    const on = list.filter(([p]) => tl[p] === "en");
+    const t = (s.pub && s.pub.translate) || {};
+    const arrow = (dir, ch, tip) => `<button class="btn small biarrow" data-pa="translate" data-dir="${dir}" ${s.trBusy || !t.has_key ? "disabled" : ""} data-tip="${tip}" aria-label="${tip}">${s.trBusy ? "…" : ch}</button>`;
+    return `<div class="bilingual">
+      <div class="bicol"><div class="bihead">Русский <span class="muted small">основной</span></div>${titleField(titleFor)}${descField()}</div>
+      <div class="biarr">${arrow("en", "→", "Перевести на английский")}${arrow("main", "←", "Перевести на русский")}</div>
+      <div class="bicol"><div class="bihead">English <span class="muted small">${on.length ? "уходит на: " + esc(on.map(([, n]) => n).join(", ")) : "не используется"}</span></div>
+        <div class="field"><label for="ptitle_en">Title</label>
+          <input id="ptitle_en" data-dvar="en.title" value="${esc(v.title || "")}" placeholder="Sunset over the desert"></div>
+        <div class="field"><label for="ptext_en">Description</label>
+          <textarea id="ptext_en" data-dvar="en.text" rows="5" placeholder="A few words about the piece">${esc(v.text || "")}</textarea></div></div>
+    </div>
+    ${trHtml()}
+    <div class="field"><label>Английский вариант отправлять на ${C().hint("Выбор запоминается: для следующих постов площадки останутся такими же. Остальные получат основной текст. Если английский вариант пуст, любая площадка получит основной текст. Хэштеги берутся из настроек площадки, а подпись — английская из «Настройки» → «Подписи» (если её нет — основная).")}</label>
+      <div class="chips">${list.map(([p, n]) => `<button class="chip ${tl[p] === "en" ? "on" : ""}" style="--tc:var(--accent)" data-pa="tlang" data-p="${p}" aria-pressed="${tl[p] === "en"}">${C().pbadge(p, { sm: true })} ${esc(n)}</button>`).join("")}</div></div>`;
   }
   // ----- хэштеги для соцсетей -----
   function htHtml() {
@@ -388,7 +470,7 @@
   }
   function e6dbCard() {
     const st = S().e6db || {}, j = st.job, run = j && j.state === "running";
-    const when = st.updated ? new Date(st.updated * 1000).toLocaleDateString("ru-RU", { day: "numeric", month: "long" }) : "";
+    const when = st.updated ? new Date(st.updated * 1000).toLocaleDateString(LOC, { day: "numeric", month: "long" }) : "";
     return `<section class="card setc"><div class="head"><h2>База тегов ${BN()} ${C().hint("Все теги " + BN() + " с категориями, переименования и связи (персонаж → франшиза). По ней: подсказки при вводе, перевод тегов теггера в теги " + BN() + ", проверка, что тег существует. Около 10 МБ, скачивается с e6ai.net. Обновляется сама вместе с трендами e6ai.")}</h2>
         ${st.ready ? `<span class="badge ok">✓ ${C().num(st.tags)} тегов</span>` : `<span class="badge off">не скачана</span>`}</div>
       ${st.ready ? `<p class="muted small">Обновлена ${esc(when)}${st.day ? " · выгрузка за " + esc(st.day) : ""} · ${C().num(st.aliases)} переименований · ${C().num(st.implications)} связей</p>` : ""}
@@ -600,20 +682,23 @@
   }
   function previewHtml(will) {
     const s = S(), d = draft(), p = s.plan;
-    const plats = TEXTP.filter((k) => will.some((x) => x.platform === k));
+    const plats = byOrder(TEXTP.filter((k) => will.some((x) => x.platform === k)), (x) => x);
     if (!plats.length) return "";
     const cur = plats.includes(s.pvTab) ? s.pvTab : plats[0];
     const t = (p.texts[cur] || "");
-    const pub = s.pub, withTitle = d.title && cur !== "deviantart" && (pub[cur] || {}).include_title !== false;
+    const pub = s.pub, ttl = ((p.titles || {})[cur] != null ? p.titles[cur] : d.title) || "";
+    const withTitle = ttl && cur !== "deviantart" && (pub[cur] || {}).include_title !== false;
+    const lg = (p.langs || {})[cur] === "en" ? "English" : "основной";
     let body = esc(t);
     if (cur === "telegram") {
-      const n = (withTitle ? d.title.length + 1 : 0);
+      const n = (withTitle ? ttl.length + 1 : 0);
       if (n + t.length > 1024) body = esc(t.slice(0, Math.max(0, 1024 - n))) + `<span class="cut">⋯ дальше отдельным сообщением</span>`;
     }
     body = body.replace(/\[([^\]\n]+)\]\(&lt;?(https?:\/\/[^\s)]+?)(&gt;)?\)/g, '<a href="#">$1</a>');
     return `<details class="more" ${s.pvOpen ? "open" : ""} id="pvbox"><summary>Как будет выглядеть</summary><div class="morebody">
       <div class="seg" role="tablist">${plats.map((k) => `<button role="tab" aria-selected="${k === cur}" class="${k === cur ? "on" : ""}" data-pa="pv" data-val="${k}" data-tip="${C().PLAT[k][2]}">${plats.length > 3 ? C().PLAT[k][0] : C().PLAT[k][2]}</button>`).join("")}</div>
-      <div class="preview">${withTitle ? `<b>${esc(d.title)}</b>\n` : ""}${body || `<span class="muted">Без текста</span>`}</div></div></details>`;
+      <p class="muted small">Язык текста: ${lg}${ttl ? "" : ""}. Это ровно то, что уйдёт на площадку.</p>
+      <div class="preview">${withTitle ? `<b>${esc(ttl)}</b>\n` : ""}${body || `<span class="muted">Без текста</span>`}</div></div></details>`;
   }
   // ----- когда публиковать -----
   const WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"], MON = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -669,17 +754,19 @@
     };
     return `<div class="head"><div><h1>${esc(st.title || "Публикация")}</h1>
         <p class="muted">${ratingPill(st.rating)} ${running ? "Публикуется…" : "Готово"} · ${ok} из ${st.dests.length} ${bad ? `· <span class="err">ошибок: ${bad}</span>` : ""}</p></div></div>
-      ${running ? `<div class="progress"><div style="width:${Math.round((job.progress || 0) * 100)}%"></div></div>` : ""}
+      ${running ? `<div class="progress"><div style="width:${Math.round((job.progress || 0) * 100)}%"></div></div>
+        <p><button class="btn small" data-pa="job-cancel" data-key="publish" ${job.cancel ? "disabled" : ""}>${job.cancel ? "Отменяю…" : "Отменить"}</button> <span class="muted small">Уже вышедшие посты останутся — отменится то, что ещё не отправлено.</span></p>` : ""}
       <section class="card" style="max-width:900px">${st.dests.map(row).join("")}
         ${st.skipped && st.skipped.length ? `<details class="more"><summary>Пропущено: ${st.skipped.length}</summary><div class="dlist">${st.skipped.map((x) => `<div class="small"><b>${esc(x.name)}</b> — <span class="muted">${esc(x.reason)}</span></div>`).join("")}</div></details>` : ""}
       </section>
       ${job && job.state === "error" ? `<p class="err">Публикация прервалась: ${esc(job.error)}</p>` : ""}
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         ${!running && bad ? `<button class="btn primary" data-pa="retry">Повторить неудачные</button>` : ""}
+        ${!running && st.pub_id && st.dests.some((d) => d.originals_pending) ? `<button class="btn primary" data-pa="resend" data-id="${st.pub_id}" data-tip="Пост уже вышел — досылаем только PNG-оригиналы, нового поста не будет">Дослать PNG</button>` : ""}
         ${!running && st.pub_id ? `<button class="btn" data-pa="extend" data-id="${st.pub_id}" data-tip="Отправить этот же пост туда, куда он не ушёл — без второго поста в истории">Дослать на другие площадки</button>` : ""}
         ${!running ? `<button class="btn ${bad ? "" : "primary"}" data-pa="newpost">Новый пост</button><button class="btn" data-pa="backedit">Вернуться к посту</button>` : ""}
       </div>
-      <p class="note">Повтор отправит пост только туда, где была ошибка — дублей в остальных местах не будет.</p>`;
+      <p class="note">Повтор отправит пост только туда, где была ошибка — дублей в остальных местах не будет. Если пост уже вышел, а не дошли только PNG, они дошлются к нему же — второй пост не создаётся.</p>`;
   }
 
   // ---------------- История ----------------
@@ -886,7 +973,7 @@
     if (!s.calDay || !c || !c.days) return "";
     const list = c.days[s.calDay] || [], n = C().num, ICON = C().ICON;
     const d = new Date(s.calDay + "T12:00:00");
-    return `<div class="toolbar daylist"><h2>${d.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" })}</h2><span class="spacer"></span>
+    return `<div class="toolbar daylist"><h2>${d.toLocaleDateString(LOC, { weekday: "long", day: "numeric", month: "long" })}</h2><span class="spacer"></span>
         <button class="btn small ghost" data-pa="cal-day-clear">${ICON.close} Весь месяц</button></div>
       ${list.length ? `<div class="hlist">${list.map((it) => `<div class="hitem" role="button" tabindex="0" data-cw="${esc(it.key)}">
         <span class="hthumb">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : phHtml(it)}${C().badges({ kind: it.kind, n: it.n_media, rank: rankOfMonth(it.key), scope: "за месяц", index: it.index, est: it.est, sm: true })}</span>
@@ -905,7 +992,7 @@
     const views = it.views != null ? n(it.views) : "—";
     return `${thumbOf(it) ? `<div class="hci"><img src="${thumbOf(it).replace("/mthumb/", "/media/")}" alt="">${C().badges({ kind: it.kind, n: it.n_media, rank: rankOfMonth(it.key), scope: "за месяц", index: it.index, est: it.est })}</div>` : ""}
       <div class="hcb"><div class="hch"><b>${esc((it.text || "").split("\n")[0].slice(0, 70) || "Без подписи")}</b>${mk(it.index, it.est, "big")}</div>
-        <span class="muted small">${new Date(it.ts * 1000).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })} · ${esc(it.channels.join(", "))}</span>
+        <span class="muted small">${new Date(it.ts * 1000).toLocaleString(LOC, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })} · ${esc(it.channels.join(", "))}</span>
         <div class="hcn"><span>${it.by_views ? "Просмотры" : "Реакции"}<b>${it.by_views ? views : n(it.reactions || 0)}</b></span>
           ${it.by_views ? `<span>Реакции<b>${n(it.reactions || 0)}</b></span>` : ""}<span>Пересылки<b>${n(it.forwards || 0)}</b></span></div>
         ${it.index != null ? `<span class="small">${it.est ? `Идёт на ${mult(it.index)} к норме канала${it.proj ? `, ждём ≈${n(it.proj)} за неделю` : ""} — оценка по ${Math.round(it.age_h)} ч` : `${mult(it.index)} к норме канала`}</span>` : `<span class="muted small">Статистики нет: канал не подключён к «Статистике»</span>`}
@@ -986,9 +1073,9 @@
         const dt = new Date(r.created), x = sum[String(r.id)] || {};
         return `<div class="hitem ${x.index >= C().LV().super ? "lead" : ""}" role="button" tabindex="0" data-pa="pstat" data-id="${r.id}" aria-label="Статистика поста ${esc(title)}">
           <span class="hthumb">${pubThumb(r)}${C().badges({ kind: pubKind(r), n: (r.files || []).length, rank: x.rank, scope: "за месяц", index: x.index, est: x.fresh, sm: true })}</span>
-          <div class="ht"><b>${esc(title)}</b><span>${dt.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
+          <div class="ht"><b>${esc(title)}</b><span>${dt.toLocaleDateString(LOC, { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
           ${destBadges(r.dests)}${metricsHtml(r)}<span class="chev">${C().ICON.chev}</span></div>`;
-      }).join("")}</div>` : `<p class="muted">Хитов пока нет — здесь будут посты лучше 90% постов канала (сейчас это ${String(C().LV().hit.toFixed(2)).replace(".", ",")} к норме и выше).</p>`;
+      }).join("")}</div>` : `<p class="muted">Хитов пока нет — здесь будут посты лучше 90% постов канала (сейчас это ${String(C().LV().hit.toFixed(2)).replace(".", DEC)} к норме и выше).</p>`;
     }
     if (s.pstatOpen) h += drawerHtml(s.pstatOpen);
     C().$main.innerHTML = h;
@@ -1010,14 +1097,14 @@
       const x = (s.histSum || {})[String(id)] || {};
       img = `<span class="hthumb">${pubThumb(r || { id, files: [] })}${r ? C().badges({ kind: pubKind(r), n: (r.files || []).length, rank: x.rank, scope: "за месяц", index: x.index, est: x.fresh, sm: true }) : ""}</span>`;
       big = `/pbig/${id}?t=${tok()}`;
-      sub = r ? `${new Date(r.created).toLocaleString("ru-RU")} ${ratingPill(r.rating)}` : "";
-      badges = r ? destBadges(r.dests) + `<button class="btn small" style="align-self:flex-start" data-pa="extend" data-id="${id}" data-tip="Отправить этот пост на площадки, куда он не ушёл">Дослать на другие площадки</button>` : "";
+      sub = r ? `${new Date(r.created).toLocaleString(LOC)} ${ratingPill(r.rating)}` : "";
+      badges = r ? destBadges(r.dests) + (r.dests.some((d) => d.originals_pending) ? `<button class="btn small" style="align-self:flex-start" data-pa="resend" data-id="${id}" data-tip="Пост уже вышел — досылаем только PNG-оригиналы, нового поста не будет">Дослать PNG</button>` : "") + `<button class="btn small" style="align-self:flex-start" data-pa="extend" data-id="${id}" data-tip="Отправить этот пост на площадки, куда он не ушёл">Дослать на другие площадки</button>` : "";
     } else {
       const d = (s.pstat || {})[key] || {};
       title = d.title || "Пост";
       img = d.preview ? `<img src="/mthumb/${encodeURIComponent(d.preview)}?t=${tok()}" alt="">` : `<span class="hthumb">${phHtml({ kind: d.media === "video" ? "vid" : /gif|animation/.test(d.media || "") ? "gif" : "img", media: d.media, text: d.text })}</span>`;
       big = d.preview ? `/media/${encodeURIComponent(d.preview)}?t=${tok()}` : "";
-      sub = d.created ? new Date(d.created).toLocaleString("ru-RU") : "";
+      sub = d.created ? new Date(d.created).toLocaleString(LOC) : "";
     }
     return `<div class="backdrop" data-pa="pstat-close"></div>
       ${big ? bigHtml(big, false) : ""}
@@ -1036,7 +1123,7 @@
     const ago = (t) => { const h = (Date.now() / 1000 - t) / 3600; return h < 1 ? "только что" : h < 48 ? `${Math.floor(h)} ч назад` : `${Math.floor(h / 24)} дн назад`; };
     return parts.map((p) => {
       const old = p.plat === "vk" && p.stat_at && Date.now() / 1000 - p.stat_at > 2 * 86400;
-      const idx = p.index != null ? `<span>Успех: <b>×${Number(p.index).toFixed(2).replace(".", ",")}</b>${p.est ? " (оценка)" : ""}</span>` : `<span class="muted small">Индекс успеха появится через несколько дней, когда на площадке наберётся достаточно постов для сравнения.</span>`;
+      const idx = p.index != null ? `<span>Успех: <b>×${Number(p.index).toFixed(2).replace(".", DEC)}</b>${p.est ? " (оценка)" : ""}</span>` : `<span class="muted small">Индекс успеха появится через несколько дней, когда на площадке наберётся достаточно постов для сравнения.</span>`;
       return `<div class="pdest"><div class="pdhead">${C().pbadge(p.plat)}<b>${esc(p.label || (PLAT[p.plat] || [, p.plat])[1])}</b>${p.link && /^https?:/.test(p.link) ? `<a href="#" data-open="${esc(p.link)}" class="small">открыть на площадке</a>` : ""}</div>
       <div class="pdm">${p.views != null ? `<span>Просмотры: <b>${n(p.views)}</b></span> ` : ""}<span>Реакции: <b>${n(p.reactions || 0)}</b></span> ${idx}</div>
       ${p.stat_at ? `<p class="${old ? "err" : "muted"} small">Замер: ${ago(p.stat_at)}${old ? ". Цифры давно не обновлялись — проверьте сбор статистики в «Настройки» → ВКонтакте." : ""}</p>` : ""}</div>`;
@@ -1161,7 +1248,7 @@
   }
 
   // ----- статистика поста -----
-  const mult = (v) => "×" + Number(v).toFixed(2).replace(".", ",");
+  const mult = (v) => "×" + Number(v).toFixed(2).replace(".", DEC);
   function growthSvg(st, fc, curve) {
     const pts = (st.series || []).filter((p) => p.h <= 192);
     const final = fc && fc.expected ? fc.expected : st.projected || null;
@@ -1180,7 +1267,7 @@
       exp = `<path d="${hs.map((h, i) => (i ? "L" : "M") + X(h).toFixed(1) + " " + Y(final * fracAt(h)).toFixed(1)).join(" ")}" fill="none" stroke="var(--ink-3)" stroke-dasharray="4 4" stroke-width="1.5"/>`;
     }
     const line = pts.length ? `<path d="${pts.map((p, i) => (i ? "L" : "M") + X(p.h).toFixed(1) + " " + Y(p.v).toFixed(1)).join(" ")}" fill="none" stroke="var(--s1)" stroke-width="2.5" stroke-linejoin="round"/>
-      ${pts.map((p) => `<circle cx="${X(p.h).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="3.5" fill="var(--s1)"><title>${p.h < 24 ? p.h.toFixed(1).replace(".", ",") + " ч" : (p.h / 24).toFixed(1).replace(".", ",") + " дн"}: ${C().num(p.v)}</title></circle>`).join("")}` : "";
+      ${pts.map((p) => `<circle cx="${X(p.h).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="3.5" fill="var(--s1)"><title>${p.h < 24 ? p.h.toFixed(1).replace(".", DEC) + " ч" : (p.h / 24).toFixed(1).replace(".", DEC) + " дн"}: ${C().num(p.v)}</title></circle>`).join("")}` : "";
     const ticks = [[1, "1 ч"], [6, "6 ч"], [24, "1 д"], [72, "3 д"], [168, "7 д"]];
     return `<svg class="gsvg" viewBox="0 0 ${W} ${Hh + 34}" role="img" aria-label="Набор просмотров по часам">
       <line x1="30" x2="${W - 10}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--line-strong)"/>
@@ -1213,13 +1300,13 @@
         const cell = (l, v, sub) => `<div class="pnum"><span class="muted small">${l}</span><b>${v}</b>${sub ? `<span class="muted small">${sub}</span>` : ""}</div>`;
         h += `<div class="pnums">
           ${st.by_views ? cell("Просмотры", n(st.views), st.projected ? `≈ ${n(st.projected)} за неделю` : "") : ""}
-          ${cell("Реакции", n(st.reactions || 0), st.react_rate ? (st.react_rate * 100).toFixed(1).replace(".", ",") + "% от просмотров" : "")}
+          ${cell("Реакции", n(st.reactions || 0), st.react_rate ? (st.react_rate * 100).toFixed(1).replace(".", DEC) + "% от просмотров" : "")}
           ${cell("Пересылки", n(st.forwards || 0), "")}
           ${st.channel_median ? cell("Норма канала", n(st.channel_median), st.percentile !== undefined ? `лучше ${Math.round(st.percentile * 100)}% постов` : "") : ""}
           ${fc && fc.expected ? cell("Прогноз был", "≈ " + n(fc.expected), `${n(fc.low)}–${n(fc.high)}`) : ""}
         </div>`;
         h += growthSvg(st, fc, d.curve);
-        h += `<span class="muted small">Возраст поста ${st.age_h < 48 ? Math.round(st.age_h) + " ч" : Math.round(st.age_h / 24) + " дн"}${st.updated ? ", цифры от " + new Date(st.updated).toLocaleString("ru-RU") : ""}${!st.selected ? ". Канал не выбран в «Импорте для статистики» — индекс не считается" : ""}</span>`;
+        h += `<span class="muted small">Возраст поста ${st.age_h < 48 ? Math.round(st.age_h) + " ч" : Math.round(st.age_h / 24) + " дн"}${st.updated ? ", цифры от " + new Date(st.updated).toLocaleString(LOC) : ""}${!st.selected ? ". Канал не выбран в «Импорте для статистики» — индекс не считается" : ""}</span>`;
       } else if (x.stats) {
         h += `<p class="muted small">${esc(x.stats.why)}</p>`;
       } else if (x.e6ai) {
@@ -1247,7 +1334,7 @@
     const checked = list.filter((x) => x.checked);
     if (!checked.length) {
       const due = list.map((x) => x.due).filter(Boolean).sort()[0];
-      return `<p class="muted small">Сверка тегов с правками модераторов — ${due ? new Date(due).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "через сутки после загрузки"}.</p>`;
+      return `<p class="muted small">Сверка тегов с правками модераторов — ${due ? new Date(due).toLocaleString(LOC, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "через сутки после загрузки"}.</p>`;
     }
     const rem = [...new Set(checked.flatMap((x) => x.removed))], add = [...new Set(checked.flatMap((x) => x.added))];
     if (!rem.length && !add.length) return `<p class="ok small">Модераторы теги не правили.</p>`;
@@ -1289,6 +1376,8 @@
       case "hashtags": return p.hashtags.enabled ? ["ok", "включены"] : ["", "выключены"];
       case "signatures": { const on = TEXTP.filter((k) => { const v = (p.signatures.platforms || {})[k] || {}; return v.sfw || v.nsfw; });
         return [on.length ? "ok" : "", on.length ? on.map((k) => C().PLAT[k][0]).join(", ") : "не заданы"]; }
+      case "translate": return p.translate && p.translate.has_key ? ["ok", "ключ есть"] : ["", "нет ключа"];
+      case "versions": { const n = Object.values(p.versions || {}).filter((v) => v && v.length).length; return n ? ["ok", `настроено: ${n}`] : ["", "все версии везде"]; }
       case "media": { const m = S().mediaSt; return m ? (m.ready ? ["ok", "ffmpeg есть"] : ["", "ffmpeg не установлен"]) : ["", ""]; }
       case "light": return ["ok", `${Math.round(p.light.scale * 100)}%, качество ${p.light.quality}`];
       case "files": { const o = S().outputs; return o ? [o.usage.files ? "ok" : "", o.usage.files ? `${o.usage.files} ${C().plural(o.usage.files, "файл", "файла", "файлов")}, ${mb(o.usage.bytes)}` : (o.custom ? "своя папка" : "в каталоге программы")] : ["", ""]; }
@@ -1362,7 +1451,11 @@
             ${tgl(`data-pa="tg-flag" data-k="spoiler_nsfw"`, tg.spoiler_nsfw, "18+ под спойлер")}
             ${tgl(`data-pa="tg-flag" data-k="silent_originals"`, tg.silent_originals, "Оригиналы без уведомления")}
             ${tg.transport === "mtproto" ? tgl(`data-pa="tg-flag" data-k="preupload"`, tg.preupload !== false, `Заливать PNG заранее ${hint("Пока вы пишете пост, PNG-оригиналы уже уходят на сервер Telegram (никуда не публикуясь). После «Опубликовать» они ложатся под пост почти сразу. Если картинку заменить или убрать — залитый файл просто не пригодится, Telegram сам удалит его.")}`) : ""}
-            ${tgl(`data-pa="tg-flag" data-k="include_title"`, tg.include_title, "Заголовок жирным")}</div></section>`;
+            ${tgl(`data-pa="tg-flag" data-k="include_title"`, tg.include_title, "Заголовок жирным")}</div>
+            <div class="field" style="margin-top:10px"><label>Когда публиковать, если есть PNG-оригиналы ${hint("«Сразу» — пост выходит, как только готовы сжатые картинки, а PNG догружаются следом (под пост или в комментарии). «После загрузки оригиналов» — пока PNG не окажутся на сервере Telegram, не выходит ничего: ни Telegram, ни другие площадки. Дольше ждать, зато оригиналы появятся под постом сразу. Работает при связи MTProto: через Bot API файл нельзя загрузить, не отправив его.")}</label>
+              ${tg.transport === "mtproto"
+                ? segP(`data-pa="tg-pubmode"`, [["now", "Сразу, оригиналы догружаются"], ["first", "После загрузки оригиналов"]], tg.originals_first ? "first" : "now")
+                : `<p class="muted small">Доступно при связи MTProto (Bot API не умеет загружать файл заранее): сейчас пост выходит сразу, оригиналы догружаются.</p>`}</div></section>`;
       }
     }
 
@@ -1470,7 +1563,7 @@
           const ch = tgr.choice || {}, g = ch.gpu, tor = tgr.torch;
           const where = !tgr.ready ? "" : tgr.on_cpu ? `<span class="warnline">процессор — медленно и нагружает компьютер</span>`
             : tor && tor.device ? `видеокарта ${esc(tor.device)}` : tgr.device && tgr.device !== "cpu" ? `видеокарта ${esc(tgr.device)}` : "видеокарта (проверится при первой картинке)";
-          const card = g ? `${esc(g.name)}${g.vram_gb ? ` · ${String(Math.round(g.vram_gb)).replace(".", ",")} ГБ` : ""} · драйвер ${esc(g.driver || "?")}` : "видеокарта NVIDIA не найдена";
+          const card = g ? `${esc(g.name)}${g.vram_gb ? ` · ${String(Math.round(g.vram_gb)).replace(".", DEC)} ГБ` : ""} · драйвер ${esc(g.driver || "?")}` : "видеокарта NVIDIA не найдена";
           return `<section class="card setc"><div class="head"><h2>Теггер JTP PILOT² ${hint("Подбирает теги e621 по картинке на видеокарте NVIDIA. Ставится один раз: PyTorch под вашу видеокарту и драйвер (около 3 ГБ) и модель (около 1,7 ГБ) с HuggingFace. Работает в отдельном процессе и закрывается сам через 2 минуты без дела.")}</h2>
           ${tgr.ready ? badge("ok", "✓ Установлен") : badge("off", "не установлен")}</div>${err("e6")}
           <div class="kvlist"><div><span>Видеокарта</span><span>${card}</span></div>
@@ -1502,7 +1595,7 @@
             ${tgl(`data-mod="forecast"`, on("forecast"), "<b>Прогноз</b> <span class=\"muted small\">ожидаемые просмотры и лучшее время на экране поста</span>")}</div>
           ${on("news") ? `<div class="row" style="align-items:center;gap:12px"><span class="small">Сколько новостей</span>
             <span class="seg sm">${[["few", "Мало"], ["normal", "Средне"], ["many", "Много"]].map(([k, l]) => `<button class="${k === vol ? "on" : ""}" data-nvol="${k}" aria-pressed="${k === vol}">${l}</button>`).join("")}</span></div>` : ""}
-          <p class="muted small">Цифры Bluesky, DeviantArt и e6ai / e621 берутся по входу, который настроен у площадки, — отдельно здесь ничего не нужно. Каналы Telegram — в разделе <a href="#" data-view-link="settings" data-tab="import">«Статистика» → «Telegram»</a>.</p></section>`;
+          <p class="muted small">Цифры Bluesky, DeviantArt и e6ai / e621 берутся по входу, который настроен у площадки, — отдельно здесь ничего не нужно. Каналы Telegram — в разделе <a href="#" data-view-link="settings" data-tab="import">«Telegram» → «Статистика»</a>.</p></section>`;
       if (on("vk")) {
         const vkJob = s.info.vk_stats_job, vkRun = (vkJob && vkJob.state === "running") || (s.info.vk_job && s.info.vk_job.state === "running");
         h += `<section class="card setc"><div class="head"><h2>${C().pbadge("vk")} ВКонтакте</h2></div>${err("vk")}
@@ -1513,8 +1606,8 @@
             <input id="vkstats" placeholder="https://vk.ru/groups/dashboard/@группа?sectionId=top_posts&amp;subsectionId=stat_board_content" value="${esc(vk.stats_url || "")}"></div>
             <button class="btn primary" data-pa="vk-stats" ${vkRun || !vk.browser_ok ? "disabled" : ""}>Собрать сейчас</button></div>
           <div class="tgls">${tgl(`data-pa="vk-flag" data-k="stats_auto"`, vk.stats_auto !== false, "Собирать автоматически", "Раз в 3 часа, пока работает фоновая отправка. Браузер открывается без окна.")}</div>
-          ${vk.stats_err ? `<p class="err small">Последний сбор (${esc(new Date(vk.stats_at).toLocaleString("ru-RU"))}): ${esc(vk.stats_err)}</p>`
-            : vk.stats_at ? `<p class="muted small">Последний сбор: ${esc(new Date(vk.stats_at).toLocaleString("ru-RU"))} · ${esc(vk.stats_msg || "")}</p>` : ""}
+          ${vk.stats_err ? `<p class="err small">Последний сбор (${esc(new Date(vk.stats_at).toLocaleString(LOC))}): ${esc(vk.stats_err)}</p>`
+            : vk.stats_at ? `<p class="muted small">Последний сбор: ${esc(new Date(vk.stats_at).toLocaleString(LOC))} · ${esc(vk.stats_msg || "")}</p>` : ""}
           <details class="more"><summary>Если сбор перестал работать</summary><div class="morebody">
             <p class="small">«Снять образец» запишет, как страница статистики получает цифры (ключи и куки вырезаются), — пришлите архив разработчику.</p>
             <button class="btn small" data-pa="vk-recon" ${vkRun || !vk.browser_ok ? "disabled" : ""}>Снять образец</button></div></details></section>`;
@@ -1532,7 +1625,7 @@
           <div class="field" style="flex:1 1 110px"><label for="htN">Видов, не больше</label><input id="htN" type="number" min="0" max="10" value="${ht.max_species}"></div></div>
         <div class="field"><label for="htC">Постоянные хэштеги</label><input id="htC" value="${esc((ht.constant || []).join(" "))}" placeholder="aiart furryart"></div>
         <div class="row" style="align-items:center"><div class="field"><span class="lbl">Где в посте</span>${segP(`data-pa="ht-pos"`, [["start", "Первой строкой"], ["end", "В конце"]], ht.position)}</div>
-          <div class="tgls" style="flex:1 1 300px">${[["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt (в описании)"]].map(([k, l]) => `<label class="tgl"><input type="checkbox" id="htU-${k}" ${ht.use[k] !== false ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
+          <div class="tgls" style="flex:1 1 300px">${byOrder([["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt (в описании)"]]).map(([k, l]) => `<label class="tgl"><input type="checkbox" id="htU-${k}" ${ht.use[k] !== false ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
         <div class="cardfoot"><button class="btn primary" data-pa="ht-save">Сохранить</button></div></section>`;
     }
 
@@ -1542,11 +1635,15 @@
         ["bluesky", "Bluesky", "Ссылка становится кликабельным словом. Весь пост Bluesky — до 300 символов, подпись лучше короткая."],
         ["deviantart", "DeviantArt", "Уходит в описание работы как «Текст: https://…»."]];
       h += `<section class="card setc"><div class="head"><h2>Подписи ${hint("Дописываются в конец поста. Ссылка под словом: [Больше артов](https://t.me/канал). Обычная ссылка тоже работает.")}</h2>${ok("sig")}</div>
-        ${SIGP.map(([k, l, how]) => { const v = sp[k] || {}; return `<div class="sigblk">
+        ${byOrder(SIGP).map(([k, l, how]) => { const v = sp[k] || {}, en = v.en || {}, enFilled = !!((en.sfw || "").trim() || (en.nsfw || "").trim()); return `<div class="sigblk">
           <div class="sighead">${C().pbadge(k)}<label class="tgl"><input type="checkbox" id="siguse-${k}" ${sg.use[k] !== false ? "checked" : ""}><span><b>${l}</b> ${hint(how)}</span></label>
             ${k !== "telegram" ? `<button class="btn small ghost" data-pa="sig-copy" data-k="${k}">Скопировать из Telegram</button>` : ""}</div>
-          <div class="row"><div class="field" style="flex:1 1 280px"><label for="sig-${k}-sfw">SFW-посты</label><textarea id="sig-${k}-sfw" rows="4" placeholder="[Больше артов](https://t.me/…)">${esc(v.sfw || "")}</textarea></div>
-            ${k === "vk" ? "" : `<div class="field" style="flex:1 1 280px"><label for="sig-${k}-nsfw">18+ посты</label><textarea id="sig-${k}-nsfw" rows="4">${esc(v.nsfw || "")}</textarea></div>`}</div></div>`; }).join("")}
+          <div class="siglang">Русский (основной)</div>
+          <div class="row"><div class="field" style="flex:1 1 280px"><label for="sig-${k}-sfw">SFW-посты</label><textarea id="sig-${k}-sfw" rows="3" placeholder="[Больше артов](https://t.me/…)">${esc(v.sfw || "")}</textarea></div>
+            ${k === "vk" ? "" : `<div class="field" style="flex:1 1 280px"><label for="sig-${k}-nsfw">18+ посты</label><textarea id="sig-${k}-nsfw" rows="3">${esc(v.nsfw || "")}</textarea></div>`}</div>
+          ${featOn("translation") ? `<details class="more" ${enFilled ? "open" : ""}><summary>English${enFilled ? "" : ` <span class="muted small">· не задана — на английский текст уйдёт основная</span>`}</summary>
+            <div class="morebody"><div class="row"><div class="field" style="flex:1 1 280px"><label for="sig-${k}-en-sfw">SFW posts</label><textarea id="sig-${k}-en-sfw" rows="3" placeholder="[More art](https://t.me/…)">${esc(en.sfw || "")}</textarea></div>
+              ${k === "vk" ? "" : `<div class="field" style="flex:1 1 280px"><label for="sig-${k}-en-nsfw">18+ posts</label><textarea id="sig-${k}-en-nsfw" rows="3">${esc(en.nsfw || "")}</textarea></div>`}</div></div></details>` : ""}</div>`; }).join("")}
         <div class="cardfoot"><button class="btn primary" data-pa="sig-save">Сохранить подписи</button></div></section>`;
     }
 
@@ -1558,7 +1655,27 @@
         <div class="tgls"><label class="tgl"><input type="checkbox" id="lsub" ${li.subsampling === "4:4:4" ? "checked" : ""}><span>Чистые цветные края ${hint("Цветовая субдискретизация 4:4:4 — без размытых цветных контуров, файл чуть больше.")}</span></label>
           <label class="tgl"><input type="checkbox" id="lsharp" ${li.sharpen ? "checked" : ""}><span>Лёгкая резкость после уменьшения</span></label></div>
         <div class="cardfoot"><button class="btn primary" data-pa="light-save">Сохранить</button></div></section>
-        <p class="muted small">Готовые превью складываются в папку «Готовые файлы» — её можно сменить в «Настройки» → «Пост» → «Готовые файлы».</p>`;
+        <p class="muted small">Готовые превью складываются в папку «Готовые файлы» — её можно сменить в «Настройки» → «Файлы» → «Хранение файлов».</p>`;
+    }
+    if (sec === "versions") {
+      const vs = p.versions || {}, m = p.modules || {};
+      h += `<section class="card setc"><div class="head"><h2>Умное таргетирование ${hint("Для комиксов в нескольких вариантах. В посте включите «Умное таргетирование» и отметьте версию у каждого файла: RU, EN или «без надписей». Здесь выбирается, какие версии уходят на какую площадку. Пусто — любые. Файлы без метки и с меткой «для всех» уходят везде.")}</h2>${ok("ver")}</div>
+        <p class="muted small">Ничего не отмечено — площадка получит все файлы. Если отмечено несколько версий, они уйдут вместе одним постом (в Telegram, Discord и ВК — до 10 файлов в посте, в Bluesky — до 4).</p>
+        ${byOrder(LANGP.filter(([k]) => m[k] !== false)).map(([k, n]) => `<div class="verrow"><span class="vname">${C().pbadge(k, { sm: true })} ${esc(n)}</span>
+          <div class="tgls">${VERS.filter((v) => v[0]).map(([v, l]) => `<label class="tgl"><input type="checkbox" id="ver-${k}-${v}" ${(vs[k] || []).includes(v) ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>`).join("")}
+        <div class="cardfoot"><button class="btn primary" data-pa="ver-save">Сохранить</button></div></section>`;
+    }
+    if (sec === "translate") {
+      const t = p.translate || {};
+      h += `<section class="card setc"><div class="head"><h2>Перевод через DeepSeek ${hint("Кнопка «Перевести с русского» в окне поста отправляет заголовок и описание на серверы DeepSeek (api.deepseek.com) и подставляет английский вариант. Ничего не отправляется само, только по кнопке. Ключ хранится только на этом компьютере.")}</h2>
+          ${t.has_key ? `<span class="badge ok">✓ ключ сохранён</span>` : `<span class="badge off">нет ключа</span>`}</div>${err("tr")}${ok("tr")}
+        <div class="row"><div class="field" style="flex:2 1 280px"><label for="trkey">API-ключ DeepSeek ${hint("Создаётся в личном кабинете platform.deepseek.com → API keys. Сервис платный, но перевод короткого описания стоит доли копейки.")}</label>
+            <input id="trkey" type="password" autocomplete="off" placeholder="${t.has_key ? "сохранён — введите новый, чтобы заменить" : "sk-…"}"></div>
+          <div class="field" style="flex:1 1 180px"><label for="trmodel">Модель</label><input id="trmodel" value="${esc(t.model || "deepseek-flash")}" placeholder="deepseek-flash"></div></div>
+        <div class="field"><label for="trstyle">Пожелания к стилю (необязательно)</label><input id="trstyle" value="${esc(t.style || "")}" placeholder="например: неформально, без канцелярита"></div>
+        <div class="cardfoot"><button class="btn primary" data-pa="tr-save" ${busy("tr")}>Сохранить</button>
+          <button class="btn" data-pa="tr-test" ${busy("tr")} ${t.has_key ? "" : "disabled"}>Проверить ключ</button>
+          ${t.has_key ? `<button class="btn ghost" data-pa="tr-clear">Удалить ключ</button>` : ""}</div></section>`;
     }
     if (sec === "files") h += filesHtml(err, ok, busy, tgl, hint);
     if (sec === "media") h += mediaHtml();
@@ -1632,7 +1749,7 @@
       return tgl(`id="f${k}"`, o[k], `${name} <span class="muted small">· папка «${esc(o.folders[k])}», ${x.files ? `${x.files} ${pl(x.files, "файл", "файла", "файлов")}, ${mb(x.bytes)}` : "пока пусто"}</span>`); };
     return `<section class="card setc"><div class="head"><h2>Готовые файлы ${hint("Сюда программа складывает копии того, что сделала сама: JPEG-превью, GIF и видео из редактора, перекодированное и сжатое под площадки видео. Файлы отсюда программа не удаляет — это ваша библиотека. Рабочие копии (кеш) по-прежнему чистятся.")}</h2>${ok("files")}</div>
       ${err("files")}
-      <div class="field"><label>Сейчас</label><div class="pathbox"><code>${esc(o.dir)}</code></div><span class="muted small">${esc(HOW[o.how] || "")}</span></div>
+      <div class="field"><label>Сейчас</label><div class="pathbox"><code>${esc(o.dir)}</code> <button class="btn small" data-pa="files-open">Открыть папку</button></div><span class="muted small">${esc(HOW[o.how] || "")}</span></div>
       <div class="row" style="align-items:flex-end"><div class="field" style="flex:2 1 320px"><label for="fdir">Своя папка</label>
         <input id="fdir" placeholder="${esc(o.default)}" value="${esc(o.custom ? o.dir : "")}"></div>
         <button class="btn" data-pa="files-pick">Выбрать…</button></div>
@@ -1640,8 +1757,7 @@
         ${tgl(`id="fdate"`, o.by_date, "Раскладывать по датам", "Внутри каждой папки — подпапка с датой сохранения (2026-10-22).")}
         ${tgl(`id="fmove"`, true, "При смене папки перенести уже сохранённые файлы")}</div>
       <div class="cardfoot"><button class="btn primary" data-pa="files-save" ${busy("files")}>Сохранить</button>
-        <button class="btn" data-pa="files-open">Открыть папку</button>
-        ${o.custom ? `<button class="btn ghost" data-pa="files-default" data-tip="Вернуть папку «Файлы» в каталоге программы">По умолчанию</button>` : ""}
+        ${o.custom ? `<button class="btn ghost" data-pa="files-default" data-tip="Вернуть папку по умолчанию — Files в каталоге программы">По умолчанию</button>` : ""}
         <span class="muted small">${u.files ? `Всего ${u.files} ${pl(u.files, "файл", "файла", "файлов")}, ${mb(u.bytes)}` : "Файлов пока нет"}</span></div></section>`;
   }
   function mediaHtml() {
@@ -1668,25 +1784,35 @@
   }
 
   // ---------------- файлы ----------------
+  let upAbort = null, upStopped = false;   // отмена загрузки: прерывает текущий файл и не берёт следующие
   async function uploadFiles(list) {
     const s = S(), d = draft();
     const files = Array.from(list || []);
     if (!files.length) return;
-    s.uploadErr = ""; s.uploading = (s.uploading || 0) + files.length; C().render();
+    s.uploadErr = ""; s.uploading = (s.uploading || 0) + files.length; upStopped = false; C().render();
     let bad = 0;
     for (const f of files) {
+      if (upStopped) { s.uploading -= 1; continue; }
       try {
+        upAbort = new AbortController();
         const r = await fetch("/upload?name=" + encodeURIComponent(f.name || "paste.png"), {
-          method: "POST", headers: { "X-Token": window.API_TOKEN, "Content-Type": "application/octet-stream" }, body: f });
+          method: "POST", headers: { "X-Token": window.API_TOKEN, "Content-Type": "application/octet-stream" }, body: f, signal: upAbort.signal });
         const j = await r.json();
         if (!j.ok) throw new Error(j.error);
         const info = j.result;
         d.files.push({ id: info.id, name: info.name, kind: info.kind, width: info.width, height: info.height, size: info.size, duration: info.duration || null, format: info.format || "" });
-      } catch (e) { s.uploadErr = (f.name || "файл") + ": " + e.message; C().toast(s.uploadErr, "error"); bad++; }
+        if (multiOn()) { const g = guessVersion(info.name) || s.nextMark; if (g) { d.marks = d.marks || {}; d.marks[info.id] = g; } }
+      } catch (e) {
+        if (e.name === "AbortError") bad++;   // отменили сами — это не ошибка
+        else { s.uploadErr = (f.name || "файл") + ": " + e.message; C().toast(s.uploadErr, "error"); bad++; }
+      }
       s.uploading -= 1;
     }
     const added = files.length - bad;
-    if (added > 0) C().toast(added === 1 ? "Файл добавлен" : `Добавлено файлов: ${added}`, "ok");
+    upAbort = null;
+    if (upStopped) C().toast("Загрузка отменена", "ok");
+    else if (added > 0) C().toast(added === 1 ? "Файл добавлен" : `Добавлено файлов: ${added}`, "ok");
+    if (multiOn()) autoDetect(false);
     saveDraft(); await refreshPlan(); C().render(); pollPrep(); loadTags(true);
   }
   async function pollPrep() {
@@ -1734,7 +1860,7 @@
       paintSide(); scheduleFc(50); return true;
     }
     const gimg = e.target.closest(".gt img");
-    if (gimg && !e.target.closest(".x")) {   // клик по картинке в «Файлах» — крупный просмотр
+    if (gimg && !e.target.closest(".x") && !(multiOn() && S().brush)) {   // клик по картинке в «Файлах» — крупный просмотр
       const f = draft().files[+gimg.closest(".gt").dataset.gi];
       if (f) { S().viewFile = f.id; C().render(); return true; }
     }
@@ -1883,7 +2009,7 @@
         window.VidEditor.open({ file: f, api, tok: window.API_TOKEN, toast: (t, k) => C().toast(t, k), onDone: vedDone });
         return true;
       }
-      case "rmfile": { const [f] = d.files.splice(+a.dataset.i, 1); if (f && d.e6tags) delete d.e6tags[f.id]; if (f && d.e6meta) delete d.e6meta[f.id]; saveDraft(); if (f) api("post_remove_file", { file_id: f.id }).catch(() => {}); await refreshPlan(); C().render(); return true; }
+      case "rmfile": { const [f] = d.files.splice(+a.dataset.i, 1); if (f && d.e6tags) delete d.e6tags[f.id]; if (f && d.e6meta) delete d.e6meta[f.id]; if (f && d.marks) delete d.marks[f.id]; saveDraft(); if (f) api("post_remove_file", { file_id: f.id }).catch(() => {}); await refreshPlan(); C().render(); return true; }
       case "clear":
         if (!confirm("Очистить пост?")) return true;
         d.files.forEach((f) => api("post_remove_file", { file_id: f.id }).catch(() => {}));
@@ -2006,6 +2132,50 @@
         } catch (err) { s.planErr = err.message; alert(err.message); }
         s.publishing = false; C().render(); return true;
       }
+      case "resend": try { await api("post_resend_originals", { pub_id: +a.dataset.id }); } catch (err) { C().toast(err.message, "error"); return true; }
+        { const st = await api("post_state"); s.pubState = st.state; s.pubJob = st.job; } s.view = "post"; s.postMode = "progress"; await C().loadInfo(); C().startPoll(); C().render(); return true;
+      case "vnext": s.nextMark = a.dataset.val || ""; C().render(); return true;
+      case "vbrush": s.brush = s.brush === a.dataset.val ? "" : a.dataset.val; C().render(); return true;
+      case "vauto": autoDetect(true); saveDraft(); await refreshPlan(); C().render(); return true;
+      case "vmark": {   // по кругу: для всех → RU → EN → без надписей (с кистью метки ставит она)
+        if (s.brush) return true;
+        const order = ["", "ru", "en", "clean"], id = a.dataset.id;
+        d.marks = d.marks || {};
+        const nx = order[(order.indexOf(d.marks[id] || "") + 1) % order.length];
+        if (nx) d.marks[id] = nx; else delete d.marks[id];
+        saveDraft(); await refreshPlan(); C().render(); return true;
+      }
+      case "vall": {
+        d.marks = {}; if (a.dataset.val) d.files.forEach((f) => { d.marks[f.id] = a.dataset.val; });
+        saveDraft(); await refreshPlan(); C().render(); return true;
+      }
+      case "translate": {   // a.dataset.dir: "en" — из основного текста в английский вариант, "main" — из английского в основной
+        if (s.trBusy) return true;
+        const toMain = a.dataset.dir === "main";
+        const en = (d.variants && d.variants.en) || {};
+        const srcT = toMain ? en : d, dstT = toMain ? d : en;
+        if (!(srcT.title || "").trim() && !(srcT.text || "").trim()) { s.trMsg = "err:" + (toMain ? "Сначала напишите английский вариант" : "Сначала напишите заголовок или описание по-русски"); C().render(); return true; }
+        if (((dstT.title || "").trim() || (dstT.text || "").trim()) && !confirm(toMain ? "Заменить основной заголовок и описание переводом с английского?" : "Заменить английский вариант новым переводом?")) return true;
+        s.trBusy = true; s.trMsg = ""; C().render();
+        try {
+          const r = await api("pub_translate", { title: srcT.title || "", text: srcT.text || "", src: toMain ? "en" : "ru", dst: toMain ? "ru" : "en" });
+          if (!r.ok) s.trMsg = "err:" + r.error;
+          else {
+            if (toMain) { d.title = r.title; d.text = r.text; }
+            else { d.variants = d.variants || {}; d.variants.en = { title: r.title, text: r.text }; }
+            saveDraft(); await refreshPlan(); s.pvOpen = true;   // сразу показываем, что уйдёт на площадки
+            s.trMsg = (r.warnings && r.warnings.length ? "warn:Проверьте: " + r.warnings.join("; ") : "ok:Переведено — проверьте текст ниже и в «Как будет выглядеть»");
+          }
+        } catch (err) { s.trMsg = "err:" + err.message; }
+        s.trBusy = false; C().render(); return true;
+      }
+      case "tlang": {
+        const cur = ((s.pub && s.pub.text_lang) || {})[a.dataset.p] === "en";
+        s.pub = await api("pub_save", { section: "text_lang", changes: { [a.dataset.p]: cur ? "main" : "en" } });
+        await refreshPlan(); C().render(); return true;
+      }
+      case "job-cancel": a.disabled = true; try { await api("job_cancel", { key: a.dataset.key }); } catch (err) { C().toast(err.message, "error"); } return true;
+      case "upload-cancel": upStopped = true; if (upAbort) upAbort.abort(); return true;
       case "retry": await api("post_retry"); { const st = await api("post_state"); s.pubState = st.state; s.pubJob = st.job; } await C().loadInfo(); C().startPoll(); C().render(); return true;
       case "newpost": s.postMode = "edit"; s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
       case "backedit": s.postMode = "edit"; await refreshPlan(); C().render(); return true;
@@ -2099,6 +2269,7 @@
         s.pubOk = Object.assign({}, s.pubOk, { ht: "Сохранено" }); C().render(); return true;
       }
       case "open-debug": try { await api("open_debug_folder"); } catch (err) { alert(err.message); } return true;
+      case "tg-pubmode": s.pub = await api("pub_save", { section: "telegram", changes: { originals_first: a.dataset.val === "first" } }); C().render(); return true;
       case "vk-method": s.pub = await api("pub_vk_method", { method: a.dataset.val }); C().render(); return true;
       case "vk-blogin": await guard("vk", async () => { await api("pub_vk_browser_login"); s.vkWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
       case "vk-bgroup": await guard("vk", async () => { s.pub = await api("pub_vk_browser_group", { group: val("vkbgroup") }); s.pubOk.vk = "Группа сохранена. Сделайте пробный прогон."; }); return true;
@@ -2118,14 +2289,16 @@
         TEXTP.forEach((k) => {
           use[k] = document.getElementById("siguse-" + k).checked;
           const n = document.getElementById(`sig-${k}-nsfw`);
+          const eS = document.getElementById(`sig-${k}-en-sfw`), eN = document.getElementById(`sig-${k}-en-nsfw`);
           platforms[k] = { sfw: document.getElementById(`sig-${k}-sfw`).value.trim(), nsfw: n ? n.value.trim() : "" };
+          if (eS) platforms[k].en = { sfw: eS.value.trim(), nsfw: eN ? eN.value.trim() : "" };   // английского блока нет (функция выключена) — сохранённое не трогаем
         });
         await saveSec("signatures", { platforms, use });
         s.pubOk = Object.assign({}, s.pubOk, { sig: "Сохранено" }); C().render(); return true;
       }
       case "sig-copy": {   // без перерисовки — несохранённые правки в других полях не теряются
         const k = a.dataset.k;
-        ["sfw", "nsfw"].forEach((r) => { const src = document.getElementById(`sig-telegram-${r}`), dst = document.getElementById(`sig-${k}-${r}`); if (src && dst) dst.value = src.value; });
+        ["sfw", "nsfw", "en-sfw", "en-nsfw"].forEach((r) => { const src = document.getElementById(`sig-telegram-${r}`), dst = document.getElementById(`sig-${k}-${r}`); if (src && dst) dst.value = src.value; });
         return true;
       }
       case "files-pick": {
@@ -2167,6 +2340,12 @@
       else if (k === "e6ai") { s.e6form = {}; if (s.view === "post") C().render(); }
       return true;
     }
+    if (t.dataset.dfield === "multi") {
+      const d = draft(); d.multi = t.checked; if (!d.multi) s.nextMark = "";
+      if (d.multi && !d.marks) d.marks = {};
+      if (d.multi) autoDetect(false); else { s.brush = ""; s.autoMsg = ""; }
+      saveDraft(); await refreshPlan(); C().render(); return true;
+    }
     if (t.dataset.dfield === "signature") { draft().signature = t.checked; saveDraft(); await refreshPlan(); C().render(); return true; }
     if (pa === "tag-cpuok") { s.tagCpu = false; s.tagger = await api("tagger_cpu_ok", { on: t.checked }); await C().loadInfo(); C().render(); return true; }
     if (pa === "tg-flag" || pa === "dc-flag" || pa === "vk-flag") {
@@ -2197,7 +2376,9 @@
       const d = draft(), s = S();
       const set = new Set(d.hashtags == null ? ((s.plan && s.plan.hashtags) || []) : d.hashtags);
       e.target.value.split(/[\s,]+/).map((t) => t.replace(/^#/, "").trim().toLowerCase()).filter(Boolean).forEach((t) => set.add(t));
-      d.hashtags = [...set]; e.target.value = ""; e.target.blur(); saveDraft(); await refreshPlan(); paintSide(); return;
+      d.hashtags = [...set]; e.target.value = ""; saveDraft(); await refreshPlan();
+      paintHt(); const nx = document.querySelector("#htbox input[data-htadd]"); if (nx) nx.focus();   // поле остаётся активным — можно сразу вводить следующий
+      paintSide(); return;
     }
     const id = e.target.dataset && e.target.dataset.tagadd;
     if (!id) return;
@@ -2221,14 +2402,40 @@
 
   // ввод текста, перетаскивание и вставка файлов
   document.addEventListener("input", (e) => {
+    const dv = e.target.dataset && e.target.dataset.dvar;
+    if (dv) {   // «en.title» / «en.text» — английский вариант
+      const [lang, field] = dv.split("."), d = draft();
+      d.variants = d.variants || {}; d.variants[lang] = Object.assign({}, d.variants[lang], { [field]: e.target.value });
+      saveDraft(); schedulePlan(); return;
+    }
     const f = e.target.dataset && e.target.dataset.dfield;
-    if (!f || f === "signature") return;
+    if (!f || f === "signature" || f === "multi") return;
     draft()[f] = e.target.value; saveDraft();
     const c = document.getElementById("pcount"); if (c) c.innerHTML = countHtml();
     schedulePlan();
   });
   const onPost = () => window.CP && S().view === "post" && S().postMode !== "progress";
   // перетаскивание: файлы с компьютера — добавить; миниатюры внутри галереи — поменять порядок
+  let painting = false;
+  document.addEventListener("mousedown", (e) => {   // «кисть» умного таргетирования: клик, протяжка, Shift+клик — диапазон
+    const s = S(), d = draft();
+    if (e.button !== 0 || !onPost() || !multiOn() || !s.brush) return;
+    const g = e.target.closest && e.target.closest(".gt");
+    if (!g || e.target.closest(".x, .gifbtn")) return;
+    e.preventDefault(); painting = true;
+    const i = +g.dataset.gi;
+    if (e.shiftKey && s.lastPaint != null) { for (let k = Math.min(s.lastPaint, i); k <= Math.max(s.lastPaint, i); k++) paintIdx(k); } else paintIdx(i);
+    s.lastPaint = i;
+  }, true);
+  document.addEventListener("mouseover", (e) => {
+    if (!painting) return;
+    const g = e.target.closest && e.target.closest(".gt");
+    if (g) { paintIdx(+g.dataset.gi); S().lastPaint = +g.dataset.gi; }
+  });
+  document.addEventListener("mouseup", async () => {
+    if (!painting) return;
+    painting = false; saveDraft(); await refreshPlan(); if (S().view === "post") C().render();
+  });
   document.addEventListener("dragstart", (e) => {
     const g = e.target.closest && e.target.closest(".gt");
     if (!g || !onPost()) return;
@@ -2270,5 +2477,5 @@
     if (files.length) { e.preventDefault(); uploadFiles(files); }
   });
 
-  window.Pub = { bpInit, drawerHtml, loadTags, load, tick, renderPost, renderHistory, settingsHtml, platStatus, onClick, onChange, openDrawer };
+  window.Pub = { order: porder, byOrder, setOrder: async (o) => { S().pub = await C().api("pub_save", { section: "platform_order", changes: o }); await refreshPlan(); }, bpInit, drawerHtml, loadTags, load, tick, renderPost, renderHistory, settingsHtml, platStatus, onClick, onChange, openDrawer };
 })();

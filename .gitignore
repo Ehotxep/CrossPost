@@ -6,6 +6,7 @@ tokens.json
 data/
 # то, что делает программа
 Файлы/
+Files/
 # служебное
 __pycache__/
 *.pyc

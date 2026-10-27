@@ -156,7 +156,8 @@ def _loop(api, every):
         try:
             tick(api)
         except Exception:
-            pass
+            from app.applog import log
+            log("расписание: сбой проверки")
         # замеры свежих постов — отдельным потоком, чтобы не задерживать публикацию по расписанию
         threading.Thread(target=post_stats.track_tick, args=(api.tg,), daemon=True, name="track").start()
         from app.worker import _e6_check
@@ -170,14 +171,24 @@ def _loop(api, every):
         time.sleep(every)
 
 
+STUCK_AFTER = timedelta(hours=3)
+
+
 def tick(api):
     """Один проход: опубликовать подошедшие посты (по одному, по порядку)."""
     from app.publish import pipeline, runner
     try:
         pipeline.maintain()   # конвейер: расставить очередь по лучшим окнам, повторить сорвавшееся
     except Exception:  # noqa: BLE001
-        pass
+        from app.applog import log
+        log("конвейер: сбой при расстановке очереди")
     now = _now()
+    j0 = api.jobs.get("publish")
+    if not (j0 and j0["state"] == "running"):   # процесс оборвался посреди публикации — запись не должна висеть «в работе» вечно
+        for r in db.query("SELECT * FROM scheduled WHERE state='running'"):
+            if now - _parse(r["run_at"]) > STUCK_AFTER:
+                _set(r["id"], state="failed", done_at=now.isoformat(timespec="seconds"),
+                     error="публикация прервалась (программу закрыли или она упала) — проверьте в «Истории», что вышло, и отправьте остальное вручную")
     for r in db.query("SELECT * FROM scheduled WHERE state='pending' ORDER BY run_at"):
         at = _parse(r["run_at"])
         if at > now:

@@ -85,6 +85,33 @@ def save(name: str, data: bytes) -> dict:
     folder.mkdir(parents=True, exist_ok=True)
     p = folder / _safe(name)
     p.write_bytes(data)
+    return _finish(uid, folder, p)
+
+
+def save_stream(name: str, src, length: int) -> dict:
+    """То же, но тело запроса пишется на диск кусками — большой файл не лежит целиком (и дважды) в памяти."""
+    if length > MAX_BYTES:
+        raise ValueError("Файл больше 500 МБ")
+    uid = secrets.token_hex(8)
+    folder = sub("uploads") / uid
+    folder.mkdir(parents=True, exist_ok=True)
+    p = folder / _safe(name)
+    try:
+        left = length
+        with open(p, "wb") as f:
+            while left > 0:
+                chunk = src.read(min(left, 1 << 20))
+                if not chunk:
+                    raise ValueError("загрузка файла оборвалась — добавьте его ещё раз")
+                f.write(chunk)
+                left -= len(chunk)
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    return _finish(uid, folder, p)
+
+
+def _finish(uid: str, folder: Path, p: Path) -> dict:
     try:
         info = describe(p)
     except ValueError:

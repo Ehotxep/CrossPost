@@ -42,12 +42,8 @@ def _merge(base, extra):
 def load() -> dict:
     with _lock:
         p = _path()
-        user = {}
-        if p.exists():
-            try:
-                user = json.loads(p.read_text(encoding="utf-8"))
-            except ValueError:
-                user = {}
+        from core.fsutil import read_json
+        user = read_json(p)
         return _merge(DEFAULTS, user)
 
 
@@ -58,5 +54,6 @@ def save(changes: dict) -> dict:
         if key in changes:
             new[key] = [t.strip().lower().replace(" ", "_") for t in changes[key] if t.strip()]
     with _lock:
-        _path().write_text(json.dumps(new, ensure_ascii=False, indent=2), encoding="utf-8")
+        from core.fsutil import atomic_write
+        atomic_write(_path(), json.dumps(new, ensure_ascii=False, indent=2))
     return new

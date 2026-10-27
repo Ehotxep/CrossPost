@@ -76,15 +76,39 @@ def conn() -> sqlite3.Connection:
     global _conn
     with _lock:
         if _conn is None:
-            _conn = sqlite3.connect(data_dir() / "posts.db", check_same_thread=False, timeout=30)
-            _conn.row_factory = sqlite3.Row
-            try:   # окно приложения и фоновая отправка пишут в базу одновременно
-                _conn.execute("PRAGMA journal_mode=WAL")
-            except sqlite3.DatabaseError:
-                pass
-            _conn.executescript(SCHEMA)
-            _migrate(_conn)
+            try:
+                _conn = _open()
+            except sqlite3.DatabaseError:   # файл базы повреждён (обрыв питания, диск): сохраняем его и начинаем с чистой, а не падаем при запуске
+                import time
+                from app.applog import log
+                p = data_dir() / "posts.db"
+                try:
+                    _conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                _conn = None
+                for ext in ("", "-wal", "-shm"):
+                    try:
+                        (data_dir() / f"posts.db{ext}").replace(data_dir() / f"posts.db{ext}.corrupt-{int(time.time())}")
+                    except OSError:
+                        pass
+                log(f"база {p.name} была повреждена — сохранена как .corrupt, создана новая")
+                _conn = _open()
         return _conn
+
+
+def _open() -> sqlite3.Connection:
+    global _conn
+    _conn = sqlite3.connect(data_dir() / "posts.db", check_same_thread=False, timeout=30)
+    _conn.row_factory = sqlite3.Row
+    try:   # окно приложения и фоновая отправка пишут в базу одновременно
+        _conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.DatabaseError as e:
+        if "malformed" in str(e) or "not a database" in str(e):
+            raise
+    _conn.executescript(SCHEMA)
+    _migrate(_conn)
+    return _conn
 
 
 def _migrate(c: sqlite3.Connection):

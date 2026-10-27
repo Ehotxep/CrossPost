@@ -17,14 +17,14 @@ from pathlib import Path
 import app.publish  # noqa: F401
 import core.common as core_common
 from app import db
-from app.jobs import mask_secrets
+from app.jobs import Cancelled, mask_secrets
 from app.paths import data_dir
 from app.publish import settings as S
 from app.publish import e6ai as E6
 from app.publish import hashtags as HT
 from app.publish import prep, tg_bot, uploads
 from core.common import PlatformError
-from core.images import load_original, make_light
+from core.images import load_original
 from platforms import discord as D
 from platforms import telegram as T
 from platforms import vk as V
@@ -109,6 +109,24 @@ def _files(draft) -> list[dict]:
     return out
 
 
+VERSIONS = ("ru", "en", "clean")   # метки версий файла; без метки (или «all») файл идёт на все площадки
+VERSION_NAMES = {"ru": "RU", "en": "EN", "clean": "без надписей", "all": "для всех"}
+MAX_FILES_MULTI = 40               # в режиме «несколько версий» файлов в посте может быть больше десяти
+
+
+def select_ids(cfg, draft, ids, platform: str) -> list:
+    """id файлов, которые уходят на площадку. Без переключателя «Умное таргетирование» или без выбранных в настройках
+    версий — все файлы; иначе файлы без метки и файлы с меткой из набора площадки (порядок сохраняется)."""
+    ids = list(ids)
+    if not draft.get("multi") or not (cfg.get("modules") or {}).get("targeting"):
+        return ids
+    want = {v for v in ((cfg.get("versions") or {}).get(platform) or []) if v in VERSIONS}
+    if not want:
+        return ids
+    marks = draft.get("marks") or {}
+    return [i for i in ids if marks.get(i) not in VERSIONS or marks.get(i) in want]
+
+
 def _vk_scope_ok(kind: str) -> bool:
     t = core_common.load_token("vk") or {}
     scope = str(t.get("scope") or "")
@@ -142,17 +160,42 @@ def e6_tags(cfg, draft, file_id: str) -> list[str]:
     return tags
 
 
-def signature(cfg, platform: str, rating: str | None) -> str:
+def has_en_signature(cfg, platform: str) -> bool:
+    en = ((cfg["signatures"].get("platforms") or {}).get(platform) or {}).get("en") or {}
+    return bool((en.get("sfw") or "").strip() or (en.get("nsfw") or "").strip())
+
+
+def signature(cfg, platform: str, rating: str | None, lang: str = "main") -> str:
+    """Подпись площадки. Для английского текста — английская; если её не заполняли совсем, остаётся основная."""
     sg = (cfg["signatures"].get("platforms") or {}).get(platform) or {}
+    if lang == "en" and has_en_signature(cfg, platform):
+        sg = sg.get("en") or {}
     return (sg.get("nsfw" if rating and rating != "sfw" else "sfw") or "").strip()
+
+
+LANGS = ("main", "en")
+
+
+def variant(cfg, draft, platform: str) -> tuple[str, str, str]:
+    """(заголовок, текст, язык) для площадки: английский вариант, если площадка на него настроена и он заполнен, иначе основной."""
+    lang = (cfg.get("text_lang") or {}).get(platform, "main")
+    if lang in LANGS and lang != "main":
+        v = (draft.get("variants") or {}).get(lang) or {}
+        if (v.get("text") or "").strip() or (v.get("title") or "").strip():
+            return (v.get("title") or "").strip(), (v.get("text") or "").strip(), lang
+    return (draft.get("title") or "").strip(), (draft.get("text") or "").strip(), "main"
+
+
+def title_for(cfg, draft, platform: str) -> str:
+    return variant(cfg, draft, platform)[0]
 
 
 def signed_text(cfg, draft, platform: str) -> str:
     """Текст поста + хэштеги + подпись этой площадки. Ссылки [Текст](url) каждая площадка оформит по-своему."""
-    text = (draft.get("text") or "").strip()
+    _, text, lang = variant(cfg, draft, platform)
     text = HT.apply(cfg, draft, text, platform)   # хэштеги для поиска (кроме e6ai)
     if draft.get("signature", True) and cfg["signatures"]["use"].get(platform, True):
-        sig = signature(cfg, platform, draft.get("rating"))
+        sig = signature(cfg, platform, draft.get("rating"), lang)
         if sig:
             text = f"{text}\n\n{sig}".strip()
     from app.publish import links
@@ -164,21 +207,49 @@ def signed_text(cfg, draft, platform: str) -> str:
 def plan(draft: dict) -> dict:
     cfg = S.load()
     errors, notes = [], []
-    files = _files(draft)
+    all_files = files = _files(draft)
+    multi = bool(draft.get("multi")) and bool(cfg["modules"].get("targeting"))   # «Умное таргетирование»: у каждой площадки свой набор файлов
+    problems = {}
     rating = draft.get("rating")
     if not files:
         errors.append("Добавьте картинки, GIF или видео")
     if rating not in S.RATINGS:
         errors.append("Выберите рейтинг поста")
     kind = _kind(files) if files else "images"
-    if kind == "mixed":
+    if kind == "mixed" and not multi:
         errors.append("GIF и видео публикуются по одному, отдельным постом — без картинок рядом")
     n_img = len(files) if kind == "images" else 0
-    if n_img > MAX_IMAGES:
+    if n_img > MAX_IMAGES and not multi:
         errors.append(f"Не больше {MAX_IMAGES} картинок в одном посте")
+    if multi and len(files) > MAX_FILES_MULTI:
+        errors.append(f"Не больше {MAX_FILES_MULTI} файлов в одном посте")
     from app.publish import media as M
     anim = files[0] if kind in ("gif", "video") else None
     ainfo = (uploads.probe_cached(anim["path"]) if anim and anim["kind"] == "video" else {}) if anim else {}
+
+    def setup(fl):
+        nonlocal files, kind, n_img, anim, ainfo, what_anim
+        files = fl
+        kind = _kind(fl) if fl else "images"
+        n_img = len(fl) if kind == "images" else 0
+        anim = fl[0] if kind in ("gif", "video") else None
+        ainfo = (uploads.probe_cached(anim["path"]) if anim and anim["kind"] == "video" else {}) if anim else {}
+        what_anim = ("GIF" if kind == "gif" else "видео") + (f" {round(ainfo['duration'])} с" if ainfo.get("duration") else "")
+
+    def use(platform):
+        """Режим «Умное таргетирование»: дальше план считается по файлам, которые идут на эту площадку."""
+        if not multi:
+            return
+        keep = set(select_ids(cfg, draft, [f["id"] for f in all_files], platform))
+        setup([f for f in all_files if f["id"] in keep])
+        if not all_files:
+            return
+        if not files:
+            problems[platform] = "нет файлов с подходящей меткой версии — отметьте файлы или смените набор версий в «Настройки» → «Файлы» → «Умное таргетирование»"
+        elif kind == "mixed":
+            problems[platform] = "GIF и видео публикуются по одному, без картинок рядом"
+        elif kind == "images" and n_img > MAX_IMAGES:
+            problems[platform] = f"в этой версии {n_img} файлов, а в один пост помещается {MAX_IMAGES}"
 
     def media_need(platform, limit=None):
         """(можно ли, пояснение): файл как есть, переделка (нужен ffmpeg) или нельзя."""
@@ -199,15 +270,27 @@ def plan(draft: dict) -> dict:
         user_off = key in off
         if not files:
             details = []   # без файлов «0 фото» только путает
+        want = (cfg.get("text_lang") or {}).get("telegram" if platform == "telegram" else platform, "main")
+        if will and multi and all_files and platform in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai"):
+            vs = [VERSION_NAMES[v] for v in ((cfg.get("versions") or {}).get(platform) or []) if v in VERSION_NAMES]
+            details = list(details or []) + [f"{len(files)} из {len(all_files)} файлов" + (f" · версии: {', '.join(vs)}" if vs else "")]
+        if will and want != "main":   # площадка настроена на английский текст
+            _, _, got = variant(cfg, draft, platform)
+            details = list(details or []) + (["текст: English"] if got != "main" else ["⚠ английский текст не заполнен — уйдёт основной"])
+            if (got != "main" and draft.get("signature", True) and cfg["signatures"]["use"].get(platform, True)
+                    and signature(cfg, platform, rating) and not has_en_signature(cfg, platform)):
+                details.append("подпись: основная (английской нет)")
         dests.append({"key": key, "platform": platform, "name": name, "will": will and not user_off,
                       "reason": "выключено для этого поста" if (will and user_off) else reason,
                       "details": details or [], "can_toggle": toggle and (will or bool(need)), "off": user_off,
                       "need": need or []})
 
-    what_tg = {"images": f"{n_img} фото JPEG" if n_img != 1 else "фото JPEG", "gif": what_anim, "video": what_anim}.get(kind, "") if files else ""
+    def what_tg():   # по файлам, которые идут в Telegram (в режиме «Умное таргетирование» они свои)
+        return {"images": f"{n_img} фото JPEG" if n_img != 1 else "фото JPEG", "gif": what_anim, "video": what_anim}.get(kind, "") if files else ""
     tg_limit = None if cfg["telegram"].get("transport") == "mtproto" else tg_bot.VIDEO_LIMIT
 
     # Telegram
+    use("telegram")
     tg = cfg["telegram"]
     configured = []
     if tg["enabled"] and tg["bot_token"] and (tg["channels"] or tg["group"].get("id")):
@@ -220,7 +303,7 @@ def plan(draft: dict) -> dict:
             if not _allowed(ch.get("rating"), mature):
                 add(key, "telegram", name, False, _rating_reason(ch.get("rating")), toggle=False)
                 continue
-            det = [what_tg + (" под спойлером" if spoiler else "")]
+            det = [what_tg() + (" под спойлером" if spoiler else "")]
             if anim:
                 ok, why = media_need("telegram", tg_limit)
                 if not ok:
@@ -251,6 +334,7 @@ def plan(draft: dict) -> dict:
                 dests[-1]["src"] = src[0]
 
     # Discord
+    use("discord")
     dc = cfg["discord"]
     if dc["enabled"] and dc["webhooks"]:
         configured.append("discord")
@@ -270,6 +354,7 @@ def plan(draft: dict) -> dict:
                     details=[f"{n_img} JPEG-превью" + (" под спойлером" if mature and dc.get("blur_nsfw") else "")])
 
     # ВКонтакте
+    use("vk")
     vk = cfg["vk"]
     if vk["enabled"] and vk.get("group_id"):
         configured.append("vk")
@@ -295,6 +380,7 @@ def plan(draft: dict) -> dict:
             add("vk", "vk", name, True, details=[f"{n_img} JPEG-превью" + (" · через браузер" if via_browser else "")])
 
     # Bluesky
+    use("bluesky")
     from platforms import bluesky as BS, deviantart as DA
     bs = cfg["bluesky"]
     bs_sess = core_common.load_token("bluesky") or {}
@@ -321,6 +407,7 @@ def plan(draft: dict) -> dict:
             add("bluesky", "bluesky", name, True, details=det)
 
     # DeviantArt
+    use("deviantart")
     da = cfg["deviantart"]
     da_tok = core_common.load_token("deviantart") or {}
     if da.get("enabled") and da_tok.get("access_token"):
@@ -340,6 +427,7 @@ def plan(draft: dict) -> dict:
             add("deviantart", "deviantart", name, True, details=[what + (" · Mature" if mature else "") + (" · отмечено как ИИ" if da.get("is_ai_generated", True) else "")])
 
     # e6ai — последним: в источники пойдут ссылки на уже вышедшие посты
+    use("e6ai")
     e6 = cfg["e6ai"]
     if e6.get("enabled") and e6.get("username") and e6.get("api_key"):
         configured.append("e6ai")
@@ -383,6 +471,11 @@ def plan(draft: dict) -> dict:
                if k not in configured and cfg["modules"].get(k, True)]
     if not configured:
         errors.append("Ни одна площадка не настроена — откройте «Настройки» → «Публикация»")
+    order = S.platform_order(cfg)   # площадки — в порядке, который выбрал пользователь (внутри площадки — как были)
+    dests.sort(key=lambda d: order.index(d["platform"]) if d["platform"] in order else len(order))
+    for d in dests:
+        if d["will"] and d["platform"] in problems:
+            d.update(will=False, reason=problems[d["platform"]], can_toggle=False, need=[])
     for d in dests:
         if d["key"] in done:
             d.update(will=False, off=False, can_toggle=False, need=[], done=True, reason="уже опубликовано")
@@ -391,9 +484,12 @@ def plan(draft: dict) -> dict:
         errors.append("Новых мест нет — включите площадку, куда дослать пост")
     elif files and rating in S.RATINGS and configured and not will:
         errors.append("С этим рейтингом пост никуда не уйдёт")
-    return {"kind": kind, "mature": mature, "rating": rating, "dests": dests, "errors": errors,
+    return {"kind": _kind(all_files) if all_files else "images", "mature": mature, "rating": rating, "dests": dests, "errors": errors,
             "not_configured": missing, "configured": configured, "notes": notes,
             "texts": {p: signed_text(cfg, draft, p) for p in ("telegram", "discord", "vk", "bluesky", "deviantart")},
+            # заголовок и язык текста каждой площадки: предпросмотр показывает ровно то, что уйдёт
+            "titles": {p: title_for(cfg, draft, p) for p in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")},
+            "langs": {p: variant(cfg, draft, p)[2] for p in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")},
             "hashtags": HT.final(cfg, draft), "hashtags_suggested": HT.suggest(cfg, draft),
             "hashtags_on": bool(cfg["hashtags"].get("enabled", True))}
 
@@ -436,9 +532,12 @@ def _save_pub():
                 _state["pub_id"] = cur.lastrowid
 
 
+UNATTENDED_WAIT = 45 * 60   # публикация по расписанию без человека: повторы загрузки PNG не дольше 45 минут
+
+
 NETFAIL = "Нет связи с api.telegram.org"
 NETFAIL_TEXT = ("Публикация в Telegram не прошла: нет связи с api.telegram.org (проблема с соединением). "
-                "Включите связь через MTProto или запас прокси в «Настройки» → «Соединение».")
+                "Включите связь через MTProto или запас прокси в «Настройки» → «Дополнительно» → «Прокси и соединение».")
 
 
 def net_failed(dests=None) -> bool:
@@ -480,12 +579,14 @@ def start(draft: dict, report) -> None:
         from app.publish import storage
         storage.make_pub_thumb(state()["pub_id"], files)
     except Exception:
-        pass
+        from app.applog import log
+        log("публикация: не удалось сохранить миниатюру")
     try:   # запоминаем прогноз — через неделю сравним с тем, что вышло
         from app.insights import forecast as FC, post_stats
         post_stats.save_forecasts(state()["pub_id"], FC.for_draft(draft)["items"])
     except Exception:
-        pass
+        from app.applog import log
+        log("публикация: не удалось сохранить прогноз")
     _run(draft, report, only=None)
 
 
@@ -514,12 +615,126 @@ def extend(draft: dict, report) -> None:
     _run(clean, report, only=keys)
 
 
+def _posted_but_failed(key: str, err) -> bool:
+    """Пост в канал Telegram уже вышел (есть message_ids), а упало что-то после — например, загрузка PNG при обрыве связи.
+    Место НЕ считается ошибкой: повторная публикация дала бы дубль. Остаётся «дослать PNG»."""
+    if not key.startswith("telegram:") or key == "telegram:group":
+        return False
+    st = state() or {}
+    d = next((x for x in st.get("dests", []) if x["key"] == key), None)
+    if not d or not d.get("message_ids"):
+        return False
+    _set(key, state="done", message="", originals_pending=True,
+         note=mask_secrets(f"⚠ пост вышел, но PNG не отправлены: {err} — их можно дослать кнопкой «Дослать PNG»"))
+    return True
+
+
+def _retry_originals(key, d, tg, ch, media, res, report, max_wait=None) -> dict:
+    """Пост вышел, а PNG не дошли (обрыв, прокси): пробуем снова, сколько потребуется (пауза 2…60 с).
+    Останавливает только «Отмена» — тогда остаётся кнопка «Дослать PNG». Нового поста не создаёт."""
+    originals, ids = media.get("originals") or [], media.get("original_ids") or []
+    attempt, t0 = 0, time.time()
+    last_note, same = "", 0
+    while True:
+        if max_wait and time.time() - t0 > max_wait:   # без человека (по расписанию) очередь не держим вечно: PNG остаются «к досылке»
+            return dict(res, originals_failed=True, note=(res.get("note") or "") + " — повторы остановлены, PNG можно дослать кнопкой «Дослать PNG»")
+        attempt += 1
+        pause = min(60, 2 ** min(attempt, 6))
+        for left in range(pause, 0, -1):   # report каждую секунду — через него приходит «Отмена»
+            _set(key, message=f"обрыв при загрузке PNG — попытка {attempt + 1} через {left} с…")
+            report(message=f"{d['name']}: ждём перед повтором…")
+            time.sleep(1)
+        _set(key, message=f"догружаю PNG-оригиналы (попытка {attempt + 1})…")
+        try:
+            r = tg_bot.send_originals_only(tg, ch, originals, res["chat_id"], int(res["message_ids"][0]),
+                                           lambda m, _k=key: _set(_k, message=m + "…"), ids)
+        except Exception as e:  # noqa: BLE001
+            r = {"ok": False, "note": mask_secrets(f"⚠ PNG не отправлены: {e}")}
+        if r["ok"]:
+            return dict(res, note=r["note"], originals_failed=False)
+        res = dict(res, note=r["note"])
+        _set(key, note=r["note"])
+        same = same + 1 if (r["note"] == last_note and not tg_bot.is_network_error(r["note"])) else 1
+        last_note = r["note"]
+        if same >= tg_bot.PERMANENT_AFTER:   # одна и та же не сетевая ошибка: Telegram отказывает, повтор не поможет
+            return dict(res, originals_failed=True, note=r["note"] + " — это не обрыв связи, повторы остановлены; исправьте причину и нажмите «Дослать PNG»")
+
+
+def _load_pub(pub_id: int) -> None:
+    """Загружает опубликованный пост из истории в текущее состояние (после перезапуска программы)."""
+    st = state()
+    if st and st.get("pub_id") == int(pub_id):
+        return
+    row = _pub_row(pub_id)
+    if not row:
+        raise PlatformError("Публикация не найдена")
+    try:
+        draft = json.loads(row.get("draft") or "null")
+    except Exception:  # noqa: BLE001
+        draft = None
+    with _state_lock:
+        _state.clear()
+        _state.update({"pub_id": int(pub_id), "created": row["created"], "title": row["title"] or "", "text": row["text"] or "",
+                       "rating": row["rating"], "files": json.loads(row["files"] or "[]"), "draft": draft or {},
+                       "dests": json.loads(row["dests"] or "[]"), "skipped": [], "running": False, "kind": ""})
+
+
+def resend_originals(pub_id: int, report) -> None:
+    """Дослать PNG-оригиналы к уже вышедшим постам Telegram. Новых постов не создаёт."""
+    _load_pub(pub_id)
+    st = state()
+    cfg = S.load()
+    tg = cfg["telegram"]
+    todo = [d for d in st["dests"] if d.get("originals_pending") and d.get("message_ids")]
+    if not todo:
+        raise PlatformError("Досылать нечего — все PNG уже отправлены")
+    draft = st.get("draft") or {}
+    ids = [f["id"] if isinstance(f, dict) else f for f in (draft.get("files") or st.get("files") or [])]
+    ids = select_ids(cfg, draft, ids, "telegram")   # в режиме «Умное таргетирование» PNG только тех файлов, что ушли в Telegram
+    originals, oids, lost = [], [], []
+    for uid in ids:
+        try:
+            originals.append(load_original(uploads.path_of(uid), T.BOT_FILE_LIMIT))
+            oids.append(uid)
+        except Exception:  # noqa: BLE001 — оригинал уже удалён (хранится неделю)
+            lost.append(uid)
+    if not originals:
+        raise PlatformError("Файлы поста уже удалены (они хранятся неделю после публикации) — PNG придётся добавить вручную")
+    _set(running=True)
+    for i, d in enumerate(todo):
+        key = d["key"]
+        _set(key, message="догружаю PNG-оригиналы…", progress=0.0)
+        report(message=f"{d['name']}: PNG…", progress=i / len(todo))
+        try:
+            chs = tg["channels"]
+            ch = chs[int(key.split(":")[1])]
+            res = tg_bot.send_originals_only(tg, ch, originals, d["chat_id"], int(d["message_ids"][0]),
+                                             lambda m, _k=key: _set(_k, message=m + "…"), oids)
+        except Exception as e:  # noqa: BLE001
+            res = {"ok": False, "note": mask_secrets(f"⚠ PNG не отправлены: {e}")}
+        if res["ok"]:
+            note = res["note"] + (f" · {len(lost)} файл(ов) уже удалено, их PNG нет" if lost else "")
+            _set(key, message="", originals_pending=False, note=note, progress=1.0)
+        else:
+            _set(key, message="", note=res["note"] + " — можно попробовать ещё раз")
+        _save_pub()
+    _set(running=False)
+    _save_pub()
+    report(progress=1.0, message="PNG досланы")
+
+
 def retry(report) -> None:
     st = state()
     if not st:
         raise PlatformError("Нечего повторять")
+    for d in st["dests"]:   # пост уже вышел — повторять пост нельзя, только PNG
+        if d["state"] == "error" and d.get("message_ids") and d["key"].startswith("telegram:") and d["key"] != "telegram:group":
+            _set(d["key"], state="done", message="", originals_pending=True)
+    st = state()
     failed = [d["key"] for d in st["dests"] if d["state"] == "error"]
     if not failed:
+        if any(d.get("originals_pending") for d in st["dests"]):
+            return resend_originals(st["pub_id"], report)
         raise PlatformError("Неудачных мест нет")
     for k in failed:
         _set(k, state="queued", message="", note="")
@@ -531,8 +746,13 @@ def _run(draft, report, only):
     cfg = S.load()
     st = state()
     mature = draft["rating"] != "sfw"
-    files = _files(draft)
-    kind = _kind(files)
+    all_files = _files(draft)
+
+    def _sel(platform):
+        """Файлы и их вид (images/gif/video) для площадки — с учётом меток версий («Умное таргетирование»)."""
+        keep = set(select_ids(cfg, draft, [f["id"] for f in all_files], platform))
+        fl = [f for f in all_files if f["id"] in keep]
+        return fl, (_kind(fl) if fl else "images")
     todo = [d for d in st["dests"] if only is None or d["key"] in only]
     total = max(len(todo), 1)
     media_cache = {}
@@ -546,7 +766,7 @@ def _run(draft, report, only):
     def anim_file(platform, limit=None, log=lambda m: None):
         """GIF/видео для площадки: как есть или переделанный (только если иначе не примет)."""
         from app.publish import media as M
-        f = files[0]
+        f = _sel(platform)[0][0]
         info = uploads.probe_cached(f["path"]) if f["kind"] == "video" else {}
         if not M.need_for(platform, f, info, limit):
             return f["path"], f["kind"], info
@@ -559,6 +779,7 @@ def _run(draft, report, only):
     def _media_for(platform, log):
         if platform in media_cache:
             return media_cache[platform]
+        files, kind = _sel(platform)
         light = cfg["light"]
         if platform == "telegram" and kind != "images":
             lim = None if cfg["telegram"].get("transport") == "mtproto" else tg_bot.VIDEO_LIMIT
@@ -590,21 +811,31 @@ def _run(draft, report, only):
 
     def one(n, d):
             key = d["key"]
+            files, kind = _sel(d.get("platform") or key.split(":")[0])
             _set(key, state="running", message="готовлю файлы…", progress=0.0)
-            report(message=f"{d['name']}…")
 
             def prog(frac, _key=key):
                 frac = max(0.0, min(1.0, float(frac)))
                 _set(_key, progress=frac)
                 cur = state()["dests"]
-                report(progress=sum((1.0 if x["state"] in ("done", "error") else float(x.get("progress") or 0)) for x in cur if x["key"] in keys) / total)
+                try:
+                    report(progress=sum((1.0 if x["state"] in ("done", "error") else float(x.get("progress") or 0)) for x in cur if x["key"] in keys) / total)
+                except Cancelled:   # прогресс зовут из потоков загрузки (asyncio): туда BaseException пускать нельзя
+                    raise _Stop("отменено")
 
             def log(msg, _key=key):   # шаги публикации в Telegram → и текст, и примерный прогресс
                 _set(_key, message=msg + "…")
                 for word, frac in (("отправляю", 0.1), ("жду копию", 0.65), ("кладу PNG", 0.7)):
                     if msg.startswith(word):
                         prog(frac)
+            from core import retry as _retry
+            _retry.set_cancel_check(lambda: report())   # повторы загрузок внутри площадок останавливает «Отмена»
             try:
+                report(message=f"{d['name']}…")   # здесь же останавливает «Отмена», пока место ещё не началось
+                if not files:
+                    raise PlatformError("для этой площадки нет файлов с подходящей меткой версии")
+                if kind == "mixed":
+                    raise PlatformError("GIF и видео публикуются по одному, без картинок рядом")
                 if key.startswith("telegram:") and key != "telegram:group":
                     tg = cfg["telegram"]
                     ch = tg["channels"][int(key.split(":")[1])]
@@ -612,10 +843,23 @@ def _run(draft, report, only):
                         _set(_key, link=out["link"], chat_id=out["chat_id"], message_ids=out["message_ids"],
                              message="пост вышел, догружаю PNG-оригиналы…")
                         posted[_key].set()
-                    res = tg_bot.publish_channel(tg, ch, media_for("telegram", lambda m: _set(key, message=m + "…")), signed_text(cfg, draft, "telegram"),
-                                                 draft.get("title") or "", mature, log, prog, on_posted)
+                    try:
+                        res = tg_bot.publish_channel(tg, ch, media_for("telegram", lambda m: _set(key, message=m + "…")), signed_text(cfg, draft, "telegram"),
+                                                     title_for(cfg, draft, "telegram"), mature, log, prog, on_posted)
+                    except (Cancelled, _Stop):
+                        raise
+                    except Exception as e:  # noqa: BLE001 — пост уже вышел, упали оригиналы: не ошибка, а «досылаем»
+                        cur = next((x for x in state()["dests"] if x["key"] == key), {})
+                        if not cur.get("message_ids"):
+                            raise
+                        res = {"link": cur["link"], "chat_id": cur["chat_id"], "message_ids": cur["message_ids"],
+                               "note": mask_secrets(f"⚠ пост вышел, но PNG не отправлены: {e}"), "originals_failed": True}
+                    if res.get("originals_failed"):
+                        res = _retry_originals(key, d, tg, ch, media_for("telegram"), res, report,
+                                               max_wait=UNATTENDED_WAIT if draft.get("_scheduled_run") else None)
                     _set(key, state="done", message="", link=res["link"], note=res["note"],
-                         chat_id=res["chat_id"], message_ids=res["message_ids"])
+                         chat_id=res["chat_id"], message_ids=res["message_ids"],
+                         originals_pending=bool(res.get("originals_failed")))
                 elif key == "telegram:group":
                     if d.get("src") in posted:   # ждём только сам пост в канале, не оригиналы
                         _set(key, message="жду пост в канале…")
@@ -632,7 +876,7 @@ def _run(draft, report, only):
                 elif key.startswith("discord:"):
                     dc = cfg["discord"]
                     w = dc["webhooks"][int(key.split(":")[1])]
-                    post = core_common.Post(text=signed_text(cfg, draft, "discord"), title=draft.get("title") or "", mature=mature)
+                    post = core_common.Post(text=signed_text(cfg, draft, "discord"), title=title_for(cfg, draft, "discord"), mature=mature)
                     media = media_for("discord", lambda m: _set(key, message=m + "…"))
                     _set(key, message="отправляю…"); prog(0.3)
                     D.post(dict(dc, webhook_urls=[w["url"]]), media, post)
@@ -646,8 +890,8 @@ def _run(draft, report, only):
                                    and "/c/" not in x["link"] and x["key"] != "e6ai"]
                     desc = ""
                     if e6.get("with_description", True):
-                        t = (draft.get("text") or "").strip()
-                        desc = ((f"[b]{draft['title']}[/b]\n" if draft.get("title") else "") + t).strip()
+                        e_title, t, _ = variant(cfg, draft, "e6ai")
+                        desc = ((f"[b]{e_title}[/b]\n" if e_title else "") + t).strip()
                     parent, first, dup = None, None, 0
                     for i, f in enumerate(files):
                         _set(key, message=f"загружаю оригинал {i + 1} из {len(files)}…")
@@ -671,7 +915,8 @@ def _run(draft, report, only):
                                 from app.insights import e6learn
                                 e6learn.record(state()["pub_id"], res["post_id"], tags6 if kind in ("gif", "video") else e6_tags(cfg, draft, f["id"]), E6.name(cfg["e6ai"]))
                             except Exception:
-                                pass
+                                from app.applog import log
+                                log("e6ai: не удалось запомнить загрузку для сверки правок")
                         parent = parent or res["post_id"]
                         first = first or res["url"]
                         dup += res["duplicate"]
@@ -682,9 +927,9 @@ def _run(draft, report, only):
                     from platforms import bluesky as BS
                     bs = cfg["bluesky"]
                     text = signed_text(cfg, draft, "bluesky")
-                    if draft.get("title") and bs.get("include_title", True):
-                        text = f"{draft['title']}\n\n{text}".strip()
-                    alt = (draft.get("title") or "") if bs.get("alt_from_title", True) else ""
+                    if title_for(cfg, draft, "bluesky") and bs.get("include_title", True):
+                        text = f"{title_for(cfg, draft, 'bluesky')}\n\n{text}".strip()
+                    alt = title_for(cfg, draft, "bluesky") if bs.get("alt_from_title", True) else ""
                     if kind == "images":
                         imgs = media_for("bluesky")
                         _set(key, message="загружаю картинки…"); prog(0.3)
@@ -711,13 +956,13 @@ def _run(draft, report, only):
                     tags = HT.final(cfg, draft) if da.get("tags_from", "hashtags") == "hashtags" else []
                     tags = [t for t in tags if t.lower() not in ("sfw", "nsfw")]
                     _set(key, message="загружаю на DeviantArt…"); prog(0.1)
-                    urls = DA.publish(da, up, draft.get("title") or "", signed_text(cfg, draft, "deviantart"), tags,
+                    urls = DA.publish(da, up, title_for(cfg, draft, "deviantart"), signed_text(cfg, draft, "deviantart"), tags,
                                       draft["rating"], progress=prog)
                     _set(key, state="done", message="", link=next((u["url"] for u in urls if u["url"]), ""),
                          deviation_ids=[u["id"] for u in urls if u["id"]], note=f"{len(urls)} работ{'ы' if 1 < len(urls) < 5 else ''}" if len(urls) > 1 else "")
                 elif key == "vk":
                     vk = cfg["vk"]
-                    post = core_common.Post(text=signed_text(cfg, draft, "vk"), title=draft.get("title") or "", mature=False)
+                    post = core_common.Post(text=signed_text(cfg, draft, "vk"), title=title_for(cfg, draft, "vk"), mature=False)
                     if kind in ("gif", "video") and vk.get("method") == "browser":
                         from app.publish import vk_web
                         text = post.text
@@ -761,15 +1006,47 @@ def _run(draft, report, only):
                         _set(key, state="done", message="", link=links[0] if links else "")
             except _Done:
                 _set(key, progress=1.0)
+            except (Cancelled, _Stop):   # «Отмена»: если пост уже вышел — остаётся «дослать PNG», иначе место просто не отправлено
+                if not _posted_but_failed(key, "отменено"):
+                    _set(key, state="error", message="Отменено — не отправлено")
             except (PlatformError, ValueError, OSError, RuntimeError) as e:
-                _set(key, state="error", message=_friendly(key, mask_secrets(str(e))))
+                if not _posted_but_failed(key, e):
+                    _set(key, state="error", message=_friendly(key, mask_secrets(str(e))))
             except Exception as e:  # noqa: BLE001 — сеть и т.п.: не роняем остальные места
-                _set(key, state="error", message=mask_secrets(f"{type(e).__name__}: {e}"))
+                if not _posted_but_failed(key, e):
+                    _set(key, state="error", message=mask_secrets(f"{type(e).__name__}: {e}"))
             else:
                 _set(key, progress=1.0)
             if key in posted:
                 posted[key].set()   # и при ошибке — чтобы пересылка в группу не ждала вечно
             _save_pub()
+
+    # Режим «публиковать после загрузки оригиналов»: сначала PNG уходят на сервер Telegram, и только потом — всё остальное
+    tgc = cfg["telegram"]
+    if (tgc.get("originals_first") and tgc.get("transport") == "mtproto" and _sel("telegram")[1] == "images"
+            and any(d["key"].startswith("telegram:") and d["key"] != "telegram:group" for d in todo)
+            and any(c.get("originals", "reply") != "none" for c in tgc["channels"])):
+        for d in todo:
+            _set(d["key"], message="жду, пока загрузятся PNG-оригиналы…")
+        try:
+            med = media_for("telegram")
+            report(message="Загружаю PNG-оригиналы в Telegram…")
+            tg_bot.wait_originals(tgc, med["originals"], med["original_ids"], UNATTENDED_WAIT if draft.get("_scheduled_run") else None,
+                                  lambda f, msg: report(progress=0.5 * f, message=msg))
+        except PlatformError as e:   # без оригиналов пост в Telegram не выходит; остальные площадки идут как обычно
+            for d in list(todo):
+                if d["key"].startswith("telegram:"):
+                    _set(d["key"], state="error", message=mask_secrets(str(e)))
+                    todo.remove(d)
+            _save_pub()
+        except Cancelled:
+            for d in todo:
+                _set(d["key"], state="error", message="Отменено — не отправлено")
+            _set(running=False)
+            _save_pub()
+            raise
+        for d in todo:
+            _set(d["key"], message="")
 
     # Порядок: все лёгкие посты сразу и параллельно (каналы Telegram, Discord, ВК), PNG-оригиналы в Telegram
     # догружаются следом внутри своих потоков, пересылка в группу ждёт только сам пост, e6ai — последним
@@ -791,6 +1068,10 @@ def _run(draft, report, only):
     bad = sum(1 for d in st["dests"] if d["state"] == "error")
     _notify_netfail()
     report(progress=1.0, message=f"опубликовано: {ok}" + (f", ошибок: {bad}" if bad else "") + (" — нет связи с api.telegram.org" if net_failed(st["dests"]) else ""))
+
+
+class _Stop(Exception):
+    """Отмена, пришедшая изнутри загрузки (обычное исключение — asyncio его переживает)."""
 
 
 class _Done(Exception):

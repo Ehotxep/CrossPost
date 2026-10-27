@@ -2,18 +2,10 @@
 import json
 import re
 
-import requests
-
 from core.common import PlatformError, check_json
 
 NAME = "Discord"
 MAX_IMAGES = 10
-
-
-def limits(c: dict) -> dict:
-    # 10 МБ — лимит загрузки для сервера без бустов; с бустами можно поднять в config
-    mb = c.get("max_file_mb", 10)
-    return {"max_bytes": mb * 1024 * 1024, "formats": ("JPEG", "PNG", "GIF", "WEBP")}
 
 
 _LABELED = re.compile(r"^(?P<label>[^\n:]{1,60}?)\s*:\s*<?(?P<url>https?://\S+?)>?\s*$")
@@ -36,7 +28,7 @@ def post(c: dict, images, p) -> list[str]:
     hooks = c.get("webhook_urls") or [c.get("webhook_url")]
     hooks = [h["url"] if isinstance(h, dict) else h for h in hooks if h]
     if not hooks:
-        raise PlatformError("Discord: не указан webhook_urls в config.toml")
+        raise PlatformError("Discord: не указан вебхук — добавьте его в «Настройки» → Discord")
 
     text = p.text
     if c.get("short_links", True):
@@ -59,8 +51,9 @@ def post(c: dict, images, p) -> list[str]:
         if c.get("username"):
             payload["username"] = c["username"]
         files = {f"files[{i}]": (names[i], img.data, img.mime) for i, img in enumerate(images)}
-        r = requests.post(hook, params={"wait": "true"},
-                          data={"payload_json": json.dumps(payload)}, files=files, timeout=120)
+        from core import retry
+        r = retry.post(hook, idempotent=False, what="Discord", params={"wait": "true"},
+                       data={"payload_json": json.dumps(payload)}, files=files, timeout=300)
         msg = check_json(r, NAME)
         results.append(f"сообщение {msg.get('id')} в канале {msg.get('channel_id')}")
     return results

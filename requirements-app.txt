@@ -9,6 +9,3 @@ python-socks[asyncio]>=2.4
 playwright>=1.45
 pystray>=0.19
 psutil>=5.9
-# Публикация из командной строки (crosspost.py)
-tweepy>=4.14
-praw>=7.7

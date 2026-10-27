@@ -133,7 +133,11 @@ def upload_blob(c: dict, s: dict, data: bytes, mime: str, timeout=120) -> dict:
     if _pds(c) not in hosts:
         hosts.append(_pds(c))
     last = None
-    for attempt in range(3):
+    from core import retry
+    attempt = -1
+    while True:   # файл заливается, пока не получится (на слабой связи так и надо); останавливает только «Отмена»
+        attempt += 1
+        retry.check_cancel()
         host = hosts[min(attempt, len(hosts) - 1)] if attempt < 2 else hosts[0]
         try:
             r = requests.post(f"{host}/xrpc/com.atproto.repo.uploadBlob", data=data,
@@ -146,9 +150,9 @@ def upload_blob(c: dict, s: dict, data: bytes, mime: str, timeout=120) -> dict:
             if not _transient(r) and not (r.status_code == 401 and host != _pds(c)):   # 401 у сервера аккаунта — попробуем через общий вход
                 raise _err(r, "загрузка файла")
             last = _err(r, "загрузка файла")
-        time.sleep(2 + 3 * attempt)
-    raise PlatformError(f"{last} — сервер Bluesky временно не принял файл. Ничего не опубликовано; нажмите «Повторить неудачные» "
-                        "через пару минут")
+        for _ in range(min(60, 2 + 3 * min(attempt, 19))):
+            retry.check_cancel()
+            time.sleep(1)
 
 
 # --- текст: ссылки и хэштеги → facets ----------------------------------------------------
@@ -227,11 +231,12 @@ def post(c: dict, text: str, rating: str, images=None, video=None, alt: str = ""
         record["embed"] = {"$type": "app.bsky.embed.images", "images": imgs}
     body = {"repo": s["did"], "collection": "app.bsky.feed.post", "record": record}
     hdr = {"Authorization": f"Bearer {s['accessJwt']}"}
-    r = requests.post(f"{_home(c, s)}/xrpc/com.atproto.repo.createRecord", json=body, headers=hdr, timeout=60)
+    from core import retry
+    r = retry.post(f"{_home(c, s)}/xrpc/com.atproto.repo.createRecord", idempotent=False, what="Bluesky (пост)", json=body, headers=hdr, timeout=60)
     if r.status_code == 401 and _home(c, s) != _pds(c):
         # сервер аккаунта не принял ключ — пост точно не создан, повторяем через общий вход.
         # При сбое сервера (5xx) не повторяем: пост мог успеть создаться, повтор его бы задвоил.
-        r = requests.post(f"{_pds(c)}/xrpc/com.atproto.repo.createRecord", json=body, headers=hdr, timeout=60)
+        r = retry.post(f"{_pds(c)}/xrpc/com.atproto.repo.createRecord", idempotent=False, what="Bluesky (пост)", json=body, headers=hdr, timeout=60)
     if r.status_code != 200:
         raise _err(r, "пост")
     uri = r.json()["uri"]

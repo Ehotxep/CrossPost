@@ -37,11 +37,17 @@ def wake_existing() -> bool:
     import urllib.request
     try:
         d = json.loads((data_dir() / "app.instance").read_text(encoding="utf-8"))
-        req = urllib.request.Request(d["url"].rstrip("/") + "/api/focus", data=b"{}", method="POST",
-                                     headers={"Content-Type": "application/json", "X-Token": d["token"]})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            res = json.loads(r.read().decode("utf-8")).get("result") or {}
-        if not res.get("window"):   # открыт в браузере, а не в своём окне — откроем вкладку
+        import time
+        res = {}
+        for _ in range(30):   # окно может быть ещё в процессе создания (первые секунды после запуска) — ждём его, а не открываем браузер
+            req = urllib.request.Request(d["url"].rstrip("/") + "/api/focus", data=b"{}", method="POST",
+                                         headers={"Content-Type": "application/json", "X-Token": d["token"]})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                res = json.loads(r.read().decode("utf-8")).get("result") or {}
+            if res.get("window") or not res.get("starting"):
+                break
+            time.sleep(1)
+        if not res.get("window") and not res.get("starting"):   # открыт в браузере, а не в своём окне — откроем вкладку
             import webbrowser
             webbrowser.open(d["url"])
         return True
