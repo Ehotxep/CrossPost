@@ -305,11 +305,15 @@
   }
   // ----- второй язык: английский вариант заголовка и описания, на какие площадки он уходит -----
   const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "e6ai / e621"]];
+  // шаблоны сервисов: [код, адрес, модель по умолчанию, название]
+  const TRP = [["deepseek", "https://api.deepseek.com", "deepseek-flash", "DeepSeek"], ["openai", "https://api.openai.com/v1", "gpt-4o-mini", "OpenAI"],
+    ["openrouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", "OpenRouter"], ["ollama", "http://localhost:11434/v1", "qwen2.5:7b", "Ollama (локально)"],
+    ["lmstudio", "http://localhost:1234/v1", "", "LM Studio (локально)"]];
   function trHtml() {
     const s = S(), t = (s.pub && s.pub.translate) || {};
     const m = (s.trMsg || "").match(/^(err|warn|ok):([\s\S]*)$/);
-    if (!t.has_key) return `<p class="muted small">Стрелки между колонками переводят текст через DeepSeek: <a href="#" data-view-link="settings" data-tab="translate">подключить</a>.</p>`;
-    return `<p class="small ${m ? (m[1] === "err" ? "err" : m[1] === "warn" ? "warnline" : "ok") : "muted"}">${m ? esc(m[2]) : "Стрелки переводят текст через DeepSeek (он уходит на их серверы). Результат можно править в любой колонке."}</p>`;
+    if (!t.ready) return `<p class="muted small">Стрелки между колонками переводят текст через нейросеть (DeepSeek, OpenAI или любой сервис с таким же интерфейсом): <a href="#" data-view-link="settings" data-tab="translate">подключить</a>.</p>`;
+    return `<p class="small ${m ? (m[1] === "err" ? "err" : m[1] === "warn" ? "warnline" : "ok") : "muted"}">${m ? esc(m[2]) : "Стрелки переводят текст через подключённую нейросеть (текст уходит на её сервер). Результат можно править в любой колонке."}</p>`;
   }
   // две колонки: основной текст и английский; между ними стрелки-переводы; обе стороны правятся независимо
   const titleField = (titleFor) => `<div class="field"><label for="ptitle">Заголовок ${titleFor.length ? pfor(titleFor) : ""} ${C().hint("Необязательно. Жирным в начале поста на отмеченных площадках.")}</label>
@@ -323,7 +327,7 @@
     const list = byOrder(LANGP.filter(([p]) => m[p] !== false));
     const on = list.filter(([p]) => tl[p] === "en");
     const t = (s.pub && s.pub.translate) || {};
-    const arrow = (dir, ch, tip) => `<button class="btn small biarrow" data-pa="translate" data-dir="${dir}" ${s.trBusy || !t.has_key ? "disabled" : ""} data-tip="${tip}" aria-label="${tip}">${s.trBusy ? "…" : ch}</button>`;
+    const arrow = (dir, ch, tip) => `<button class="btn small biarrow" data-pa="translate" data-dir="${dir}" ${s.trBusy || !t.ready ? "disabled" : ""} data-tip="${tip}" aria-label="${tip}">${s.trBusy ? "…" : ch}</button>`;
     return `<div class="bilingual">
       <div class="bicol"><div class="bihead">Русский <span class="muted small">основной</span></div>${titleField(titleFor)}${descField()}</div>
       <div class="biarr">${arrow("en", "→", "Перевести на английский")}${arrow("main", "←", "Перевести на русский")}</div>
@@ -1376,7 +1380,7 @@
       case "hashtags": return p.hashtags.enabled ? ["ok", "включены"] : ["", "выключены"];
       case "signatures": { const on = TEXTP.filter((k) => { const v = (p.signatures.platforms || {})[k] || {}; return v.sfw || v.nsfw; });
         return [on.length ? "ok" : "", on.length ? on.map((k) => C().PLAT[k][0]).join(", ") : "не заданы"]; }
-      case "translate": return p.translate && p.translate.has_key ? ["ok", "ключ есть"] : ["", "нет ключа"];
+      case "translate": return p.translate && p.translate.ready ? ["ok", p.translate.model || "подключено"] : ["", "не подключено"];
       case "versions": { const n = Object.values(p.versions || {}).filter((v) => v && v.length).length; return n ? ["ok", `настроено: ${n}`] : ["", "все версии везде"]; }
       case "media": { const m = S().mediaSt; return m ? (m.ready ? ["ok", "ffmpeg есть"] : ["", "ffmpeg не установлен"]) : ["", ""]; }
       case "light": return ["ok", `${Math.round(p.light.scale * 100)}%, качество ${p.light.quality}`];
@@ -1659,7 +1663,7 @@
     }
     if (sec === "versions") {
       const vs = p.versions || {}, m = p.modules || {};
-      h += `<section class="card setc"><div class="head"><h2>Умное таргетирование ${hint("Для комиксов в нескольких вариантах. В посте включите «Умное таргетирование» и отметьте версию у каждого файла: RU, EN или «без надписей». Здесь выбирается, какие версии уходят на какую площадку. Пусто — любые. Файлы без метки и с меткой «для всех» уходят везде.")}</h2>${ok("ver")}</div>
+      h += `<section class="card setc"><div class="head"><h2>Умное таргетирование ${hint("Для комиксов в нескольких вариантах. В посте включите «Умное таргетирование» и отметьте версию у каждого файла: RU, EN или «без надписей». Здесь выбирается, какие версии уходят на какую площадку. Пусто — любые. Файлы без метки и с меткой «для всех» уходят везде.")}</h2>${ok("ver")}</div>${err("ver")}
         <p class="muted small">Ничего не отмечено — площадка получит все файлы. Если отмечено несколько версий, они уйдут вместе одним постом (в Telegram, Discord и ВК — до 10 файлов в посте, в Bluesky — до 4).</p>
         ${byOrder(LANGP.filter(([k]) => m[k] !== false)).map(([k, n]) => `<div class="verrow"><span class="vname">${C().pbadge(k, { sm: true })} ${esc(n)}</span>
           <div class="tgls">${VERS.filter((v) => v[0]).map(([v, l]) => `<label class="tgl"><input type="checkbox" id="ver-${k}-${v}" ${(vs[k] || []).includes(v) ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>`).join("")}
@@ -1667,14 +1671,19 @@
     }
     if (sec === "translate") {
       const t = p.translate || {};
-      h += `<section class="card setc"><div class="head"><h2>Перевод через DeepSeek ${hint("Кнопка «Перевести с русского» в окне поста отправляет заголовок и описание на серверы DeepSeek (api.deepseek.com) и подставляет английский вариант. Ничего не отправляется само, только по кнопке. Ключ хранится только на этом компьютере.")}</h2>
-          ${t.has_key ? `<span class="badge ok">✓ ключ сохранён</span>` : `<span class="badge off">нет ключа</span>`}</div>${err("tr")}${ok("tr")}
-        <div class="row"><div class="field" style="flex:2 1 280px"><label for="trkey">API-ключ DeepSeek ${hint("Создаётся в личном кабинете platform.deepseek.com → API keys. Сервис платный, но перевод короткого описания стоит доли копейки.")}</label>
+      const cur = TRP.find((x) => x[1] === (t.base || "")) ? (TRP.find((x) => x[1] === (t.base || "")))[0] : "custom";
+      h += `<section class="card setc"><div class="head"><h2>Перевод: нейросеть ${hint("Кнопки-стрелки в окне поста отправляют заголовок и описание на сервер выбранного сервиса и подставляют перевод. Подойдёт любой сервис с интерфейсом OpenAI (POST …/chat/completions): DeepSeek, OpenAI, OpenRouter, а также локальные Ollama и LM Studio — им ключ не нужен. Ничего не отправляется само, только по кнопке; ключ хранится на этом компьютере.")}</h2>
+          ${t.ready ? `<span class="badge ok">✓ подключено</span>` : `<span class="badge off">не подключено</span>`}</div>${err("tr")}${ok("tr")}
+        <div class="row"><div class="field" style="flex:1 1 200px"><label for="trpreset">Сервис</label>
+            <select id="trpreset">${TRP.map(([k, , , n]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${n}</option>`).join("")}<option value="custom" ${cur === "custom" ? "selected" : ""}>Другой (свой адрес)</option></select></div>
+          <div class="field" style="flex:2 1 280px"><label for="trbase">Адрес API ${hint("Базовый адрес до /chat/completions, например https://api.openai.com/v1. Полную ссылку со словом chat/completions вставлять тоже можно. Для локального сервера допустим http://localhost:11434/v1 (Ollama) или http://localhost:1234/v1 (LM Studio).")}</label>
+            <input id="trbase" value="${esc(t.base || "")}" placeholder="https://api.deepseek.com" autocomplete="off" spellcheck="false"></div></div>
+        <div class="row"><div class="field" style="flex:2 1 280px"><label for="trkey">API-ключ ${hint("Создаётся в личном кабинете сервиса (у DeepSeek — platform.deepseek.com → API keys). Для локального сервера оставьте пустым.")}</label>
             <input id="trkey" type="password" autocomplete="off" placeholder="${t.has_key ? "сохранён — введите новый, чтобы заменить" : "sk-…"}"></div>
-          <div class="field" style="flex:1 1 180px"><label for="trmodel">Модель</label><input id="trmodel" value="${esc(t.model || "deepseek-flash")}" placeholder="deepseek-flash"></div></div>
+          <div class="field" style="flex:1 1 200px"><label for="trmodel">Модель ${hint("Название модели в том виде, как его ждёт сервис: например deepseek-chat, gpt-4o-mini, qwen2.5:7b. Для перевода короткого текста хватает недорогой модели.")}</label><input id="trmodel" value="${esc(t.model || "")}" placeholder="deepseek-flash" autocomplete="off" spellcheck="false"></div></div>
         <div class="field"><label for="trstyle">Пожелания к стилю (необязательно)</label><input id="trstyle" value="${esc(t.style || "")}" placeholder="например: неформально, без канцелярита"></div>
         <div class="cardfoot"><button class="btn primary" data-pa="tr-save" ${busy("tr")}>Сохранить</button>
-          <button class="btn" data-pa="tr-test" ${busy("tr")} ${t.has_key ? "" : "disabled"}>Проверить ключ</button>
+          <button class="btn" data-pa="tr-test" ${busy("tr")} ${t.ready ? "" : "disabled"}>Проверить подключение</button>
           ${t.has_key ? `<button class="btn ghost" data-pa="tr-clear">Удалить ключ</button>` : ""}</div></section>`;
     }
     if (sec === "files") h += filesHtml(err, ok, busy, tgl, hint);
@@ -2312,6 +2321,22 @@
         s.outputs = r;
         s.pubOk.files = r.moved ? `Сохранено. Перенесено файлов: ${r.moved}` : "Сохранено";
       }); return true;
+      case "tr-save": {
+        const ch = { base: val("trbase"), model: val("trmodel"), style: val("trstyle") };
+        if (val("trkey")) ch.api_key = val("trkey");
+        await guard("tr", async () => { await saveSec("translate", ch); s.pubOk.tr = "Сохранено"; }); return true;
+      }
+      case "tr-test": await guard("tr", async () => {
+        const r = await api("pub_translate_check");
+        if (!r.ok) throw new Error(r.error);
+        s.pubOk.tr = "Подключение работает" + (r.text ? ": «" + r.text.slice(0, 60) + "»" : "");
+      }); return true;
+      case "tr-clear": if (!confirm("Удалить сохранённый API-ключ?")) return true;
+        await guard("tr", async () => { await saveSec("translate", { clear_key: true }); s.pubOk.tr = "Ключ удалён"; }); return true;
+      case "ver-save": {
+        const vs = {}; LANGP.forEach(([k]) => { vs[k] = VERS.filter((v) => v[0]).map((v) => v[0]).filter((v) => { const el = document.getElementById(`ver-${k}-${v}`); return el && el.checked; }); });
+        await guard("ver", async () => { await saveSec("versions", vs); s.pubOk.ver = "Сохранено"; }); await refreshPlan(); C().render(); return true;
+      }
       case "light-save": {
         const sc = Math.min(100, Math.max(20, +val("lscale") || 50)) / 100, q = Math.min(100, Math.max(60, +val("lq") || 88));
         await saveSec("light", { scale: sc, quality: q, background: val("lbg") || "#FFFFFF",
@@ -2326,6 +2351,12 @@
     const t = e.target, s = S(), api = C().api;
     if (t.dataset.pa === "wk-auto") { try { s.worker = await api("worker_autostart", { on: t.checked }); } catch (err) { alert(err.message); } C().render(); return true; }
     if (t.dataset.pipe) { try { s.pipe = await api("pipeline_set", { changes: { [t.dataset.pipe]: +t.value } }); s.sched = await api("post_scheduled"); } catch (err) { alert(err.message); } C().render(); return true; }
+    if (t.id === "trpreset") {   // шаблон сервиса подставляет адрес и модель, не перерисовывая страницу (набранный ключ не теряется)
+      const pr = TRP.find((x) => x[0] === t.value), b = document.getElementById("trbase"), m = document.getElementById("trmodel");
+      if (pr && b && m) { b.value = pr[1]; m.value = pr[2]; m.placeholder = pr[2] || "название модели"; }
+      else if (b) { b.value = ""; b.focus(); }
+      return true;
+    }
     if (t.id === "hsort") { s.hsort = t.value; C().render(); return true; }
     if (t.id === "whenAt") { s.whenAt = t.value ? new Date(t.value).toISOString() : null; paintSide(); scheduleFc(); return true; }
     if (t.id === "fileinp") { await uploadFiles(t.files); t.value = ""; return true; }

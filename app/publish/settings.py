@@ -47,7 +47,7 @@ DEFAULTS = {
     # какие версии файлов (комикс: ru / en / clean — без надписей) уходят на площадку; пусто — любые.
     # Работает только в постах, где включён переключатель «Умное таргетирование»
     "versions": {"telegram": [], "discord": [], "vk": [], "bluesky": [], "deviantart": [], "e6ai": []},
-    # автоперевод описания (DeepSeek): текст уходит на серверы DeepSeek, поэтому только по кнопке
+    # автоперевод описания (DeepSeek, OpenAI и любой сервис с интерфейсом OpenAI): текст уходит на их сервер, поэтому только по кнопке
     "translate": {"api_key": "", "model": "deepseek-flash", "base": "https://api.deepseek.com", "style": ""},
     "hashtags": {
         "enabled": True, "position": "start",         # start — первой строкой, как в ваших постах; end — в конце
@@ -236,6 +236,8 @@ def public(cfg: dict) -> dict:
     out["vk"]["access_token"] = ""
     out["platform_order"] = platform_order(out)
     out["translate"]["has_key"] = bool(out["translate"].get("api_key"))
+    from app import translate as _tr
+    out["translate"]["ready"] = bool(out["translate"].get("api_key")) or _tr.is_local(out["translate"].get("base"))   # локальному серверу ключ не нужен
     out["translate"]["api_key"] = ""
     out["deviantart"]["has_secret"] = bool(out["deviantart"].get("client_secret"))
     out["deviantart"]["client_secret"] = ""

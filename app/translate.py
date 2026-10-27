@@ -1,7 +1,8 @@
-"""Перевод описания поста через DeepSeek (OpenAI-совместимый API: POST {base}/chat/completions).
+"""Перевод описания поста через любую модель с интерфейсом OpenAI (POST {base}/chat/completions): DeepSeek, OpenAI, OpenRouter,
+локальные Ollama / LM Studio и т. п. Адрес, ключ и модель задаются в настройках.
 
 Что учтено:
- - Текст поста уходит на серверы DeepSeek, поэтому вызывается только по кнопке пользователя, а ключ хранится
+ - Текст поста уходит на сервер выбранного сервиса, поэтому вызывается только по кнопке пользователя, а ключ хранится
    только в publish.json на этом компьютере и в интерфейс не отдаётся.
  - Запрос идемпотентен (ничего не создаёт), поэтому при обрыве/5xx/429 повторяем, но ограниченно: пользователь ждёт
    у экрана. Остановить можно, закрыв окно — запрос без побочных эффектов.
@@ -11,6 +12,7 @@
 import json
 import re
 import time
+from urllib.parse import urlparse
 
 import requests
 
@@ -21,6 +23,29 @@ DEFAULT_MODEL = "deepseek-flash"
 MAX_CHARS = 8000          # пост длиннее — это не описание; не отправляем
 ATTEMPTS = 3
 TIMEOUT = (10, 90)        # соединение / ответ
+
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
+
+
+def clean_base(base: str) -> str:
+    """Адрес API без хвоста /chat/completions и лишних слэшей (часто вставляют полную ссылку)."""
+    b = (base or DEFAULT_BASE).strip().rstrip("/")
+    if b.lower().endswith("/chat/completions"):
+        b = b[: -len("/chat/completions")].rstrip("/")
+    return b
+
+
+def is_local(base: str) -> bool:
+    try:
+        return (urlparse(clean_base(base)).hostname or "").lower() in LOCAL_HOSTS
+    except ValueError:
+        return False
+
+
+def service_name(base: str) -> str:
+    host = (urlparse(clean_base(base)).hostname or "").lower()
+    return {"api.deepseek.com": "DeepSeek", "api.openai.com": "OpenAI", "openrouter.ai": "OpenRouter"}.get(host, host or "сервис перевода")
+
 
 LANG_NAMES = {"en": "English", "ru": "Russian"}
 
@@ -40,14 +65,30 @@ def _system(src: str, dst: str, style: str) -> str:
     )
 
 
-def _explain(status: int) -> str:
+def _explain(status: int, who: str = "Сервис") -> str:
     return {
-        401: "DeepSeek не принял ключ — проверьте его в «Настройки» → «Перевод»",
-        402: "на счёте DeepSeek не хватает средств",
-        403: "DeepSeek отказал в доступе",
-        422: "DeepSeek не принял запрос (проверьте название модели в настройках перевода)",
-        429: "DeepSeek просит не так часто — повторите через минуту",
-    }.get(status, f"DeepSeek ответил ошибкой {status}" + (" (сервис перегружен, повторите позже)" if status >= 500 else ""))
+        400: f"{who} не принял запрос (проверьте название модели и адрес в настройках перевода)",
+        401: f"{who} не принял ключ — проверьте его в «Настройки» → «Перевод»",
+        402: f"на счёте {who} не хватает средств",
+        403: f"{who} отказал в доступе",
+        404: f"{who}: не найден адрес или модель — проверьте их в настройках перевода",
+        422: f"{who} не принял запрос (проверьте название модели в настройках перевода)",
+        429: f"{who} просит не так часто — повторите через минуту",
+    }.get(status, f"{who} ответил ошибкой {status}" + (" (сервис перегружен, повторите позже)" if status >= 500 else ""))
+
+
+def _extract_json(content: str):
+    """Ответ модели → объект. Не все модели соблюдают «только JSON»: снимаем ```-обёртку и берём первый {...}."""
+    c = (content or "").strip()
+    if c.startswith("```"):
+        c = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", c).strip()
+    try:
+        return json.loads(c)
+    except ValueError:
+        i, j = c.find("{"), c.rfind("}")
+        if i >= 0 and j > i:
+            return json.loads(c[i:j + 1])
+        raise
 
 
 def _clean(s: str) -> str:
@@ -69,40 +110,54 @@ def check(src: str, out: str) -> list[str]:
 def translate(cfg: dict, title: str, text: str, src: str = "ru", dst: str = "en", session=None) -> dict:
     """{title, text, warnings, tokens}. cfg — раздел настроек translate."""
     key = (cfg.get("api_key") or "").strip()
-    if not key:
-        raise PlatformError("Не указан ключ DeepSeek — «Настройки» → «Перевод»")
+    base = clean_base(cfg.get("base"))
+    who = service_name(base)
+    if not key and not is_local(base):
+        raise PlatformError("Не указан API-ключ — «Настройки» → «Перевод»")
     title, text = _clean(title), _clean(text)
     if not title and not text:
         raise PlatformError("Переводить нечего — описание пустое")
     if len(title) + len(text) > MAX_CHARS:
         raise PlatformError(f"Текст слишком длинный для перевода ({len(title) + len(text)} знаков, максимум {MAX_CHARS})")
-    base = (cfg.get("base") or DEFAULT_BASE).strip().rstrip("/")
-    if not base.startswith("https://"):
-        raise PlatformError("Адрес DeepSeek должен начинаться с https://")
+    if not (base.startswith("https://") or (base.startswith("http://") and is_local(base))):
+        raise PlatformError("Адрес API должен начинаться с https:// (http:// — только для локального сервера)")
+    model = (cfg.get("model") or DEFAULT_MODEL).strip()
     body = {
-        "model": (cfg.get("model") or DEFAULT_MODEL).strip(),
+        "model": model,
         "messages": [{"role": "system", "content": _system(src, dst, cfg.get("style") or "")},
                      {"role": "user", "content": json.dumps({"title": title, "text": text}, ensure_ascii=False)}],
-        "thinking": {"type": "disabled"},
         "response_format": {"type": "json_object"},
         "temperature": 0.3,
         "max_tokens": min(8192, 600 + 3 * (len(title) + len(text))),
         "stream": False,
     }
+    if "deepseek" in base.lower():
+        body["thinking"] = {"type": "disabled"}   # расширение DeepSeek: рассуждения для перевода не нужны
+    if "api.openai.com" in base.lower():
+        body["max_completion_tokens"] = body.pop("max_tokens")   # новые модели OpenAI не принимают max_tokens
     http = session or requests
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
     last = ""
+    trimmed = False
     for attempt in range(ATTEMPTS):
         try:
-            r = http.post(f"{base}/chat/completions", json=body, timeout=TIMEOUT,
-                          headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+            r = http.post(f"{base}/chat/completions", json=body, timeout=TIMEOUT, headers=headers)
         except requests.RequestException as e:
-            last = f"нет связи с DeepSeek ({type(e).__name__})"
+            last = f"нет связи с сервисом {who} ({type(e).__name__})"
         else:
             if r.status_code == 200:
-                return _parse(r, title, text)
+                return _parse(r, title, text, who)
+            if r.status_code in (400, 422) and not trimmed:
+                # не все совместимые сервисы знают необязательные параметры — повторяем один раз с минимальным запросом
+                trimmed = True
+                for k in ("response_format", "temperature", "thinking", "stream"):
+                    body.pop(k, None)
+                continue
             if r.status_code not in (429, 500, 502, 503, 504):
-                raise PlatformError(_explain(r.status_code))   # ключ/баланс/запрос — повтор не поможет
-            last = _explain(r.status_code)
+                raise PlatformError(_explain(r.status_code, who) + _detail(r))   # ключ/баланс/запрос — повтор не поможет
+            last = _explain(r.status_code, who)
             try:
                 wait = float(r.headers.get("Retry-After") or 0)
             except ValueError:
@@ -112,27 +167,38 @@ def translate(cfg: dict, title: str, text: str, src: str = "ru", dst: str = "en"
                 continue
         if attempt + 1 < ATTEMPTS:
             time.sleep(2 ** attempt)
-    raise PlatformError(last or "DeepSeek не ответил")
+    raise PlatformError(last or f"{who} не ответил")
 
 
-def _parse(r, title: str, text: str) -> dict:
+def _detail(r) -> str:
+    """Короткая причина из тела ошибки сервиса (OpenAI-формат {"error": {"message": ...}}), если она есть."""
+    try:
+        e = r.json().get("error")
+        m = e.get("message") if isinstance(e, dict) else e
+        m = re.sub(r"\s+", " ", str(m or "")).strip()
+    except (ValueError, AttributeError, TypeError):
+        return ""
+    return f" — «{m[:160]}»" if m else ""
+
+
+def _parse(r, title: str, text: str, who: str = "Сервис") -> dict:
     try:
         data = r.json()
         choice = data["choices"][0]
         content = choice["message"]["content"]
     except (ValueError, KeyError, IndexError, TypeError):
-        raise PlatformError("DeepSeek вернул ответ в неожиданном виде")
+        raise PlatformError(f"{who} вернул ответ в неожиданном виде")
     if choice.get("finish_reason") == "length":
         raise PlatformError("Перевод оборвался на середине (слишком длинный текст) — сократите описание")
     if choice.get("finish_reason") == "content_filter":
-        raise PlatformError("DeepSeek отказался переводить этот текст")
+        raise PlatformError(f"{who} отказался переводить этот текст")
     try:
-        obj = json.loads(content)
+        obj = _extract_json(content)
         t_title, t_text = _clean(str(obj.get("title") or "")), _clean(str(obj.get("text") or ""))
     except (ValueError, AttributeError, TypeError):
-        raise PlatformError("DeepSeek вернул перевод не в том формате — попробуйте ещё раз")
+        raise PlatformError(f"{who} вернул перевод не в том формате — попробуйте ещё раз или выберите другую модель")
     if text and not t_text:
-        raise PlatformError("DeepSeek вернул пустой перевод — попробуйте ещё раз")
+        raise PlatformError(f"{who} вернул пустой перевод — попробуйте ещё раз")
     warnings = check(text, t_text) + check(title, t_title)
     use = data.get("usage") or {}
     return {"title": t_title, "text": t_text, "warnings": warnings, "tokens": int(use.get("total_tokens") or 0)}

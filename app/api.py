@@ -548,6 +548,15 @@ class Api:
         if section == "deviantart" and not changes.get("client_secret"):
             changes.pop("client_secret", None)
         if section == "translate":
+            from app import translate as _tr
+            if "base" in changes:
+                b = _tr.clean_base(changes["base"])
+                if not (b.startswith("https://") or (b.startswith("http://") and _tr.is_local(b))):
+                    raise ValueError("Адрес API должен начинаться с https:// (http:// — только для локального сервера)")
+                changes["base"] = b
+            if "model" in changes:
+                changes["model"] = str(changes["model"] or "").strip() or "deepseek-flash"
+            changes = {k: v for k, v in changes.items() if k in ("api_key", "model", "base", "style", "clear_key")}
             clear = bool(changes.pop("clear_key", False))
             key = str(changes.get("api_key") or "").strip()
             if key:
@@ -570,7 +579,7 @@ class Api:
         return tg_bot
 
     def pub_translate(self, title: str = "", text: str = "", src: str = "ru", dst: str = "en"):
-        """Перевод описания через DeepSeek. Ключ берём из настроек, наружу он не уходит."""
+        """Перевод описания через выбранный сервис с интерфейсом OpenAI. Ключ берём из настроек, наружу он не уходит."""
         from app import translate
         from app.publish import settings as PS
         from app.jobs import mask_secrets
