@@ -16,6 +16,8 @@ DEFAULTS = {
     "news_volume": "normal",
     # подбирать теги на процессоре, если видеокарта не используется (медленно — только по согласию)
     "tagger_cpu_ok": False,
+    # кнопка «Теггер» вверху: True — выключен; выбор запоминается между запусками
+    "tagger_paused": False,
     "trends": {
         "e6ai": {"enabled": True, "refresh_days": 1},
         "e621": {"enabled": True, "refresh_days": 7},

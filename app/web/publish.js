@@ -779,6 +779,7 @@
     const w = S().worker;
     if (!w) return "";
     if (w.running) return `<span class="muted small">Пост отправит фоновая отправка — окно Crosspost можно закрыть.</span>`;
+    if (w.idle) return `<span class="muted small">Фоновая отправка запустится сама, когда пост будет запланирован, — окно Crosspost можно закрыть.</span>`;
     return `<div class="wk warn small">Фоновая отправка выключена: пост выйдет, только если окно Crosspost будет открыто.
       <button class="btn small" data-pa="wk-start">Включить</button></div>`;
   }
@@ -1609,7 +1610,7 @@
           <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 360px"><label for="vkstats">Ссылка на страницу статистики постов</label>
             <input id="vkstats" placeholder="https://vk.ru/groups/dashboard/@группа?sectionId=top_posts&amp;subsectionId=stat_board_content" value="${esc(vk.stats_url || "")}"></div>
             <button class="btn primary" data-pa="vk-stats" ${vkRun || !vk.browser_ok ? "disabled" : ""}>Собрать сейчас</button></div>
-          <div class="tgls">${tgl(`data-pa="vk-flag" data-k="stats_auto"`, vk.stats_auto !== false, "Собирать автоматически", "Раз в 3 часа, пока работает фоновая отправка. Браузер открывается без окна.")}</div>
+          <div class="tgls">${tgl(`data-pa="vk-flag" data-k="stats_auto"`, vk.stats_auto !== false, "Собирать автоматически", "Пока в группе есть свежий пост — раз в 3 часа, затем раз в сутки, а когда постов давно нет — не запускается совсем. Браузер открывается без окна, только на время сбора.")}</div>
           ${vk.stats_err ? `<p class="err small">Последний сбор (${esc(new Date(vk.stats_at).toLocaleString(LOC))}): ${esc(vk.stats_err)}</p>`
             : vk.stats_at ? `<p class="muted small">Последний сбор: ${esc(new Date(vk.stats_at).toLocaleString(LOC))} · ${esc(vk.stats_msg || "")}</p>` : ""}
           <details class="more"><summary>Если сбор перестал работать</summary><div class="morebody">
@@ -1643,10 +1644,10 @@
           <div class="sighead">${C().pbadge(k)}<label class="tgl"><input type="checkbox" id="siguse-${k}" ${sg.use[k] !== false ? "checked" : ""}><span><b>${l}</b> ${hint(how)}</span></label>
             ${k !== "telegram" ? `<button class="btn small ghost" data-pa="sig-copy" data-k="${k}">Скопировать из Telegram</button>` : ""}</div>
           <div class="siglang">Русский (основной)</div>
-          <div class="row"><div class="field" style="flex:1 1 280px"><label for="sig-${k}-sfw">SFW-посты</label><textarea id="sig-${k}-sfw" rows="3" placeholder="[Больше артов](https://t.me/…)">${esc(v.sfw || "")}</textarea></div>
+          <div class="row sigpair"><div class="field" style="flex:1 1 280px"><label for="sig-${k}-sfw">SFW-посты</label><textarea id="sig-${k}-sfw" rows="3" placeholder="[Больше артов](https://t.me/…)">${esc(v.sfw || "")}</textarea></div>
             ${k === "vk" ? "" : `<div class="field" style="flex:1 1 280px"><label for="sig-${k}-nsfw">18+ посты</label><textarea id="sig-${k}-nsfw" rows="3">${esc(v.nsfw || "")}</textarea></div>`}</div>
           ${featOn("translation") ? `<details class="more" ${enFilled ? "open" : ""}><summary>English${enFilled ? "" : ` <span class="muted small">· не задана — на английский текст уйдёт основная</span>`}</summary>
-            <div class="morebody"><div class="row"><div class="field" style="flex:1 1 280px"><label for="sig-${k}-en-sfw">SFW posts</label><textarea id="sig-${k}-en-sfw" rows="3" placeholder="[More art](https://t.me/…)">${esc(en.sfw || "")}</textarea></div>
+            <div class="morebody"><div class="row sigpair"><div class="field" style="flex:1 1 280px"><label for="sig-${k}-en-sfw">SFW posts</label><textarea id="sig-${k}-en-sfw" rows="3" placeholder="[More art](https://t.me/…)">${esc(en.sfw || "")}</textarea></div>
               ${k === "vk" ? "" : `<div class="field" style="flex:1 1 280px"><label for="sig-${k}-en-nsfw">18+ posts</label><textarea id="sig-${k}-en-nsfw" rows="3">${esc(en.nsfw || "")}</textarea></div>`}</div></div></details>` : ""}</div>`; }).join("")}
         <div class="cardfoot"><button class="btn primary" data-pa="sig-save">Сохранить подписи</button></div></section>`;
     }

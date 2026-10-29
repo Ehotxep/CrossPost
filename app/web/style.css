@@ -100,8 +100,11 @@ nav button.on { color: var(--ink); background: var(--card-2); }
 .wkind .lamp { width: 8px; height: 8px; border-radius: 999px; background: var(--ink-3); }
 .wkind.on .lamp { background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); }
 .wkind.off .lamp { background: var(--warn); }
+.wkind.idle .lamp { background: var(--ink-3); }
 .wkind.tgind.off .lamp { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
-.wkind.tgind.stopping .lamp { background: var(--warn); }
+.wkind.tgind.stopping .lamp, .wkind.tgind.ready .lamp { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.wkind.tgind.loading .lamp { animation: tgpulse 1s ease-in-out infinite; }
+@keyframes tgpulse { 50% { opacity: .35; } }
 .wkpop { position: fixed; top: 60px; right: 20px; z-index: 30; width: 320px; background: var(--card); border: 1px solid var(--line-strong);
   border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .wkpop[hidden] { display: none; }
@@ -347,7 +350,7 @@ details.how > :not(summary) { margin-top: 8px; }
 /* ---------- Новый пост ---------- */
 .postgrid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
 .postmain { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.postside { position: sticky; top: 72px; max-height: calc(100vh - 88px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; scrollbar-width: thin; }
+.postside { position: sticky; top: 72px; max-height: calc(100vh - 88px); overflow-y: auto; display: flex; flex-direction: column; gap: 16px; scrollbar-width: thin; }
 @media (max-width: 960px) { .postgrid { grid-template-columns: 1fr; } .postside { position: static; max-height: none; } }
 .drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 150px; padding: 18px;
   border: 1.5px dashed var(--line-strong); border-radius: var(--r-lg); background: var(--card-2); text-align: center; cursor: pointer; color: var(--ink-2); }
@@ -668,7 +671,7 @@ details.how > :not(summary) { margin-top: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- Календарь «Истории» ---------- */
-.calcard { gap: 14px; }
+.calcard { gap: 12px; }
 .calnav { display: flex; align-items: center; gap: 4px; }
 .calm { border: 0; background: transparent; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; padding: 4px 8px; border-radius: 8px; min-width: 150px; }
 .calm:hover { background: var(--card-2); }
@@ -908,7 +911,7 @@ body.working { cursor: progress; }
 .toast .tx:hover { color: var(--ink); }
 @keyframes tin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 /* досылка поста на другие площадки */
-.extbanner { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; border-left: 3px solid var(--accent); }
+.extbanner { display: flex; flex-direction: column; gap: 6px; border-left: 3px solid var(--accent); }
 .dlist.donel { margin-top: 10px; opacity: .85; }
 /* «Функции»: четыре крупных переключателя */
 .featlist { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
@@ -1042,7 +1045,7 @@ body.working { cursor: progress; }
 .cg .ph i { display: none; } .cg.n1 .ph i, .cg.n2 .ph i { display: -webkit-box; }
 
 /* конвейер */
-.pipecard { margin-bottom: 14px; }
+.pipecard { margin-bottom: 0; }   /* зазор между карточками один — gap контейнера (16px) */
 .pipecfg { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--card-3); }
 .pipecfg label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
 .pipecfg p { flex-basis: 100%; }
@@ -1112,3 +1115,36 @@ body.working { cursor: progress; }
 .langfirst p { margin: 0 0 20px; color: var(--ink-3); font-size: 13px; line-height: 1.5; }
 .langfirst .lfbtns { display: flex; gap: 12px; justify-content: center; }
 .langfirst .lfbtns .btn { min-width: 130px; padding: 10px 18px; font-size: 15px; }
+
+/* подписи: два поля рядом тянутся вместе (одна ручка у пары) */
+.sigpair { flex-wrap: nowrap; align-items: stretch; resize: vertical; overflow: hidden; height: 150px; min-height: 96px; max-height: 70vh; }
+.sigpair .field { flex: 1 1 0 !important; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.sigpair textarea { flex: 1 1 auto; min-height: 0; height: 100%; resize: none; }
+@media (max-width: 700px) { .sigpair { flex-wrap: wrap; height: auto; resize: none; overflow: visible; } .sigpair textarea { height: 110px; } }
+/* новости по свежим артам: каждая новость на своей подложке с обводкой */
+.nlist { gap: 8px; }
+.newsstrip .nrow { gap: 10px; }
+.ngrp { background: var(--card-2); border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
+.ngrp:hover { border-color: var(--line-strong); }
+.ngrp .nitem:hover { background: var(--card-3, var(--card)); }
+.newsstrip .nrow > .nitem { background: var(--card-2); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+.newsstrip .nrow > .nitem:hover { border-color: var(--line-strong); background: var(--card-3, var(--card-2)); }
+.newsstrip .nrow > .nitem.unread { background: color-mix(in srgb, var(--accent) 8%, var(--card-2)); }
+
+/* между карточками на странице всегда один зазор (16px): пустые заглушки не должны добавлять свой */
+main > div:empty, .platbody > div:empty, .postmain > div:empty, .postside > div:empty { display: none; }
+
+/* лента новостей: карточка на каждый арт, одна сетка — миниатюра сверху слева, текст, строка «площадки · время · ×N», кнопка «ещё» под текстом */
+.nlist { gap: 10px; }
+.ngrp { gap: 6px; padding: 10px; }
+.ngrp:has(> .nitem.unread:first-child) { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 7%, var(--card-2)); }
+.nitem { align-items: start; gap: 12px; padding: 0; border-radius: 8px; }
+.ngrp .nitem, .ngrp .nitem.unread, .ngrp .nitem:hover { background: none; }
+.nitem .nt { line-height: 1.4; font-weight: 500; }
+.nmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.ntimes { padding: 0 6px; border-radius: 999px; background: var(--card-3); font-size: 11px; font-weight: 600; color: var(--ink-2, inherit); }
+.nmore { margin: 0 0 0 56px; }
+.nitem.sub { margin-left: 56px; padding: 6px 0 0; border-top: 1px solid var(--line-soft); border-radius: 0; opacity: 1; }
+.nitem.sub .nt { font-weight: 400; color: var(--ink-2, inherit); }
+.newsstrip .nrow > .nitem { padding: 10px; }
+.newsstrip .nrow > .nitem.unread { background: color-mix(in srgb, var(--accent) 7%, var(--card-2)); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }

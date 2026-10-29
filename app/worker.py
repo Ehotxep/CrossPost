@@ -22,6 +22,7 @@ from app.paths import data_dir  # noqa: E402
 
 EVERY = 15
 ALIVE = 60          # пульс свежее минуты — процесс жив
+IDLE_EXIT = int(os.environ.get("CROSSPOST_IDLE_EXIT") or 600)     # работы нет столько секунд подряд — процесс завершается (запустится снова, когда работа появится)
 STARTUP_NAME = "Crosspost — фоновая отправка.vbs"
 
 
@@ -31,6 +32,86 @@ def _state_path() -> Path:
 
 def _stop_path() -> Path:
     return data_dir() / "worker.stop"
+
+
+def _off_path() -> Path:
+    return data_dir() / "worker.off"
+
+
+def set_off(on: bool) -> None:
+    """Ручное выключение («Выключить» в окне или в трее): пока оно стоит, окно само не запускает фоновую отправку."""
+    try:
+        if on:
+            _off_path().write_text("off", encoding="utf-8")
+        else:
+            _off_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def is_off() -> bool:
+    return _off_path().exists()
+
+
+def has_work() -> str:
+    """Есть ли у фоновой отправки работа. Пустая строка — нет; иначе короткое описание. Только лёгкие запросы к базе.
+    Работа: запланированные посты и очередь конвейера; свежие публикации (замеры, новости, сверка тегов e6ai);
+    пора собирать цифры ВК. Нет работы — процесс не нужен и не занимает память."""
+    try:
+        from app import db
+        from app.publish import schedule, settings as PS  # noqa: F401  (schedule создаёт таблицу scheduled)
+        if db.query("SELECT 1 FROM scheduled WHERE state IN ('pending','running') LIMIT 1"):
+            return "запланированные посты"
+        try:
+            from app.publish import pipeline
+            if pipeline.cfg().get("enabled") and db.query("SELECT 1 FROM scheduled WHERE queue=1 AND state='queued' LIMIT 1"):
+                return "очередь конвейера"
+        except Exception:  # noqa: BLE001
+            pass
+        if PS.module_on("collect"):
+            from datetime import datetime, timedelta, timezone
+            from app.insights import post_stats
+            if post_stats._pubs(post_stats.TRACK_DAYS):
+                return "замеры свежих публикаций"
+            try:
+                since = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
+                if PS.module_on("e6ai") and db.query("SELECT 1 FROM e6_sent WHERE checks < 2 AND at >= ? LIMIT 1", (since,)):
+                    return "сверка тегов e6ai"
+            except Exception:  # noqa: BLE001 — таблицы ещё нет
+                pass
+            if PS.module_on("vk"):
+                from app.publish import vk_stats
+                if vk_stats.due():
+                    return "сбор цифр ВК"
+    except Exception as e:  # noqa: BLE001 — не смогли понять: считаем, что работа есть (лучше лишний раз побыть запущенным, чем пропустить пост)
+        _log(f"проверка работы: {e}")
+        return "проверка не удалась"
+    return ""
+
+
+_last_spawn = 0.0
+
+
+def ensure_running() -> bool:
+    """Запустить фоновую отправку, если она не работает, не выключена вручную и есть работа. Не чаще раза в 30 секунд."""
+    global _last_spawn
+    if is_off() or status()["running"] or time.time() - _last_spawn < 30 or not has_work():
+        return False
+    _last_spawn = time.time()
+    try:
+        return start_detached()
+    except Exception as e:  # noqa: BLE001
+        _log(f"не удалось запустить: {e}")
+        return False
+
+
+def describe() -> dict:
+    """status() + для окна: off — выключена вручную, work — что сейчас делает/ждёт, idle — не запущена, потому что не нужна."""
+    st = status()
+    st["off"] = is_off()
+    st["work"] = has_work() if not st["off"] else ""
+    st["idle"] = (not st["running"]) and not st["off"] and not st["work"]
+    return st
 
 
 def _log(msg: str):
@@ -84,8 +165,11 @@ def start_detached() -> bool:
     return True
 
 
-def request_stop():
+def request_stop(off: bool = True):
+    """Остановить. off=True — это выбор человека: пока он не нажмёт «Включить» (или не откроет окно заново), сама не запустится."""
     _stop_path().write_text("stop", encoding="utf-8")
+    if off:
+        set_off(True)
 
 
 # --- автозапуск с Windows (файл .vbs в папке «Автозагрузка»: запускает без чёрного окна) ----------
@@ -201,6 +285,7 @@ class Worker:
         from app.publish import schedule
         perf.ROLE = "worker"
         perf.start_sampler()
+        idle_since = None
         while not self.stop.is_set():
             if _stop_path().exists():
                 _stop_path().unlink(missing_ok=True)
@@ -219,6 +304,19 @@ class Worker:
                 self.beat()
             except Exception as e:  # noqa: BLE001
                 _log(f"ошибка: {e}")
+            reason = has_work()
+            if reason:
+                idle_since = None
+            else:
+                idle_since = idle_since or time.time()
+                busy = getattr(self, "_vk_busy", False) or _e6_lock.locked() or any(
+                    t.is_alive() for t in threading.enumerate() if t.name in ("track", "e6learn", "vkstats", "proxypool"))
+                if time.time() - idle_since > IDLE_EXIT and not busy and not has_work():
+                    _log("работы нет — фоновая отправка завершается, запустится сама, когда понадобится")
+                    break
+                self.next_label = "Работы нет — завершусь, если так и останется"
+                self.stop.wait(EVERY)
+                continue
             if time.time() - getattr(self, "_warm_t", 0) > 300:   # раз в 5 минут — досчитать экраны заранее
                 self._warm_t = time.time()
                 try:
@@ -303,6 +401,7 @@ class Worker:
             subprocess.Popen([_pythonw(), "-m", "app"], **kw)
 
         def quit_(icon, item):
+            set_off(True)   # выбор человека: сама не запустится, пока не включат
             self.stop.set()
             icon.stop()
 

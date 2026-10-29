@@ -88,7 +88,10 @@ def _start_sender(api, args):
     from app import worker
     from app.publish import schedule
     try:
+        worker.set_off(False)   # новый запуск окна снимает ручное выключение
         if not args.no_worker:
+            if not worker.has_work():
+                return   # по требованию: работы нет — процесс не нужен; запустится сам, когда она появится (api.worker_status)
             worker.start_detached()
             for _ in range(10):
                 time.sleep(0.5)

@@ -17,14 +17,28 @@ _lock = threading.Lock()
 _proc = None
 _last = 0.0
 _device = None
-paused = False     # «Теггер» справа вверху выключен на время работы приложения (при запуске всегда включён)
+def _saved_paused() -> bool:
+    try:
+        from app import settings
+        return bool(settings.load().get("tagger_paused"))
+    except Exception:  # noqa: BLE001 — нет файла/папки данных: теггер включён
+        return False
+
+
+paused = _saved_paused()   # кнопка «Теггер» вверху: выбор запоминается между запусками
 starting = False   # модель как раз грузится в видеокарту — для панели процессов
 
 
 def set_paused(on: bool) -> None:
-    """Выключить/включить работу теггера сейчас: при выключении процесс с моделью закрывается."""
+    """Выключить/включить теггер (и запомнить выбор): при выключении процесс с моделью закрывается."""
     global paused
     paused = bool(on)
+    try:
+        from app import settings
+        settings.save({"tagger_paused": paused})
+    except Exception:  # noqa: BLE001 — не записалось: до перезапуска работает, но не запомнится
+        from app.applog import log
+        log("теггер: не удалось сохранить состояние кнопки")
     if paused:
         with _lock:
             stop()
@@ -130,7 +144,7 @@ def stop(force: bool = False):
 
 def predict(path, min_prob: float = 0.1) -> list:
     global _last
-    if paused:
+    if paused or _saved_paused():   # состояние читаем и с диска: кнопку могли нажать в другом процессе (окно ↔ фоновая отправка)
         raise RuntimeError("теггер выключен переключателем «Теггер»")
     with _lock:
         if not alive():

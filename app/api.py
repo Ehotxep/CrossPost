@@ -878,6 +878,11 @@ class Api:
         st["paused"] = remote.paused
         return st
 
+    def tagger_state(self):
+        """Для «светофора» теггера в шапке: выключен ли, лежит ли модель в памяти, грузится ли сейчас. Лёгкий вызов — окно опрашивает раз в несколько секунд."""
+        from app.tagger import remote
+        return {"paused": remote.paused, "loaded": remote.alive(), "starting": remote.starting}
+
     def tagger_pause(self, on: bool = True):
         """Кнопка «Теггер» справа вверху: выключить/включить работу теггера сейчас (модуль «Подбор тегов» не трогает)."""
         from app.tagger import remote
@@ -1270,29 +1275,39 @@ class Api:
 
     # --- фоновая отправка ---
     def worker_status(self):
+        """Состояние фоновой отправки для окна. Заодно запускает её, если появилась работа (окно опрашивает раз в 20 секунд)."""
         from app import worker
-        return worker.status()
+        import time as _t
+        from app.publish import schedule
+        if worker.ensure_running():
+            self._wk_spawned = _t.time()
+        st = worker.describe()
+        at = getattr(self, "_wk_spawned", 0)
+        if at and not st["running"] and not st["off"] and st["work"] and _t.time() - at > 45:
+            schedule.start_worker(self)   # отдельный процесс не поднялся — расписание проверяет само окно, пока открыто
+        return st
 
     def worker_start(self):
         from app import worker
+        worker.set_off(False)
         worker.start_detached()
         import time as _t
         for _ in range(20):   # подождём первый «пульс» (до 10 с)
             _t.sleep(0.5)
             st = worker.status()
             if st["running"]:
-                return st
-        return worker.status()
+                return worker.describe()
+        return worker.describe()
 
     def worker_stop(self):
         from app import worker
         worker.request_stop()
-        return worker.status()
+        return worker.describe()
 
     def worker_autostart(self, on: bool):
         from app import worker
         worker.set_autostart(bool(on))
-        return worker.status()
+        return worker.describe()
 
     def post_best_times(self):
         if not self._mod("forecast"):

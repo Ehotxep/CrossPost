@@ -427,31 +427,46 @@
     paintWorker();
     return S.worker;
   }
+  async function pollTagger() {   // светофор теггера: в памяти / выгружен / грузится
+    if (document.hidden || S.taggerStopping || !S.taggerMaster) return;
+    try {
+      const r = await api("tagger_state");
+      const ch = r.loaded !== S.taggerLoaded || r.starting !== S.taggerLoading || r.paused !== !!S.info.tagger_paused;
+      S.taggerLoaded = r.loaded; S.taggerLoading = r.starting; S.info.tagger_paused = r.paused;
+      if (ch) paintTagger();
+    } catch (e) { /* окно ещё поднимается — в следующий раз */ }
+  }
   function paintTagger() {
     const b = document.getElementById("tgind"); if (!b) return;
     const master = S.taggerMaster, on = S.taggerOn;
-    b.className = "wkind tgind " + (S.taggerStopping ? "stopping" : on ? "on" : "off"); b.setAttribute("aria-pressed", on ? "true" : "false");
+    // светофор: зелёный — модель в памяти, жёлтый — включён, но модель выгружена (загрузится по требованию), красный — выключен
+    const loaded = !!S.taggerLoaded, loading = !!S.taggerLoading;
+    b.className = "wkind tgind " + (S.taggerStopping ? "stopping" : !on ? "off" : loaded ? "on" : loading ? "ready loading" : "ready"); b.setAttribute("aria-pressed", on ? "true" : "false");
     b.disabled = !master;
     b.dataset.tip = !master ? "Подбор тегов выключен в «Настройки» → «Функции» — теггер не работает. Включите его там, и эта кнопка заработает."
       : S.taggerStopping ? "Теггер останавливается: закрываю процесс с моделью…"
-      : on ? "Теггер работает: подбирает теги картинкам. Нажмите, чтобы остановить его до перезапуска приложения (настройка «Подбор тегов» в «Функции» не меняется)."
-           : "Теггер остановлен (до перезапуска приложения): теги не подбираются, модель выгружена, видеопамять освобождена. Нажмите, чтобы включить.";
+      : on && loaded ? "Теггер включён, модель в памяти: теги подбираются сразу. После 2 минут без работы она выгрузится сама. Нажмите, чтобы выключить совсем — выбор запомнится и после перезапуска."
+      : on && loading ? "Теггер включён, модель загружается в видеокарту — это занимает до минуты."
+      : on ? "Теггер включён, но модель сейчас не в памяти: она загрузится, когда понадобится подобрать теги (до минуты). Нажмите, чтобы выключить совсем — выбор запомнится и после перезапуска."
+           : "Теггер выключен: теги не подбираются, модель выгружена, видеопамять свободна. Выбор запоминается и после перезапуска. Нажмите, чтобы включить.";
   }
   function paintWorker() {
     const b = document.getElementById("wkind"), w = S.worker;
     if (!b) return;
     b.hidden = !w;
     if (!w) return;
-    b.className = "wkind " + (w.running ? "on" : "off");
-    b.dataset.tip = w.running ? (w.next || "Фоновая отправка работает") : "Фоновая отправка выключена — нажмите, чтобы включить";
-    b.querySelector(".wt").textContent = w.running ? "Фоновая отправка" : "Отправка выключена";
+    b.className = "wkind " + (w.running ? "on" : w.idle ? "idle" : "off");
+    b.dataset.tip = w.running ? (w.next || "Фоновая отправка работает")
+      : w.idle ? "Фоновая отправка сейчас не нужна: нет запланированных постов и свежих публикаций. Она запустится сама, когда появится работа, — включать ничего не нужно."
+      : "Фоновая отправка выключена — нажмите, чтобы включить";
+    b.querySelector(".wt").textContent = w.running ? "Фоновая отправка" : w.idle ? "Отправка по требованию" : "Отправка выключена";
     const pop = document.getElementById("wkpop");
     if (pop && !pop.hidden) pop.innerHTML = workerPopHtml();
   }
   function workerPopHtml() {
     const w = S.worker || {};
-    return `<div class="head"><h2>Фоновая отправка</h2><span class="badge ${w.running ? "ok" : "warn"}" style="padding:2px 8px;border-radius:999px;font-size:12px">${w.running ? "работает" : "выключена"}</span></div>
-      <p class="small muted">${w.running ? "Публикует запланированные посты и снимает цифры свежих постов, даже когда окно Crosspost закрыто." : "Запланированные посты выйдут, только пока открыто окно Crosspost."}</p>
+    return `<div class="head"><h2>Фоновая отправка</h2><span class="badge ${w.running ? "ok" : w.idle ? "" : "warn"}" style="padding:2px 8px;border-radius:999px;font-size:12px">${w.running ? "работает" : w.idle ? "по требованию" : "выключена"}</span></div>
+      <p class="small muted">${w.running ? "Публикует запланированные посты и снимает цифры свежих постов, даже когда окно Crosspost закрыто. Когда работы не остаётся, сама завершается и не занимает память." : w.idle ? "Сейчас не нужна: нет запланированных постов и свежих публикаций. Запустится сама, когда появится работа." : "Запланированные посты выйдут, только пока открыто окно Crosspost."}</p>
       ${w.next ? `<div class="kvlist"><div><span>Следующий пост</span><b>${esc(w.next.replace(/^Следующий пост: /, ""))}</b></div>${w.track ? `<div><span>Замеры</span><span class="small">${esc(w.track)}</span></div>` : ""}</div>` : ""}
       <div style="display:flex;gap:8px;flex-wrap:wrap">${w.running ? `<button class="btn small danger" data-wk="stop">Выключить</button>` : `<button class="btn small primary" data-wk="start">Включить</button>`}
         <button class="btn small ghost" data-wk="settings">Автозапуск с Windows…</button></div>`;
@@ -597,7 +612,7 @@
     const plats = extra && extra.plats && extra.plats.length > 1 ? extra.plats : [x.platform];
     return `<button class="nitem ${x.read && !(extra && extra.unread) ? "" : "unread"} k-${esc(x.kind)} l${x.level || 1} ${extra && extra.sub ? "sub" : ""}" data-news-pub="${x.pub_id || ""}">
       <span class="nth">${x.pub_id ? `<img src="/pthumb/${x.pub_id}?t=${tok}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}<span class="nic">${ICON[NEWS_ICON[x.kind]] || ICON.bell}</span></span>
-      <span class="ntx"><span>${esc(x.text)}${extra && extra.times > 1 ? ` <span class="muted small">· ×${extra.times}</span>` : ""}</span><span class="muted small">${plats.map((p) => pbadge(p, { sm: true })).join(" ")} ${ago(x.at)}</span></span></button>`;
+      <span class="ntx"><span class="nt">${esc(x.text)}</span><span class="nmeta muted small">${plats.map((p) => pbadge(p, { sm: true })).join(" ")}<span>${ago(x.at)}</span>${extra && extra.times > 1 ? `<span class="ntimes" data-tip="Одно и то же событие повторялось ${extra.times} раза">×${extra.times}</span>` : ""}</span></span></button>`;
   }
   // Новости об одном арте — одной карточкой: главная (самая важная, при равенстве — свежая), остальное — по кнопке «ещё N».
   // Повторы одного вида на одной площадке («+44 просмотров за час», потом «+36»…) сворачиваются в последний с числом повторов.
@@ -649,7 +664,7 @@
     if (S.taggerStopping) return;
     const stop = S.taggerOn;
     if (stop) { S.taggerStopping = true; paintTagger(); }   // жёлтый: процесс закрывается
-    try { await api("tagger_pause", { on: stop }); S.info.tagger_paused = stop; } catch (e) { return; }
+    try { await api("tagger_pause", { on: stop }); S.info.tagger_paused = stop; S.taggerLoaded = false; S.taggerLoading = false; } catch (e) { return; }
     finally { S.taggerStopping = false; }
     paintTagger();   // красный — остановлен, видеопамять свободна
     if (S.view === "settings") render();
@@ -1010,8 +1025,8 @@
   function workerHtml() {   // «Фоновая отправка»
     const w = S.worker;
     return `<section class="card setc"><div class="head"><h2>Фоновая отправка ${hint("Отдельный маленький процесс со значком у часов. Публикует запланированные посты и снимает цифры свежих постов, даже когда окно Crosspost закрыто.")}</h2>
-          ${w ? `<span class="badge ${w.running ? "ok" : "warn"}" style="padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600">${w.running ? "работает" : "выключена"}</span>` : ""}</div>
-        ${w ? `<div class="status"><span>${w.running ? esc(w.next || "Работает") : "Запланированные посты выйдут, только пока открыто окно Crosspost."}</span><span class="grow1"></span>
+          ${w ? `<span class="badge ${w.running ? "ok" : w.idle ? "" : "warn"}" style="padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600">${w.running ? "работает" : w.idle ? "по требованию" : "выключена"}</span>` : ""}</div>
+        ${w ? `<div class="status"><span>${w.running ? esc(w.next || "Работает") : w.idle ? "Сейчас не нужна — запустится сама, когда появится работа." : "Запланированные посты выйдут, только пока открыто окно Crosspost."}</span><span class="grow1"></span>
             ${w.running ? `<button class="btn small danger" data-wk="stop">Выключить</button>` : `<button class="btn small primary" data-wk="start">Включить</button>`}</div>
           <label class="tgl"><input type="checkbox" data-pa="wk-auto" ${w.autostart ? "checked" : ""} ${w.platform === "win32" ? "" : "disabled"}><span>Запускать вместе с Windows</span></label>` : `<p class="muted">Проверяю…</p>`}</section>`;
   }
@@ -1118,7 +1133,7 @@
   }
   function platNav() {
     const st = (k) => {
-      if (k === "worker") { const w = S.worker; return [w && w.running ? "ok" : "", w ? (w.running ? "фоновая отправка работает" : "фоновая отправка выключена") : ""]; }
+      if (k === "worker") { const w = S.worker; return [w && w.running ? "ok" : "", w ? (w.running ? "фоновая отправка работает" : w.idle ? "запускается по требованию" : "фоновая отправка выключена") : ""]; }
       if (k === "diag") return ["", "память и фоновые задачи"];
       if (k === "trends") return ["", "мой стиль, частота обновления"];
       if (k === "features") return ["", FEATURES.filter(featOn).map((f) => f[1].toLowerCase()).join(", ") || "всё выключено"];
@@ -1741,6 +1756,7 @@
     document.getElementById("updbtn").addEventListener("click", () => { S.view = "settings"; S.platSec = "app"; store.set("view", S.view); loadInfo().then(() => render()); });
     setTimeout(() => loadInfo().catch(() => {}), 8000);   // к этому моменту фоновая проверка версии уже ответила
     loadWorker(); setInterval(loadWorker, 20000);
+    pollTagger(); setInterval(pollTagger, 4000);
     pollActs(); loadNews(false); setInterval(() => loadNews(false), 60000);
     try { await loadInfo(); } catch (e) { $main.innerHTML = `<p class="err">Не удалось связаться с приложением: ${esc(e.message)}</p>`; return; }
     if (applyModules()) render();

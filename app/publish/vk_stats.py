@@ -20,7 +20,10 @@ from core.common import PlatformError
 COLS = ("reach", "views", "likes", "comments", "reposts", "bookmarks")
 LABEL = {"reach": "Охват", "views": "Просмотры", "likes": "Лайки", "comments": "Комментарии",
          "reposts": "Поделились", "bookmarks": "Закладки"}
-EVERY_H = 3   # фоновый сбор — раз в 3 часа
+EVERY_H = 3        # фоновый сбор: пока в группе есть свежий пост (до FRESH_D дней) — раз в 3 часа
+FRESH_D = 7
+STALE_EVERY_H = 24  # свежих постов нет, но стена жива (до STALE_D дней) — раз в сутки
+STALE_D = 30        # старше — сами не ходим: цифры давно устоялись, остаётся кнопка «Обновить цифры»
 
 db.conn().executescript("""
 CREATE TABLE IF NOT EXISTS vk_posts (
@@ -33,6 +36,27 @@ CREATE TABLE IF NOT EXISTS vk_snap (
     PRIMARY KEY (key, at)
 );
 """)
+
+
+def sane(r: dict) -> dict:
+    """Цифры, которые не могут быть правдой, убираем: просмотров не бывает меньше охвата (охват — уникальные люди, просмотры — все показы).
+    Так отсекаются полупрочитанные числа со страницы (например «2» вместо «2883», пока счётчик ещё рисуется)."""
+    v, rc = r.get("views"), r.get("reach")
+    if v is not None and rc is not None and v < rc:
+        r["views"] = None
+    return r
+
+
+def _heal() -> None:
+    """Старые замеры с невозможными цифрами (просмотров меньше охвата) — в «нет данных», чтобы не портили карточку и графики."""
+    try:
+        with db.tx() as c:
+            c.execute("UPDATE vk_snap SET views=NULL WHERE views IS NOT NULL AND reach IS NOT NULL AND views < reach")
+    except Exception:  # noqa: BLE001 — не критично для запуска
+        pass
+
+
+_heal()
 
 
 # --- разбор ответов страницы ----------------------------------------------------------------
@@ -120,6 +144,7 @@ def save(rows: list[dict], at: int | None = None) -> int:
     n = 0
     with db.tx() as c:
         for r in rows:
+            sane(r)
             c.execute("INSERT OR REPLACE INTO vk_posts (key, owner, post, date, title, text, kind, href, thumb) VALUES (?,?,?,?,?,?,?,?,?)",
                       (r["key"], r["owner"], r["post"], r["date"], r["title"], r["text"], r["kind"], r["href"], r["thumb"]))
             last = c.execute("SELECT * FROM vk_snap WHERE key=? ORDER BY at DESC LIMIT 1", (r["key"],)).fetchone()
@@ -150,7 +175,18 @@ def parse_post_stats(text: str) -> dict | None:
     except StopIteration:
         return None
     out: dict = {}
-    for x in lines[i + 1:i + 5]:
+    head = lines[i + 1:i + 8]
+    for k, x in enumerate(head[:4]):
+        if re.fullmatch(r"\d", x):   # счётчик нарисован по цифре на строку: «2», «8», «8», «3» → 2883
+            run = []
+            for y in head[k:]:
+                if re.fullmatch(r"\d", y):
+                    run.append(y)
+                else:
+                    break
+            if len(run) >= 2:
+                out["views"] = int("".join(run))
+                break
         v = _num(x)
         if v is not None:
             out["views"] = v
@@ -176,6 +212,15 @@ def parse_post_stats(text: str) -> dict | None:
     return out if "views" in out else None
 
 
+def consistent(res: dict | None) -> bool:
+    """Просмотры записи = подписчики + не подписчики. Если не сходится — страница ещё дорисовывается."""
+    if not res or "views" not in res:
+        return False
+    if "subs" in res and "nonsubs" in res:
+        return res["views"] == res["subs"] + res["nonsubs"]
+    return True
+
+
 def live_post(page, key: str) -> dict | None:
     """Открыть статистику записи и прочитать текущие цифры. None — окно не открылось или текст не разобрался."""
     from app.publish import browser as B
@@ -185,13 +230,21 @@ def live_post(page, key: str) -> dict | None:
     except Exception:  # noqa: BLE001
         B.dump(page, "vk_post_live")
         return None
-    for _ in range(2):   # цифры подгружаются чуть позже заголовка
+    # цифры подгружаются и «докручиваются» чуть позже заголовка: берём значение, когда два чтения подряд совпали и сошлись по сумме
+    prev, last = None, None
+    for _ in range(7):
         page.wait_for_timeout(700)
         res = parse_post_stats(page.evaluate("() => document.body.innerText"))
-        if res and "likes" in res:
-            return res
-    B.dump(page, "vk_post_live")
-    return res
+        if res:
+            last = res
+            if res == prev and "likes" in res and consistent(res):
+                return res
+        prev = res
+    if last and not consistent(last):
+        last = {k: v for k, v in last.items() if k not in ("views", "subs", "nonsubs")}   # просмотрам не верим, остальное берём
+    if not last or "likes" not in last:
+        B.dump(page, "vk_post_live")
+    return last or None
 
 
 def overlay_live(page, rows: dict, report, days: int = 10, limit: int = 12) -> int:
@@ -209,8 +262,12 @@ def overlay_live(page, rows: dict, report, days: int = 10, limit: int = 12) -> i
         if not lv:
             continue
         for k in ("views", "likes", "reposts", "comments"):
-            if lv.get(k) is not None:
-                r[k] = lv[k]
+            v = lv.get(k)
+            if v is None:
+                continue
+            if k == "views" and ((r.get("views") or 0) > v or (r.get("reach") or 0) > v):
+                continue   # просмотры только растут и не меньше охвата — иначе это недочитанное число
+            r[k] = v
         n += 1
     return n
 
@@ -326,7 +383,19 @@ def nums_for(link: str) -> dict:
     return {"cells": [[LABEL[k], st[k] if st[k] is not None else "—"] for k in COLS], "note": f"Статистика ВК, обновлено {when}"}
 
 
+def _newest_post_age_days() -> float | None:
+    """Возраст самого свежего поста ВК из последнего сбора (дней); None — сбора ещё не было."""
+    try:
+        r = db.query("SELECT MAX(date) AS d FROM vk_posts")
+    except Exception:  # noqa: BLE001
+        return None
+    d = r[0]["d"] if r else None
+    return (time.time() - d) / 86400 if d else None
+
+
 def due() -> bool:
+    """Пора ли собирать сами. Браузер открывается только когда есть что обновлять:
+    свежий пост (до 7 дней) — раз в 3 часа, стена жива (до 30 дней) — раз в сутки, иначе не открываем совсем."""
     from app.publish import settings as PS
     vk = PS.load()["vk"]
     if not (vk.get("enabled") and vk.get("browser_ok") and vk.get("stats_auto", True) and (vk.get("stats_url") or vk.get("group_id"))):
@@ -337,7 +406,15 @@ def due() -> bool:
         return True
     if last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - last > timedelta(hours=EVERY_H)
+    gap = datetime.now(timezone.utc) - last
+    age = _newest_post_age_days()
+    if age is None:
+        return gap > timedelta(hours=EVERY_H)   # данных ещё нет — собрать, чтобы узнать, что на стене
+    if age <= FRESH_D:
+        return gap > timedelta(hours=EVERY_H)
+    if age <= STALE_D:
+        return gap > timedelta(hours=STALE_EVERY_H)
+    return False
 
 
 def run_and_record(report=lambda **kw: None, headless: bool = True, wait: float = 600) -> dict:

@@ -225,7 +225,7 @@ def apply(stop_worker: bool = True, restart: bool = True) -> dict:
     if stop_worker:
         from app import worker
         if worker.status()["running"]:
-            worker.request_stop()
+            worker.request_stop(off=False)   # временно, на время обновления
             for _ in range(60):
                 time.sleep(0.5)
                 if not worker.status()["running"]:
