@@ -129,7 +129,16 @@ def add(draft: dict) -> dict:
                          (draft.get("title") or (draft.get("text") or "").split("\n")[0])[:80], draft.get("rating"),
                          json.dumps(draft, ensure_ascii=False), n, pos))
     maintain(force=True)
-    return {"id": cur.lastrowid}
+    row = db.query('SELECT state,run_at FROM scheduled WHERE id=?', (cur.lastrowid,))[0]
+    paused = not cfg()['enabled']
+    human = sch.human(sch._parse(row['run_at'])) if row['state'] == 'pending' else None
+    if paused:
+        notice = 'Добавлено в очередь: отправка приостановлена, включите конвейер в разделе «Очередь».'
+    elif human:
+        notice = 'Добавлено в очередь: ' + human
+    else:
+        notice = 'Добавлено в очередь: ожидает свободного времени.'
+    return {'id': cur.lastrowid, 'run_at': row['run_at'] if human else None, 'human': human, 'paused': paused, 'notice': notice}
 
 
 def remove(sid: int):

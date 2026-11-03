@@ -165,6 +165,8 @@ def load(raw: bool = False) -> dict:
     from core.fsutil import read_json
     data = read_json(p)
     cfg = _merge(DEFAULTS, _migrate(data))
+    if not p.exists():
+        cfg['modules'].update({k: False for k in ('stats', 'trends', 'tagger', 'collect', 'news', 'forecast')})
     if not raw:
         e6 = cfg["e6ai"]
         site = booru_site(cfg)

@@ -1,3 +1,4 @@
+-c requirements-constraints.txt
 # Приложение (окно, тренды)
 pywebview>=5.0
 pandas>=2.1

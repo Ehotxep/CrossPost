@@ -39,6 +39,7 @@
   function okText(name, res) {
     if (res && typeof res === "object" && res.cancelled) return ["", "ok"];   // окно выбора закрыли — сообщать нечего
     if (res && typeof res === "object" && res.notice) return [res.notice, "info"];
+    if(name==="post_schedule" && res?.human)return ["Запланировано: "+res.human,"ok"];
     if (name === "tg_sign_in") return res && res.need_password ? ["Нужен облачный пароль от Telegram", "info"] : ["Вход в Telegram выполнен", "ok"];
     return [OK_TEXT[name] || "Готово", "ok"];
   }
@@ -62,6 +63,10 @@
     return t;
   }
   let toastSeen = {};
+  function problemHtml(message) {
+    const text=humanize(String(message||''));
+    return `<div class="problem" role="alert"><p class="err">${esc(text)}</p>${text!==message?`<details class="more"><summary>Технические подробности</summary><pre translate="no">${esc(message)}</pre></details>`:''}<button class="btn small" data-view-link="settings" data-tab="diag">Открыть диагностику</button></div>`;
+  }
   function toast(text, kind = "ok") {
     text = String(text || "").trim();
     if (kind === "error") text = humanize(text);
@@ -245,7 +250,7 @@
     const top = o.single ? (medal(o.rank, o.scope) || hotBadge(o.index, o.est)) : medal(o.rank, o.scope) + hotBadge(o.index, o.est);   // single — один значок (в календаре тесно)
     return top || k ? `<span class="bdg ${o.sm ? "sm" : ""}">${top ? `<span class="br">${top}</span>` : ""}${k}</span>` : "";
   }
-  window.CP = { toast, LV, api, S, store, esc, num, plural, seg, hint, ICON, pbadge, PLAT, badges, newsStrip: () => window.CP_newsStrip ? window.CP_newsStrip() : "", pollActs: () => pollActs(), render: () => render(), softRender: () => softRender(), $main, loadInfo: () => loadInfo(),
+  window.CP = { problemHtml, toast, LV, api, S, store, esc, num, plural, seg, hint, ICON, pbadge, PLAT, badges, newsStrip: () => window.CP_newsStrip ? window.CP_newsStrip() : "", pollActs: () => pollActs(), render: () => render(), softRender: () => softRender(), $main, loadInfo: () => loadInfo(),
     loadWorker: () => loadWorker(), startPoll: () => { if (!poll) poll = setInterval(tick, 1000); } };
 
   // ---------------- данные ----------------
@@ -514,7 +519,7 @@
   }
   function actHtml(x) {
     const pct = x.progress == null ? null : Math.round(x.progress * 100);
-    const subs = (x.subs || []).map((d) => `<div class="asub">${pbadge(d.platform, { sm: true })}<span class="an">${esc(d.name)}</span>
+    const subs = (x.subs || []).map((d) => `<div class="asub">${pbadge(d.platform, { sm: true })}<span class="an" translate="no">${esc(d.name)}</span>
         <span class="ab"><i class="${d.state === "error" ? "bad" : d.state === "done" ? "ok" : ""}" style="width:${Math.round((d.progress || 0) * 100)}%"></i></span>
         <span class="ap">${d.state === "done" ? "✓" : d.state === "error" ? "✕" : Math.round((d.progress || 0) * 100) + "%"}</span></div>`).join("");
     return `<div class="act ${x.state}" data-act="${esc(x.key)}" ${x.go ? `data-go="${esc(x.go)}" role="button" tabindex="0"` : ""}>
@@ -612,7 +617,7 @@
     const plats = extra && extra.plats && extra.plats.length > 1 ? extra.plats : [x.platform];
     return `<button class="nitem ${x.read && !(extra && extra.unread) ? "" : "unread"} k-${esc(x.kind)} l${x.level || 1} ${extra && extra.sub ? "sub" : ""}" data-news-pub="${x.pub_id || ""}">
       <span class="nth">${x.pub_id ? `<img src="/pthumb/${x.pub_id}?t=${tok}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}<span class="nic">${ICON[NEWS_ICON[x.kind]] || ICON.bell}</span></span>
-      <span class="ntx"><span class="nt">${esc(x.text)}</span><span class="nmeta muted small">${plats.map((p) => pbadge(p, { sm: true })).join(" ")}<span>${ago(x.at)}</span>${extra && extra.times > 1 ? `<span class="ntimes" data-tip="Одно и то же событие повторялось ${extra.times} раза">×${extra.times}</span>` : ""}</span></span></button>`;
+      <span class="ntx"><span class="nt" translate="no">${esc(x.text)}</span><span class="nmeta muted small">${plats.map((p) => pbadge(p, { sm: true })).join(" ")}<span>${ago(x.at)}</span>${extra && extra.times > 1 ? `<span class="ntimes" data-tip="Одно и то же событие повторялось ${extra.times} раза">×${extra.times}</span>` : ""}</span></span></button>`;
   }
   // Новости об одном арте — одной карточкой: главная (самая важная, при равенстве — свежая), остальное — по кнопке «ещё N».
   // Повторы одного вида на одной площадке («+44 просмотров за час», потом «+36»…) сворачиваются в последний с числом повторов.
@@ -738,6 +743,7 @@
     if (!S.stats) render();
     const stale = await fetchStats();
     S.statsLoading = false;
+    await window.Pub.loadInsights();
     if (stale) pollStats(0);
   }
   function pollStats(n) {
@@ -966,7 +972,7 @@
           </div></div>
         <div style="flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:10px">
           <h3>Лучшие ниши${S.info.settings.style_tags.length ? " (ваш стиль — первыми)" : ""}</h3>
-          ${d.niche_top.length ? d.niche_top.map((t) => `<button class="lead" data-pick="${esc(t.tag)}"><span class="tag" style="font-weight:600">${esc(t.tag)}</span><span class="small">${esc(t.text)}</span></button>`).join("")
+          ${d.niche_top.length ? d.niche_top.map((t) => `<button class="lead" data-pick="${esc(t.tag)}"><span class="tag" style="font-weight:600">${esc(t.tag)}</span><span class="small" translate="no">${esc(t.text)}</span></button>`).join("")
             : `<p class="muted small">Явных ниш при текущих фильтрах нет.</p>`}
         </div>
       </div></section>`;
@@ -1153,12 +1159,22 @@
       return isPlat(k) ? `<div class="pnwrap">${btn}<span class="pnord"><button data-pord="up" data-k="${k}" ${pos <= 0 ? "disabled" : ""} aria-label="Выше: ${l}" data-tip="Выше">▲</button><button data-pord="down" data-k="${k}" ${pos >= ord.length - 1 ? "disabled" : ""} aria-label="Ниже: ${l}" data-tip="Ниже">▼</button></span><span class="tgl pnsw" data-tip="${off ? "Включить" : "Выключить"} площадку «${l}»"><input type="checkbox" data-mod="${k}" ${off ? "" : "checked"} aria-label="Площадка ${l}"></span></div>` : btn;
     }).join("")}`; }).join("")}</nav>`;
   }
+  document.addEventListener('input',e=>{
+    if(e.target.id!=='settings-search')return;
+    const q=e.target.value.trim().toLocaleLowerCase(),el=document.getElementById('settings-results');if(!el)return;
+    el.hidden=!q;if(!q){el.innerHTML='';return;}
+    const words={telegram:'бот каналы токен bot token',discord:'вебхук webhook',vk:'вк группа',files:'резервная копия backup хранение',net:'vpn proxy прокси',worker:'очередь расписание автозапуск',app:'язык обновления версия',translate:'english английский языки',features:'модули включить функции'};
+    const rows=PSECS.flatMap(([group,items])=>items.map(([key,label])=>({key,label,group})));
+    const visible=PSECS.filter(g=>g[2]()).flatMap(g=>g[1].filter(r=>!r[2]||r[2]()).map(r=>r[0]));
+    el.innerHTML=rows.filter(r=>(r.label+' '+window.I18N.t(r.label)+' '+r.group+' '+(words[r.key]||'')).toLocaleLowerCase().includes(q)).map(r=>`<button class="btn small" data-view-link="settings" data-tab="${visible.includes(r.key)?r.key:'features'}">${r.group} · ${r.label}${visible.includes(r.key)?'':' · включите функцию'}</button>`).join('')||'<p class="muted">Настройки не найдены</p>';
+  });
   function tgTabs() {   // Telegram: вкладки «Публикация» и «Статистика» (статистика — только если она включена)
     if (!statsOn()) return "";
     return `<div class="seg" role="tablist" aria-label="Telegram" style="margin-bottom:12px">${[["telegram", "Публикация"], ["import", "Статистика"]].map(([k, l]) => `<button role="tab" aria-selected="${S.platSec === k}" class="${S.platSec === k ? "on" : ""}" data-psec="${k}">${l}</button>`).join("")}</div>`;
   }
   function renderPlatforms() {
-    const head = `<div class="toolbar"><h1>Настройки</h1><span class="muted small">Ключи и токены хранятся только на этом компьютере</span></div>`;
+    const head = `<div class="toolbar"><h1>Настройки</h1><button class="btn small" data-guide-action="open">Быстрая настройка</button><span class="muted small">Ключи и токены хранятся только на этом компьютере</span></div>`;
+    const search=`<div class="settings-search"><input id="settings-search" type="search" placeholder="Поиск настроек" aria-label="Поиск настроек"><div id="settings-results" hidden></div></div>`;
     if (S.platSec === "modules") S.platSec = "features";   // раздел переименован
     const visible = PSECS.filter((g) => g[2]()).flatMap((g) => g[1].filter((x) => !x[2] || x[2]()).map((x) => x[0]));
     if (statsOn()) visible.push("import");   // «Статистика Telegram» — вкладка внутри раздела Telegram, в меню отдельно её нет
@@ -1170,7 +1186,7 @@
       : S.platSec === "features" ? featuresHtml() : S.platSec === "app" ? appSettingsHtml() : S.platSec === "worker" ? workerHtml() : S.platSec === "diag" ? perfHtml() : S.platSec === "trends" ? trendsSecHtml()
       : S.platSec === "net" ? netSecHtml() : S.platSec === "files" ? window.Pub.settingsHtml("files") + diskHtml() : S.platSec === "telegram" ? tgTabs() + window.Pub.settingsHtml("telegram") : S.platSec !== "import" ? window.Pub.settingsHtml(S.platSec) : null;
     if (body !== null) {
-      $main.innerHTML = head + `<div class="platlayout">${platNav()}<div class="platbody">${body}</div></div>`;
+      $main.innerHTML = head + window.SetupGuide.render() + search + `<div class="platlayout">${platNav()}<div class="platbody">${body}</div></div>`;
       return;
     }
     const t = S.tg, job = S.info.tg_job, running = job && job.state === "running";
@@ -1196,7 +1212,7 @@
       h += `<div class="head" style="margin-top:8px"><h3>Ваши каналы</h3>${t && t.authorized ? `<button class="btn" data-action="tg-refresh-ch" ${S.tgBusy ? "disabled" : ""}>Обновить список</button>` : ""}</div>
         <div class="chlist">${S.tgCh.map((c) => `<div class="chrow">
           <label class="tgl" style="flex:1;min-width:200px" data-tip="Учитывать в статистике"><input type="checkbox" data-chsel="${esc(c.chat_id)}" ${c.selected ? "checked" : ""}>
-            <span><b>${esc(c.title || c.chat_id)}</b>${c.username ? ` <span class="muted small">@${esc(c.username)}</span>` : ""}<br>
+            <span><b translate="no">${esc(c.title || c.chat_id)}</b>${c.username ? ` <span class="muted small">@${esc(c.username)}</span>` : ""}<br>
             <span class="muted small">${c.posts ? num(c.posts) + " " + plural(c.posts, "пост", "поста", "постов") : "ещё не импортирован"}${c.synced_at ? " · обновлён " + new Date(c.synced_at).toLocaleString(LOC) : ""}</span></span></label>
           <div class="seg" role="radiogroup" aria-label="Что публикуется в канале">${[["sfw", "SFW"], ["nsfw", "18+"], ["all", "Любой"]].map(([k, l]) =>
             `<button role="radio" aria-checked="${c.rating === k}" class="${c.rating === k ? "on" : ""}" data-chrating="${esc(c.chat_id)}" data-val="${k}">${l}</button>`).join("")}</div>
@@ -1236,14 +1252,14 @@
     } else {
       const me = t.me || {};
       const any = S.tgCh.some((c) => c.selected);
-      h += `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px"><span>Вход выполнен: <b>${esc(me.name || "")}</b>${me.username ? " · @" + esc(me.username) : ""}</span>
+      h += `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px"><span>Вход выполнен: <b translate="no">${esc(me.name || "")}</b>${me.username ? " · @" + esc(me.username) : ""}</span>
           <button class="btn" data-action="tg-refresh-ch" ${S.tgBusy ? "disabled" : ""}>Обновить список каналов</button>
           <button class="btn" data-action="tg-logout">Выйти</button></div>
         <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><button class="btn primary" data-action="tg-sync" ${running || !any ? "disabled" : ""}>Загрузить посты и просмотры</button>
         <span class="muted small">${any ? "Первый раз загрузится вся история — это может занять несколько минут." : "Отметьте каналы выше."}</span></div>`;
     }
     h += `</div></details></section>`;
-    $main.innerHTML = head + `<div class="platlayout">${platNav()}<div class="platbody">${h}</div></div>`;
+    $main.innerHTML = head + window.SetupGuide.render() + search + `<div class="platlayout">${platNav()}<div class="platbody">${h}</div></div>`;
   }
 
 
@@ -1331,7 +1347,7 @@
     const metricWord = st && st.metric === "reactions" ? "реакций" : st && st.metric === "mixed" ? "просмотров (или реакций, где просмотров нет)" : "просмотров";
     const idxHint = hint(`Индекс успеха — во сколько раз пост набрал больше ${metricWord}, чем обычный пост того же канала в те же недели. ×1 — обычный, ×2 — вдвое лучше.`);
     if (!S.tgCh.some((c) => c.selected && c.posts)) {
-      $main.innerHTML = `<div class="toolbar"><h1>Статистика</h1></div>
+      $main.innerHTML = `<div class="toolbar"><h1>Статистика</h1></div>${window.Pub.insightsHtml()}
         <section class="card soon"><h2>Пока нет данных</h2><p class="muted">Импортируйте посты Telegram — из выгрузки Telegram Desktop или через API.</p>
         <div><button class="btn primary" data-view-link="settings" data-tab="import">Импортировать посты</button></div></section>`;
       return;
@@ -1341,7 +1357,7 @@
       ${st && st.excluded ? `<button class="chipbtn" data-unexclude-all data-tip="Анонсы и другие посты, которые вы отметили «не учитывать». Нажмите, чтобы вернуть все.">${ICON.eyeoff} Не учитываются: ${num(st.excluded)}</button>` : ""}
       <span class="spacer"></span>${freshHtml(st)}${modOn("telegram") ? `<button class="btn small ghost" data-view-link="settings" data-tab="import" data-tip="Каналы Telegram, из которых берётся статистика">Настройки Telegram</button>` : ""}
       ${seg("sp", [["7", "7 дн"], ["30", "30 дн"], ["90", "90 дн"], ["365", "Год"], ["all", "Всё"]], S.sp)}
-      <select class="sm" id="statch" aria-label="Канал"><option value="">Все каналы</option>${chans.map((c) => `<option value="${esc(c.chat_id)}" ${S.sc === c.chat_id ? "selected" : ""}>${esc(c.title || c.chat_id)}</option>`).join("")}</select></div>`;
+      <select class="sm" id="statch" aria-label="Канал"><option value="">Все каналы</option>${chans.map((c) => `<option value="${esc(c.chat_id)}" ${S.sc === c.chat_id ? "selected" : ""} translate="no">${esc(c.title || c.chat_id)}</option>`).join("")}</select></div>`+window.Pub.insightsHtml();
     const tj = S.info.tg_job;
     if (tj && tj.state === "running") h += progressHtml(tj);
     if (S.statsLoading && !st) { $main.innerHTML = h + `<p class="muted">Считаю…</p>`; return; }
@@ -1367,7 +1383,7 @@
         ${p.preview ? `<img src="/media/${encodeURIComponent(p.preview)}?t=${tok}" alt="" loading="lazy">` : ""}
         ${badges({ kind: p.kind, n: p.n_media, rank: rankable && p.index != null ? i + 1 : 0, scope: "за период", index: p.index, est: p.est })}
         <span class="ab ${p.index >= LV().hit ? "hit" : ""} ${p.est ? "est" : ""}" ${p.est ? `data-tip="Оценка: пост ещё набирает просмотры"` : ""}>${p.est ? "≈" : ""}${mult(p.index)}</span>
-        <span class="am"><b>${esc(p.channel)}</b><span>${esc(p.date.slice(0, 10))}${p.views !== null ? " · " + num(p.views) : ""}</span></span>
+        <span class="am"><b translate="no">${esc(p.channel)}</b><span>${esc(p.date.slice(0, 10))}${p.views !== null ? " · " + num(p.views) : ""}</span></span>
         <button class="ax" data-exclude="${p.id}" data-tip="Не арт (анонс, новость) — не учитывать в статистике" aria-label="Не учитывать в статистике">${ICON.eyeoff}</button></div>`;
     h += `<div class="split">
       <section class="card"><div class="head"><h2>Лучшие работы ${idxHint}</h2><span class="muted small">по индексу успеха</span></div>
@@ -1384,7 +1400,7 @@
     h += `<section class="card"><div class="head"><h2>Рост каналов ${hint(`Медиана ${metricWord} на пост по месяцам. Посты моложе недели не учитываются — они ещё набирают.`)}</h2></div>
       <div class="chart" id="growth-chart"></div>
       <div class="legend">${st.channels.map((c, i) => `<span><span class="sw" style="background:${["var(--s1)", "var(--s2)", "var(--s3)"][i % 3]}"></span>${esc(c.title)} ${ratingPill(c.rating)}</span>`).join("")}</div>
-      <div class="kvlist">${st.channels.map((c) => `<div><span>${esc(c.title)}</span><span class="muted">${num(c.posts)} ${plural(c.posts, "пост", "поста", "постов")}, ${c.by_views ? `обычно ${num(c.median_views || 0)} просм., реакций ${c.react_rate !== null ? (c.react_rate * 100).toFixed(1).replace(".", DEC) + "% от просмотров" : "—"}` : `обычно ${num(c.median_reactions)} ${plural(c.median_reactions, "реакция", "реакции", "реакций")}, без просмотров`}</span></div>`).join("")}</div>
+      <div class="kvlist">${st.channels.map((c) => `<div><span translate="no">${esc(c.title)}</span><span class="muted">${num(c.posts)} ${plural(c.posts, "пост", "поста", "постов")}, ${c.by_views ? `обычно ${num(c.median_views || 0)} просм., реакций ${c.react_rate !== null ? (c.react_rate * 100).toFixed(1).replace(".", DEC) + "% от просмотров" : "—"}` : `обычно ${num(c.median_reactions)} ${plural(c.median_reactions, "реакция", "реакции", "реакций")}, без просмотров`}</span></div>`).join("")}</div>
     </section>`;
     h += insightsHtml(st, S.ins);
     $main.innerHTML = h;
@@ -1435,7 +1451,7 @@
       if (c) h += `<section class="card"><div class="head"><h2>Как пост набирает ${st.metric === "reactions" ? "реакции" : "просмотры"} ${hint((c.own ? "По вашим замерам. " : "Светлые столбики — примерная кривая Telegram: своих замеров пока мало. Они копятся сами, пока работает фоновая отправка. ") + "По этой кривой карточка поста в «Истории» оценивает итог уже через пару часов.")}</h2><span class="muted small">доля от итога за неделю</span></div>
         <div class="curve">${c.points.map((p) => `<div class="cv"><div class="cvb"><span style="height:${Math.round(p.frac * 100)}%" class="${p.own ? "" : "est"}"></span></div><b>${Math.round(p.frac * 100)}%</b><span class="muted small">${hl(p.h)}</span></div>`).join("")}</div></section>`;
       if (q) h += `<section class="card"><div class="head"><h2>Прогноз популярности ${hint("Проверка честная: модель угадывает посты, которых не видела при обучении. Чем больше постов и тегов, тем точнее. Сам прогноз — в «Новом посте».")}</h2><span class="muted small">учится на ${pl(q.n)}</span></div>
-        <p><span class="badge ${q.level === "good" ? "ok" : q.level === "mid" ? "warn" : "off"}" style="padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600">${q.level === "good" ? "Работает" : q.level === "mid" ? "Грубый ориентир" : "Пока слабый"}</span> <span class="muted">${esc(q.text)}</span></p>
+        <p><span class="badge ${q.level === "good" ? "ok" : q.level === "mid" ? "warn" : "off"}" style="padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600">${q.level === "good" ? "Работает" : q.level === "mid" ? "Грубый ориентир" : "Пока слабый"}</span> <span class="muted" translate="no">${esc(q.text)}</span></p>
         <div class="kvlist"><div><span>Угадывает «лучше или хуже обычного»</span><b>${Math.round(q.direction * 100)}% постов</b></div>
           <div><span>Обычная ошибка в цифре</span><b>в ${q.typical_err.toFixed(1).replace(".", DEC)} раза</b></div>
           <div><span>Постов с тегами картинки</span><b>${num(q.n_tagged)} из ${num(q.n)}</b></div>
@@ -1455,7 +1471,7 @@
     };
     const unit = st.metric === "reactions" ? "реакц." : "просм.";
     return `<section class="card"><div class="head"><h2>Что заходит лучше ${hint("×1 — ваш средний пост. Группы, где мало постов, подтянуты к ×1. Если пост пересылали в другой канал или группу, Telegram засчитывает оригиналу и просмотры копий — у пересылаемых постов (например, SFW-работ из 18+ канала) просмотры завышены.")}</h2></div>
-      <div class="groups">${st.groups.map((g) => `<div class="grp"><h3>${esc(g.title)}</h3>${g.rows.map((r) => `<div class="grow-row">
+      <div class="groups">${st.groups.map((g) => `<div class="grp"><h3 translate="no">${esc(g.title)}</h3>${g.rows.map((r) => `<div class="grow-row">
           <span class="gname">${esc(r.name)}<br><span class="muted small">${num(r.n)} ${plural(r.n, "пост", "поста", "постов")}, обычно ${r.views !== null && st.metric !== "reactions" ? num(r.views) + " " + unit : num(r.reactions) + " " + plural(r.reactions, "реакция", "реакции", "реакций")}</span></span>
           ${bar(r.index)}<b class="gval">${mult(r.index)}</b></div>`).join("")}</div>`).join("")}</div>
       </section>`;
@@ -1493,6 +1509,7 @@
     if (S.view === "trends" && !S.data && !S.loading) { await loadOverview(); render(); }   // данные трендов — при первом заходе
   });
   $main.addEventListener("click", async (e) => {
+    if (window.SetupGuide && await window.SetupGuide.onClick(e)) return;
     if (window.Pub && await window.Pub.onClick(e)) return;
     const wkb = e.target.closest("[data-wk]");
     if (wkb) {
@@ -1713,11 +1730,13 @@
     } catch (err) { alert(err.message); }
   });
   $main.addEventListener("toggle", (e) => {
+    if(e.target.dataset.detailKey){S.editorDetails=S.editorDetails||{};S.editorDetails[e.target.dataset.detailKey]=e.target.open;}
     if (e.target.id === "apibox") S.apiOpen = e.target.open;
     if (e.target.id === "netbox") S.netOpen = e.target.open;
     if (e.target.id === "pvbox") S.pvOpen = e.target.open;
   }, true);
   $main.addEventListener("change", async (e) => {
+    if(window.SetupGuide && window.SetupGuide.onChange(e))return;
     if (e.target.id === "statch") { S.sc = e.target.value; store.set("sc", S.sc); await loadStats(); render(); return; }
     if (e.target.id === "themesel") { store.set("theme", e.target.value); if (e.target.value === "light") document.documentElement.dataset.theme = "light"; else delete document.documentElement.dataset.theme; render(); return; }
     if (e.target.dataset.feat) {   // функция целиком: все её модули разом

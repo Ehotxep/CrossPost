@@ -1309,7 +1309,9 @@ class Api:
         draft = drafts.content(draft)
         duplicates.require_confirmation(draft, duplicate_ack)
         self._tg_ctx()
-        return schedule.add(draft, run_at)
+        result=schedule.add(draft, run_at)
+        result['worker']=self._wake_sender()
+        return result
 
     def post_schedule_edit(self, sid: int):
         from app.publish import schedule
@@ -1319,11 +1321,15 @@ class Api:
         from app.publish import schedule
         from app.publish import duplicates
         duplicates.require_confirmation(draft, duplicate_ack)
-        return schedule.save_edit(sid, token, revision, draft, run_at)
+        result=schedule.save_edit(sid, token, revision, draft, run_at)
+        self._wake_sender()
+        return result
 
     def post_schedule_discard(self, sid: int, token: str, revision: int):
         from app.publish import schedule
-        return schedule.cancel_edit(sid, token, revision)
+        result=schedule.cancel_edit(sid, token, revision)
+        self._wake_sender()
+        return result
 
     def post_scheduled(self):
         from app.publish import schedule
@@ -1360,7 +1366,9 @@ class Api:
         draft = drafts.content(draft)
         duplicates.require_confirmation(draft, duplicate_ack)
         self._tg_ctx()
-        return pipeline.add(draft)
+        result=pipeline.add(draft)
+        result['worker']=self._wake_sender()
+        return result
 
     def pipeline_remove(self, sid: int):
         from app.publish import pipeline
@@ -1381,14 +1389,23 @@ class Api:
     def pipeline_set(self, changes: dict):
         from app.publish import pipeline
         pipeline.set_cfg(changes)
+        self._wake_sender()
         return pipeline.state()
 
     # --- фоновая отправка ---
+    def _wake_sender(self):
+        try:
+            return self.worker_status()
+        except Exception:
+            from app.applog import log
+            log('Не удалось запустить фоновую отправку после изменения очереди')
+            return None
+
     def worker_status(self):
         """Состояние фоновой отправки для окна. Заодно запускает её, если появилась работа (окно опрашивает раз в 20 секунд)."""
         from app import worker
         from app import backups
-        if backups.pending():
+        if backups.pending() or os.environ.get("CROSSPOST_NO_SCHEDULER"):
             return worker.describe()
         import time as _t
         from app.publish import schedule

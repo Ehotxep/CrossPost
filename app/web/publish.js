@@ -35,9 +35,11 @@
   }
   function saveDraft() { C().store.set("draft", S().draft); queueDraftSave(); }
   function apiDraft(value = draft()) {
-    const d = value;
-    return { files: d.files.map((f) => f.id), variants: featOn("translation") ? (d.variants || {}) : {}, title: d.title, text: d.text, rating: d.rating, signature: d.signature, exclude: d.exclude, e6ai_tags: d.e6tags || {}, e6ai_meta: d.e6meta || {}, hashtags: d.hashtags == null ? null : d.hashtags, multi: multiOn(), marks: featOn("targeting") && d.multi ? (d.marks || {}) : {}, tagger: S().taggerOn !== false, platform_texts: d.platform_texts || {}, alts: d.alts || {}, profile: d.profile || null, extend: d.extend ? d.extend.pub_id : undefined };
+    return window.PostState.capture(value,S().taggerOn!==false);
   }
+  const requests=new window.PostState.LatestRequests();
+  const draftKey=()=>JSON.stringify([apiDraft(),S().pub]);
+
   const EMPTY = () => ({ files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} });
   // досылка опубликованного поста на другие площадки: черновик этого поста открывается на экране «Новый пост»,
   // а ваш текущий черновик откладывается и возвращается после
@@ -93,10 +95,11 @@
   }
   async function refreshPlan() {
     const s = S();
-    const key = JSON.stringify(apiDraft());
+    const key = draftKey(), ticket=requests.begin("plan",key);
     if (s.reviewKey !== key) { s.composition = null; s.readiness = null; s.duplicateResult=null; s.reviewKey = key; }
-    try { s.plan = await C().api("post_plan", { draft: apiDraft() }); s.planErr = ""; scheduleFc(); }
+    try { const plan=await C().api("post_plan", { draft: apiDraft() }); if(!requests.current(ticket,draftKey()))return; s.plan=plan;s.planErr = ""; scheduleFc(); }
     catch (e) {
+      if(!requests.current(ticket,draftKey()))return;
       s.plan = null; s.planErr = e.message;
       if (/не найден/.test(e.message)) {
         s.planErr = "Некоторые вложения недоступны — удалите отсутствующие файлы или добавьте их заново.";
@@ -112,9 +115,10 @@
   async function loadFc() {
     const s = S(), d = draft();
     if (!d.files.length || !d.rating || !mod("forecast")) { s.fc = null; paintFc(); return; }   // прогноз выключен в «Модулях»
+    const key=JSON.stringify([draftKey(),s.when,s.whenAt]),ticket=requests.begin("forecast",key);
     const runAt = s.when === "later" && s.whenAt ? new Date(s.whenAt).toISOString() : "";
-    try { s.fc = await C().api("post_forecast", { draft: apiDraft(), run_at: runAt }); s.fcErr = ""; }
-    catch (e) { s.fc = null; s.fcErr = e.message; }
+    try { const result=await C().api("post_forecast", { draft: apiDraft(), run_at: runAt });if(!requests.current(ticket,JSON.stringify([draftKey(),s.when,s.whenAt])))return;s.fc=result;s.fcErr = ""; }
+    catch (e) { if(!requests.current(ticket,JSON.stringify([draftKey(),s.when,s.whenAt])))return;s.fc = null; s.fcErr = e.message; }
     if (s.when === "later") paintSide(); else paintFc();
     // теггер смотрит картинки — когда закончит, прогноз уточнится содержанием
     if (s.fc && s.fc.tagging && !s.fc.tags_known && fcTries++ < 40) scheduleFc(3000); else if (s.fc && s.fc.tags_known) fcTries = 0;
@@ -135,7 +139,7 @@
       const up = fac.filter((y) => y.mult >= 1).slice(0, 4), down = fac.filter((y) => y.mult < 1).slice(0, 4);
       const bt = bestShown || s.when === "later" ? null : (x.best_times || []).find((b) => b.gain >= 1.05);
       if (bt) bestShown = true;   // время одно на весь пост — подсказываем по первому каналу
-      const li = (y) => `<li><span data-tip="${y.kind === "tag" ? "Тег картинки" : y.kind === "time" ? "Время публикации" : "Тип поста"}">${esc(y.name.replace(/^Время: /, ""))}</span><b>${pct(y.mult)}</b></li>`;
+      const li = (y) => `<li><span data-tip="${y.kind === "tag" ? "Тег картинки" : y.kind === "time" ? "Время публикации" : "Тип поста"}" translate="no">${esc(y.name.replace(/^Время: /, ""))}</span><b>${pct(y.mult)}</b></li>`;
       return `<div class="fc">
         <div class="fchead"><span>Прогноз · ${esc(x.channel)}</span>${q.level === "low" ? `<span class="pill" data-tip="${esc(q.text || "")}">слабый</span>` : q.level === "mid" ? `<span class="pill" data-tip="${esc(q.text || "")}">ориентир</span>` : ""}</div>
         <div class="fcbig">≈ ${n(x.expected)}<span>${esc(x.unit)}</span></div>
@@ -234,12 +238,12 @@
     const tile = (f, i) => {
       const ar = f.width && f.height ? `aspect-ratio:${f.width}/${f.height};` : "width:160px;";
       const ready = f.kind === "image" && prep[f.id] === "ready";
-      return `<figure class="gt" draggable="${multiOn() && s.brush ? "false" : "true"}" data-gi="${i}" style="${ar}" data-tip="${esc(f.name)}${f.width ? "\n" + f.width + "×" + f.height : ""} · ${mb(f.size)}${d.files.length > 1 ? "\nПеретащите, чтобы поменять порядок" : ""}">
+      return `<figure class="gt" data-user-attrs="data-tip" draggable="${multiOn() && s.brush ? "false" : "true"}" data-gi="${i}" style="${ar}" data-tip="${esc(f.name)}${f.width ? "\n" + f.width + "×" + f.height : ""} · ${mb(f.size)}${d.files.length > 1 ? "\nПеретащите, чтобы поменять порядок" : ""}">
         ${f.kind === "video" ? `<img src="/uthumb/${f.id}?t=${tok()}" alt="${esc(f.name)}" draggable="false" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'vid',textContent:'${esc(f.format || "MP4")}'}))">` : `<img src="/uthumb/${f.id}?t=${tok()}" alt="${esc(f.name)}" draggable="false">`}
         ${f.kind === "video" ? `<span class="play" aria-hidden="true">▶</span>` : ""}
         ${multiOn() ? `<button class="vmark v-${(d.marks || {})[f.id] || "all"}" data-pa="vmark" data-id="${f.id}" data-tip="Версия файла: нажмите, чтобы сменить">${vlabel((d.marks || {})[f.id])}</button>` : ""}
         ${f.kind === "video" || f.kind === "gif" ? `<button class="gifbtn" data-pa="ved-open" data-i="${i}" data-tip="Обрезать, повернуть, уменьшить, сделать GIF из видео или видео из GIF">Изменить</button>` : ""}
-        <button class="x" data-pa="rmfile" data-i="${i}" aria-label="Убрать ${esc(f.name)}">×</button>
+        <button class="x" data-pa="rmfile" data-i="${i}" data-user-attrs="aria-label" aria-label="Убрать ${esc(f.name)}">×</button>
         <span class="gm">${f.kind === "gif" ? "<span>GIF</span>" : f.kind === "video" ? `<span>видео${f.duration ? " · " + fmtDur(f.duration) : ""}</span>` : ""}
           ${f.kind === "image" ? `<span class="${ready ? "ready" : ""}" data-prep="${f.id}">${ready ? "✓ превью" : "готовлю…"}</span>${preBadge(f.id)}` : ""}</span></figure>`;
     };
@@ -290,11 +294,11 @@
   function libraryHtml() {
     const s=S(),d=draft(),m=d._saved,locked=d.editing_schedule||d.extend;
     return `<section class="card"><div class="head"><h2>Черновики</h2><button class="btn small" data-pa="draft-new" ${locked?'disabled':''}>Новый черновик</button></div>
-      ${m?`<div class="row"><input id="draft-name" maxlength="120" value="${esc(m.name)}" aria-label="Название черновика"><select id="draft-status"><option value="working" ${m.status==='working'?'selected':''}>В работе</option><option value="ready" ${m.status==='ready'?'selected':''}>Готов</option></select><button class="btn small" data-pa="draft-save">Сохранить</button><button class="btn small" data-pa="draft-copy">Сохранить копию</button></div><p id="saved-draft-state" data-saved-draft-state class="${s.draftSaveError?'err':'muted'} small">${esc(s.draftSaveError||'Черновик сохраняется автоматически')}</p>`:
-      `<button class="btn small" data-pa="draft-save" ${locked?'disabled':''}>Сохранить отдельным черновиком</button>`}
+      ${m?`<div class="row"><input id="draft-name" maxlength="120" value="${esc(m.name)}" aria-label="Название черновика"><select id="draft-status"><option value="working" ${m.status==='working'?'selected':''}>В работе</option><option value="ready" ${m.status==='ready'?'selected':''}>Готов</option></select><button class="btn small" data-pa="draft-save">Сохранить</button><details class="more"><summary>Сохранить копию</summary><input id="draft-copy-name" maxlength="120" value="${esc(m.name+' (копия)')}" aria-label="Название копии черновика"><button class="btn small" data-pa="draft-copy">Сохранить копию</button></details></div><p id="saved-draft-state" data-saved-draft-state class="${s.draftSaveError?'err':'muted'} small">${esc(s.draftSaveError||'Черновик сохраняется автоматически')}</p>`:
+      `<div class="row"><input id="new-draft-name" maxlength="120" value="${esc(d.title||'Без названия')}" aria-label="Название черновика"><button class="btn small" data-pa="draft-save" ${locked?'disabled':''}>Сохранить отдельным черновиком</button></div>`}
       <details class="more" open><summary>Коллекция черновиков</summary><div class="morebody">
         <div class="row"><input id="draft-query" value="${esc(s.draftQuery||'')}" placeholder="Поиск черновика"><select id="draft-filter"><option value="">Все статусы</option><option value="working" ${s.draftFilter==='working'?'selected':''}>В работе</option><option value="ready" ${s.draftFilter==='ready'?'selected':''}>Готов</option></select><button class="btn small" data-pa="draft-refresh">Найти / обновить</button></div>
-        ${(s.savedDrafts||[]).map(r=>`<div class="row" style="margin-top:8px">${r.files[0]?`<img src="/uthumb/${encodeURIComponent(r.files[0])}?t=${tok()}" width="48" alt="" onerror="this.style.display='none'">`:''}<span><b>${esc(r.name)}</b><br>${r.status==='ready'?'Готов':'В работе'} · ${esc(new Date(r.updated).toLocaleString())}</span><button class="btn small" data-pa="draft-open" data-id="${r.id}" ${locked?'disabled':''}>Открыть</button><button class="btn small" data-pa="draft-delete" data-id="${r.id}" data-revision="${r.revision}">Удалить</button></div>`).join('')}
+        ${(s.savedDrafts||[]).map(r=>`<div class="row" style="margin-top:8px">${r.files[0]?`<img src="/uthumb/${encodeURIComponent(r.files[0])}?t=${tok()}" width="48" alt="" onerror="this.style.display='none'">`:''}<span><b translate="no">${esc(r.name)}</b><br>${r.status==='ready'?'Готов':'В работе'} · ${esc(new Date(r.updated).toLocaleString())}</span><button class="btn small" data-pa="draft-open" data-id="${r.id}" ${locked?'disabled':''}>Открыть</button><button class="btn small" data-pa="draft-delete" data-id="${r.id}" data-revision="${r.revision}">Удалить</button></div>`).join('')}
         ${s.savedDrafts && !s.savedDrafts.length?'<p class="muted">Черновиков не найдено</p>':''}</div></details></section>`;
   }
   function scheduledEditorHtml() {
@@ -310,30 +314,32 @@
     const d=draft(),s=S(),over=d.platform_texts||{};
     const platforms=LANGP.filter(([p])=>s.pub?.modules[p]!==false && s.pub?.platform_texts_enabled?.[p]===true);
     if (!platforms.length) return '';
-    return `<details class="more post-extra"><summary>Свой текст для каждой площадки</summary><p class="muted small">Отдельный текст заменяет основной или английский вариант только для выбранной площадки. Подписи и хэштеги добавляются по её настройкам.</p>
+    return `<details class="more post-extra" data-detail-key="platform-texts" ${S().editorDetails?.['platform-texts']?'open':''}><summary>Свой текст для каждой площадки</summary><p class="muted small">Отдельный текст заменяет основной или английский вариант только для выбранной площадки. Подписи и хэштеги добавляются по её настройкам.</p>
       ${platforms.map(([p,name])=>{const t=over[p]||{};return `<div class="field"><label class="tgl"><input type="checkbox" data-platform-enable="${p}" ${t.enabled?'checked':''}><span>${esc(name)}: отдельный текст</span></label>${t.enabled?`<label>Заголовок<input data-platform-title="${p}" value="${esc(t.title||'')}"></label><label>Описание<textarea rows="3" data-platform-text="${p}">${esc(t.text||'')}</textarea></label>`:''}</div>`;}).join('')}</details>`;
   }
   function altsHtml() {
     const d=draft();
     if (!d.files.length || S().pub?.modules.bluesky===false) return '';
-    return `<details class="more post-extra"><summary>Описания картинок для Bluesky (alt)</summary><p class="muted small">Опишите каждую картинку для людей, использующих экранный диктор. Пустое поле использует заголовок, если это включено в настройках Bluesky.</p>${d.files.map(f=>`<label class="field">${esc(f.name)}<textarea rows="2" maxlength="1000" data-image-alt="${f.id}">${esc((d.alts||{})[f.id]||'')}</textarea></label>`).join('')}</details>`;
+    return `<details class="more post-extra" data-detail-key="image-alts" ${S().editorDetails?.['image-alts']?'open':''}><summary>Описания картинок для Bluesky (alt)</summary><p class="muted small">Опишите каждую картинку для людей, использующих экранный диктор. Пустое поле использует заголовок, если это включено в настройках Bluesky.</p>${d.files.map(f=>`<label class="field"><span translate="no">${esc(f.name)}</span><textarea rows="2" maxlength="1000" data-image-alt="${f.id}">${esc((d.alts||{})[f.id]||'')}</textarea></label>`).join('')}</details>`;
   }
   function duplicatesHtml() {
     const r=S().duplicateResult;
-    return `<section class="card"><div class="head"><h2>Проверка на повтор</h2><button class="btn small" data-pa="duplicates">Найти похожие работы</button></div><p class="muted small">Сравниваются доступные изображения и превью из истории. Похожесть не доказывает, что это одна работа.</p>${r?`<p>${r.total?'Найдено совпадений: '+r.total:'Похожих работ среди доступных превью не найдено'} · проверено файлов: ${r.checked}</p>${r.matches.map(m=>`<p><b>${esc(m.title||'Без названия')}</b> · ${esc(m.destination)} · ${esc(new Date(m.created).toLocaleDateString())}${/^https?:/.test(m.link)?` <a href="#" data-open="${esc(m.link)}">Открыть</a>`:''}</p>`).join('')}`:''}</section>`;
+    return `<section class="card"><div class="head"><h2>Проверка на повтор</h2><button class="btn small" data-pa="duplicates">Найти похожие работы</button></div><p class="muted small">Сравниваются доступные изображения и превью из истории. Похожесть не доказывает, что это одна работа.</p>${r?`<p>${r.total?'Найдено совпадений: '+r.total:'Похожих работ среди доступных превью не найдено'} · проверено файлов: ${r.checked}</p>${r.matches.map(m=>`<p><b translate="no">${esc(m.title||'Без названия')}</b> · ${esc(m.destination)} · ${esc(new Date(m.created).toLocaleDateString())}${/^https?:/.test(m.link)?` <a href="#" data-open="${esc(m.link)}">Открыть</a>`:''}</p>`).join('')}`:''}</section>`;
   }
   async function checkedPost() {
     await flushSavedDraft();
-    const payload=apiDraft();
-    const result=await C().api('post_duplicates',{draft:payload});S().duplicateResult=result;
-    if (result.total && !confirm('В истории есть похожие работы:\n'+result.matches.map(m=>(m.title||'Без названия')+' · '+m.destination).join('\n')+'\nПродолжить? Это может быть повторная публикация.')) return null;
+    const payload=apiDraft(),key=draftKey();
+    const result=await C().api('post_duplicates',{draft:payload});if(key!==draftKey())throw new Error('Пост изменился во время проверки. Проверьте его и повторите действие.');S().duplicateResult=result;
+    if (result.total && !window.I18N.confirm('В истории есть похожие работы:\n',result.matches.map(m=>(m.title||'Без названия')+' · '+m.destination).join('\n'),'\nПродолжить? Это может быть повторная публикация.')) return null;
     return {draft:payload,duplicate_ack:result.token};
   }
   async function loadHistoryPage(offset=0) {
     const s=S();s.historyOffset=offset;
+    const key=JSON.stringify([s.historyFilters||{},offset]),ticket=requests.begin("history",key);
     const result=await C().api('post_history_search',Object.assign({},s.historyFilters||{},{offset,limit:30}));
+    if(!requests.current(ticket,JSON.stringify([s.historyFilters||{},s.historyOffset])))return;
     s.historyPage=result;s.hist=result.items;
-    try{s.histSum=await C().api('pub_stats_summary',{ids:result.items.map(r=>r.id)});}catch(e){s.histSum={};}
+    try{const sum=await C().api('pub_stats_summary',{ids:result.items.map(r=>r.id)});if(requests.current(ticket))s.histSum=sum;}catch(e){if(requests.current(ticket))s.histSum={};}
   }
   function historySearchHtml() {
     const s=S(),f=s.historyFilters||{},r=s.historyPage;
@@ -346,10 +352,10 @@
     return `<details class="card" open><summary>Шаблоны публикации${d.templateName ? " · " + esc(d.templateName) : ""}</summary><div class="morebody">
       <p class="muted small">Сохраняются текст, рейтинг, выбор площадок, подписи, теги и параметры файлов. Аккаунты и сами файлы в шаблон не входят.</p>
       ${d.templateName ? `<p>Применён шаблон: <b>${esc(d.templateName)}</b> <button class="btn small" data-pa="template-reset">Использовать текущие настройки</button></p>` : ""}
-      <button class="btn small" data-pa="template-save">Сохранить текущий пост как шаблон</button>
+      <input id="template-name" maxlength="120" value="${esc(d.title||'Шаблон')}" aria-label="Название шаблона"><button class="btn small" data-pa="template-save">Сохранить текущий пост как шаблон</button>
       <button class="btn small" data-pa="templates-refresh">Обновить список</button>
-      ${(s.templates || []).map(t => `<div class="row" style="margin-top:8px"><b>${esc(t.name)}</b><button class="btn small" data-pa="template-apply" data-id="${esc(t.id)}">Применить</button><button class="btn small" data-pa="template-delete" data-id="${esc(t.id)}">Удалить</button></div>`).join("")}
-      ${s.pubErr && s.pubErr.features ? `<p class="err">${esc(s.pubErr.features)}</p>` : ""}</div></details>`;
+      ${(s.templates || []).map(t => `<div class="row" style="margin-top:8px"><b translate="no">${esc(t.name)}</b><button class="btn small" data-pa="template-apply" data-id="${esc(t.id)}">Применить</button><button class="btn small" data-pa="template-delete" data-id="${esc(t.id)}">Удалить</button></div>`).join("")}
+      ${s.pubErr && s.pubErr.features ? C().problemHtml(s.pubErr.features) : ""}</div></details>`;
   }
   function reviewToolsHtml() {
     const s = S(), r = s.composition, checks = s.readiness;
@@ -362,18 +368,23 @@
       ${checks ? `<p><b>${checks.ready ? "Локальные проверки пройдены" : "Есть препятствия для публикации"}</b> · ${esc(new Date(checks.checked_at).toLocaleString())}</p><ul>${checks.checks.map(c => `<li class="${c.state === 'error' ? 'err' : c.state === 'ok' ? 'ok' : 'muted'}"><b>${esc(c.name)}</b>: ${esc(c.message)}</li>`).join("")}</ul>` : ""}
       ${r ? `${r.errors.length ? `<ul class="errs">${list(r.errors)}</ul>` : ""}${r.platforms.map(p => `<details class="more" open><summary>${esc(p.destinations.join(", "))}</summary><div class="morebody">
         <p class="muted small">Язык: ${esc(p.language)} · Формат: ${esc(p.format)}. Показан состав поста; оформление зависит от площадки.</p>
-        ${p.title ? `<p><b>${esc(p.title)}</b></p>` : ""}<pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(p.text || "Без текста")}</pre>
+        ${p.title ? `<p><b translate="no">${esc(p.title)}</b></p>` : ""}<pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(p.text || "Без текста")}</pre>
         <ul>${list(p.details)}${list(p.warnings)}</ul>
-        ${p.files.map(f => `<div class="row" style="align-items:flex-start;margin:8px 0"><img src="/uthumb/${encodeURIComponent(f.id)}?t=${tok()}" width="72" alt="" onerror="this.style.display='none'"><div><b>${esc(f.name)}</b> · ${esc(f.kind)} · ${Math.round((f.size || 0)/1024)} КБ<br><span class="muted small">${esc(f.transform)}</span>${f.alt ? `<p class="small">Alt: ${esc(f.alt)}</p>` : ""}${f.tags.length ? `<p class="small">Теги: ${esc(f.tags.join(" "))}</p>` : ""}</div></div>`).join("")}</div></details>`).join("")}` : ""}
-      ${s.pubErr && s.pubErr.features ? `<p class="err">${esc(s.pubErr.features)}</p>` : ""}</section>`;
+        ${p.files.map(f => `<div class="row" style="align-items:flex-start;margin:8px 0"><img src="/uthumb/${encodeURIComponent(f.id)}?t=${tok()}" width="72" alt="" onerror="this.style.display='none'"><div><b translate="no">${esc(f.name)}</b> · ${esc(f.kind)} · ${Math.round((f.size || 0)/1024)} КБ<br><span class="muted small">${esc(f.transform)}</span>${f.alt ? `<p class="small">Alt: ${esc(f.alt)}</p>` : ""}${f.tags.length ? `<p class="small">Теги: ${esc(f.tags.join(" "))}</p>` : ""}</div></div>`).join("")}</div></details>`).join("")}` : ""}
+      ${s.pubErr && s.pubErr.features ? C().problemHtml(s.pubErr.features) : ""}</section>`;
   }
-  function journalHtml(pubId) {
+  function journalHtml(pubId, location) {
     if (!pubId) return "";
-    const log = S().publicationLog, current = log && log.pub_id === +pubId;
+    const s=S(), log=s.publicationLog, current=log && log.pub_id===+pubId;
+    const key=location+':'+(+pubId), open=s.journalOpen===key, bodyId='publication-journal-'+location+'-'+(+pubId);
     const labels = {created:"Создано",queued:"В очереди",running:"Выполняется",done:"Готово",error:"Ошибка"};
-    return `<section class="card"><div class="head"><h2>Журнал публикации</h2><button class="btn small" data-pa="journal" data-id="${+pubId}">Показать / обновить</button></div>
+    return `<section class="publication-journal"><button class="journal-toggle" data-pa="journal-toggle" data-id="${+pubId}" data-location="${location}" aria-expanded="${open}" aria-controls="${bodyId}"><span aria-hidden="true">${open?'⌄':'›'}</span> Журнал публикации</button>
+      <div id="${bodyId}" class="journal-body" ${open?'':'hidden'}>${open?`
+      <button class="btn small" data-pa="journal" data-id="${+pubId}" ${s.pubBusy==='journal'?'disabled':''}>Обновить журнал</button>
+      ${s.pubBusy==='journal'?'<p class="muted small" role="status">Загружаю журнал…</p>':''}
+      ${s.pubErr?.journal?`<p class="err small" role="alert">${esc(s.pubErr.journal)}</p>`:''}
       ${current ? `<ul>${log.events.map(e => `<li><time>${esc(new Date(e.at).toLocaleString())}</time> · ${esc(log.dests.find(d => d.key === e.dest)?.name || "Публикация")} · <b>${esc(labels[e.state] || e.state)}</b>${e.message ? ": " + esc(labels[e.message] || e.message) : ""}</li>`).join("") || `<li>Для старой публикации подробные этапы не записаны.</li>`}</ul>
-      ${log.dests.map(d => `<p><b>${esc(d.name || d.key)}</b>: ${d.state === "done" ? "Опубликовано" : d.state === "running" ? "Публикуется…" : d.state === "queued" ? "В очереди" : d.state === "error" && d.outcome === "not_sent" ? "Подтверждён отказ — можно повторить" : "Проверьте результат на площадке"}${d.message ? " · " + esc(d.message) : ""}</p>`).join("")}` : ""}</section>`;
+      ${log.dests.map(d => `<p><b translate="no">${esc(d.name || d.key)}</b>: ${d.state === "done" ? "Опубликовано" : d.state === "running" ? "Публикуется…" : d.state === "queued" ? "В очереди" : d.state === "error" && d.outcome === "not_sent" ? "Подтверждён отказ — можно повторить" : "Проверьте результат на площадке"}${d.message ? " · " + esc(d.message) : ""}</p>`).join("")}` : ""}`:''}</div></section>`;
   }
   function backupsHtml() {
     const s = S(), state = s.backupState;
@@ -391,6 +402,10 @@
       <p class="muted small">Восстановление заменяет историю и очередь после перезапуска. Перед ним автоматически сохраняется копия текущих данных. Без оригиналов некоторые вложения могут потребовать повторного добавления. Готовые файлы из внешней папки Files не включаются.</p></section>`;
   }
 
+  function onboardingHtml(){
+    const s=S();if(C().store.get('onboardingDone',false)||!s.plan||s.plan.configured?.length||draft().files.length)return '';
+    return `<section class="card onboarding"><div class="head"><h2>Подготовим первый пост</h2><button class="btn small ghost" data-pa="onboarding-dismiss">Позже</button></div><ol><li>Подключите площадку и проверьте доступ.</li><li>Добавьте изображение, текст и выберите рейтинг.</li><li>Проверьте пост и опубликуйте или выберите время.</li></ol><div class="row">${[['telegram','Telegram'],['discord','Discord'],['vk','ВКонтакте'],['bluesky','Bluesky']].map(([key,name])=>`<button class="btn small" data-view-link="settings" data-tab="${key}">Подключить ${name}</button>`).join('')}</div><p class="muted small">Статистику, тренды и подбор тегов можно включить позже в настройках функций.</p><button class="btn small" data-guide-open="start" data-view-link="settings" data-tab="app">Пройти быструю настройку</button></section>`;
+  }
   function renderPost() {
     const s = S();
     if (s.postMode === "progress" && s.pubState) { C().$main.innerHTML = progressHtml(); return; }
@@ -404,18 +419,19 @@
     const X = d.extend;
     const toolButtons = `<div class="post-tools-buttons"><button class="btn small ${s.postPanel==='drafts'?'on':''}" data-pa="post-panel" data-panel="drafts" aria-expanded="${s.postPanel==='drafts'}" aria-controls="post-tools">Черновики</button><button class="btn small ${s.postPanel==='templates'?'on':''}" data-pa="post-panel" data-panel="templates" aria-expanded="${s.postPanel==='templates'}" aria-controls="post-tools">Шаблоны</button></div>`;
     const head = (X ? `<div class="toolbar"><h1>Дослать пост</h1><span class="spacer"></span>${toolButtons}<button class="btn ghost" data-pa="extend-cancel">${C().ICON.close} Отменить досылку</button></div>
-      <div class="card extbanner"><b>${esc(X.title || "Пост без названия")}</b>
+      <div class="card extbanner"><b translate="no">${esc(X.title || "Пост без названия")}</b>
         <span class="muted small">Уже вышел: ${esc((X.done || []).join(", ") || "никуда")}${(X.failed || []).length ? ` · с ошибкой: ${esc(X.failed.join(", "))}` : ""}</span>
         <span class="small">Включите справа, куда дослать. В истории и календаре это останется одним постом — у него просто добавятся площадки.
           Текст и теги можно поправить: изменения уйдут только на новые площадки.</span>
         ${(X.missing || []).length ? `<span class="warnline small">Оригиналы уже удалены (хранятся неделю после публикации): ${esc(X.missing.join(", "))}. Добавьте эти файлы заново.</span>` : ""}</div>`
       : `<div class="toolbar"><h1>Новый пост</h1><span class="spacer"></span>${toolButtons}${d.files.length || d.text || d.title ? `<button class="btn ghost" data-pa="clear">${C().ICON.trash} Очистить</button>` : ""}</div>`);
     const h = `${head}
-      ${d._saved?`<div class="post-draft-status"><span class="small">${esc(d._saved.name)}</span><span data-saved-draft-state class="${s.draftSaveError?'err':'muted'} small" role="status">${esc(s.draftSaveError||'Черновик сохраняется автоматически')}</span></div>`:''}
+      ${d._saved?`<div class="post-draft-status"><span class="small" translate="no">${esc(d._saved.name)}</span><span data-saved-draft-state class="${s.draftSaveError?'err':'muted'} small" role="status">${esc(s.draftSaveError||'Черновик сохраняется автоматически')}</span></div>`:''}
+      ${onboardingHtml()}
       ${scheduledEditorHtml()}
       <div id="post-tools" ${s.postPanel?'':'hidden'}>${s.postPanel?`<div class="post-panel-close"><button class="btn small ghost" data-pa="post-panel-close">Закрыть панель</button></div>${s.postPanel==='drafts'?libraryHtml():s.postPanel==='templates'?templateToolsHtml():reviewToolsHtml()+duplicatesHtml()}`:''}</div>
       ${s.pubErr && s.pubErr.top ? `<p class="err">${esc(s.pubErr.top)}</p>` : ""}
-      ${s.pubErr?.features && s.postPanel!=='checks' && s.postPanel!=='templates'?`<p class="err" role="alert">${esc(s.pubErr.features)}</p>`:''}
+      ${s.pubErr?.features && s.postPanel!=='checks' && s.postPanel!=='templates'?C().problemHtml(s.pubErr.features):''}
       <div class="postgrid"><div class="postmain">
         <section class="card"><div class="cardhead"><h2>Файлы</h2>
             ${d.files.some((f) => f.kind !== "image") ? `<span class="optline">GIF и видео уходят как есть ${C().hint("Переделываются только там, где площадка иначе не примет: ужать под лимит Discord или Telegram, перекодировать в H.264 или в WebM для " + BN() + ". Подробности — «Настройки» → «Видео и GIF».")}</span>` :
@@ -747,7 +763,7 @@
   function acPaint() {
     const a = S().ac, el = acEl();
     if (!a) return;
-    el.innerHTML = a.res.map((x, i) => `<button class="aci ${i === a.i ? "on" : ""}" data-aci="${i}" tabindex="-1"><span class="c-${x.cat}">${esc(x.name.replace(/_/g, " "))}</span>${x.via ? `<em>← ${esc(x.via.replace(/_/g, " "))}</em>` : ""}<small>${C().num(x.n)}</small></button>`).join("");
+    el.innerHTML = a.res.map((x, i) => `<button class="aci ${i === a.i ? "on" : ""}" data-aci="${i}" tabindex="-1"><span class="c-${x.cat}" translate="no">${esc(x.name.replace(/_/g, " "))}</span>${x.via ? `<em>← ${esc(x.via.replace(/_/g, " "))}</em>` : ""}<small>${C().num(x.n)}</small></button>`).join("");
   }
   async function acPick(inp, name) {
     const id = inp.dataset.tagadd, words = inp.value.trim().split(/[\s,]+/);
@@ -804,7 +820,7 @@
     const doneL = p.dests.filter((x) => x.done);
     const needs = p.dests.filter(isNeed);
     const row = (x) => `<label class="drow ${x.will ? "" : isNeed(x) ? "needrow" : "dim"}">${C().pbadge(x.platform, { cls: x.will || isNeed(x) ? "" : "off" })}
-        <span class="dn"><b>${esc(/^e621 · /.test(x.name) ? x.name : x.name.replace(/^[^·]+· /, ""))}</b><span>${x.will ? esc(x.details.join(", ")) : esc(x.reason)}${isNeed(x) ? ` · <a href="#" data-pa="e6need">к тегам</a>` : ""}</span></span>
+        <span class="dn"><b translate="no">${esc(/^e621 · /.test(x.name) ? x.name : x.name.replace(/^[^·]+· /, ""))}</b><span>${x.will ? esc(x.details.join(", ")) : esc(x.reason)}${isNeed(x) ? ` · <a href="#" data-pa="e6need">к тегам</a>` : ""}</span></span>
         <span class="tgl"><input type="checkbox" ${x.will || isNeed(x) ? "checked" : ""} ${x.can_toggle || x.off ? "" : "disabled"} data-pa="toggle" data-key="${esc(x.key)}" aria-label="${esc(x.name)}"></span></label>`;
     // пока пост только собирается, «выберите рейтинг» и «добавьте картинки» — не ошибки, а подсказки:
     // красным они становятся, только если нажать «Опубликовать» раньше времени
@@ -820,14 +836,14 @@
     else {
       h += `<div class="dlist">${will.map(row).join("")}${needs.map(row).join("")}${off.map(row).join("")}</div>`;
       if (doneL.length) h += `<div class="dlist donel"><span class="muted small">Уже опубликовано</span>${doneL.map((x) => `<div class="drow dim">${C().pbadge(x.platform, { cls: "" })}
-        <span class="dn"><b>${esc(x.name.replace(/^[^·]+· /, ""))}</b><span>✓ ${esc(x.reason)}</span></span></div>`).join("")}</div>`;
+        <span class="dn"><b translate="no">${esc(x.name.replace(/^[^·]+· /, ""))}</b><span>✓ ${esc(x.reason)}</span></span></div>`).join("")}</div>`;
       if (skip.length) h += `<details class="more"><summary>Не уйдёт: ${skip.length}</summary><div class="dlist">${skip.map(row).join("")}</div></details>`;
     }
     if (p.not_configured.length && !noPlat) h += `<span class="muted small">Не подключены: ${esc(p.not_configured.join(", "))}. <a href="#" data-view-link="platforms" data-tab="telegram">Настроить</a></span>`;
     if (errs.length) h += `<ul class="errs">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`;
     h += `</div>`;
     if (d.rating && will.some((x) => x.key.startsWith("telegram:") && x.key !== "telegram:group")) h += `<div class="side-sec" id="fcbox">${fcHtml()}</div>`;
-    h += `<div class="side-sec"><button class="btn small" data-pa="post-check" aria-expanded="${s.postPanel==='checks'}" aria-controls="post-tools" ${s.pubBusy==='features'?'disabled':''}>${s.pubBusy==='features'?'Проверяю…':'Проверить пост'}</button>
+    h += `<div class="side-sec"><button class="btn small" data-pa="post-check" aria-expanded="${s.postPanel==='checks'}" aria-controls="post-tools" ${s.pubBusy==='features'?'disabled':''}>${s.pubBusy==='features'?'Проверяю…':window.I18N.key('post.check')}</button>
       ${s.readiness && !s.readiness.ready || s.composition?.errors?.length?'<p class="err small" role="alert">Есть замечания — откройте проверку поста.</p>':''}
       ${s.readiness?.ready?'<span class="ok small">Локальные проверки пройдены</span>':''}</div>`;
     const hard = (p.errors || []).filter((e) => !soft(e));
@@ -843,12 +859,12 @@
       h += whenHtml() + `<div class="splitbtn"><button class="btn primary big" data-pa="schedule" ${ok ? "" : "disabled"}>${at ? `Запланировать на ${fmtWhen(at)}` : "Выберите время"}</button>
         <button class="btn big" data-set="when" data-val="now" data-tip="Не планировать — опубликовать сейчас" aria-label="Не планировать">${C().ICON.close}</button></div>`;
     } else {
-      h += `<div class="splitbtn"><button class="btn primary big" data-pa="publish" ${can ? "" : "disabled"}>Опубликовать сейчас</button>
+      h += `<div class="splitbtn"><button class="btn primary big" data-pa="publish" ${can ? "" : "disabled"}>${window.I18N.key('post.publish')}</button>
         <button class="btn primary big" data-set="when" data-val="later" data-tip="Запланировать на время" aria-label="Запланировать" ${d.rating ? "" : "disabled"}>${C().ICON.clock}</button></div>
         <button class="btn big" style="width:100%;margin-top:8px" data-pa="pipe-add" ${can && will.length && d.rating ? "" : "disabled"} data-tip="Положить пост в очередь: Crosspost сам выберет лучшее свободное время по вашей статистике и опубликует">В конвейер</button>`;
     }
     if (hard.some(e6wait) && hard.length === (p.errors || []).filter(e6wait).length) h += `<p class="small warnline">${BN()} ждёт теги: заполните форму «Теги ${BN()}» или выключите ${BN()} для этого поста.</p>`;
-    if (s.schedMsg) h += `<p class="ok small">${esc(s.schedMsg)}. <a href="#" data-view-link="history">Открыть «Историю»</a></p>`;
+    if (s.schedMsg) h += `<p class="ok small">${esc(s.schedMsg)}. <a href="#" data-view-link="history">Открыть публикации</a></p>`;
     return h + `</div>`;
   }
   // ----- когда публиковать -----
@@ -895,7 +911,7 @@
       const [ic, lbl] = (x.state === "error" && x.outcome !== "not_sent" ? ["?", "возможно, опубликовано"] : STATE_ICON[x.state]) || ["?", x.state];
       const warn = x.note && /⚠/.test(x.note);
       return `<div class="prow ${x.state}"><span class="pic" title="${lbl}">${ic}</span>
-        <div style="flex:1;min-width:0"><b>${esc(x.name)}</b><br>
+        <div style="flex:1;min-width:0"><b translate="no">${esc(x.name)}</b><br>
           <span class="muted small">${esc((x.details || []).join(" · "))}</span>
           ${x.state === "running" ? `<div class="progress thin"><div style="width:${Math.round((x.progress || 0) * 100)}%"></div></div>` : ""}
           ${x.state === "running" && x.message ? `<span class="small">${esc(x.message)} ${Math.round((x.progress || 0) * 100)}%</span>` : ""}
@@ -904,12 +920,12 @@
           ${x.note ? `<br><span class="small ${warn ? "warn" : "muted"}">${esc(x.note)}</span>` : ""}</div>
         ${x.link && /^https?:/.test(x.link) ? `<a href="#" class="small" data-open="${esc(x.link)}">Открыть</a>` : ""}</div>`;
     };
-    return `<div class="head"><div><h1>${esc(st.title || "Публикация")}</h1>
+    return `<div class="head"><div><h1 translate="no">${esc(st.title || "Публикация")}</h1>
         <p class="muted">${ratingPill(st.rating)} ${running ? "Публикуется…" : "Готово"} · ${ok} из ${st.dests.length} ${bad ? `· <span class="err">ошибок: ${bad}</span>` : ""}</p></div></div>
       ${running ? `<div class="progress"><div style="width:${Math.round((job.progress || 0) * 100)}%"></div></div>
         <p><button class="btn small" data-pa="job-cancel" data-key="publish" ${job.cancel ? "disabled" : ""}>${job.cancel ? "Отменяю…" : "Отменить"}</button> <span class="muted small">Уже вышедшие посты останутся — отменится то, что ещё не отправлено.</span></p>` : ""}
       <section class="card" style="max-width:900px">${st.dests.map(row).join("")}
-        ${st.skipped && st.skipped.length ? `<details class="more"><summary>Пропущено: ${st.skipped.length}</summary><div class="dlist">${st.skipped.map((x) => `<div class="small"><b>${esc(x.name)}</b> — <span class="muted">${esc(x.reason)}</span></div>`).join("")}</div></details>` : ""}
+        ${st.skipped && st.skipped.length ? `<details class="more"><summary>Пропущено: ${st.skipped.length}</summary><div class="dlist">${st.skipped.map((x) => `<div class="small"><b translate="no">${esc(x.name)}</b> — <span class="muted">${esc(x.reason)}</span></div>`).join("")}</div></details>` : ""}
       </section>
       ${job && job.state === "error" ? `<p class="err">Публикация прервалась: ${esc(job.error)}</p>` : ""}
       <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -919,8 +935,8 @@
         ${!running && st.pub_id ? `<button class="btn" data-pa="extend" data-id="${st.pub_id}" data-tip="Отправить этот же пост туда, куда он не ушёл — без второго поста в истории">Дослать на другие площадки</button>` : ""}
         ${!running ? `<button class="btn ${bad ? "" : "primary"}" data-pa="newpost">Новый пост</button><button class="btn" data-pa="backedit">Вернуться к посту</button>` : ""}
       </div>
-      ${journalHtml(st.pub_id)}
-      <p class="note">Обычный повтор отправит пост только туда, где подтверждён отказ. При неизвестном результате сначала проверьте площадку: пост мог уже появиться. Если пост уже вышел, а не дошли только PNG, они дошлются к нему же — второй пост не создаётся.</p>`;
+      <p class="note">Обычный повтор отправит пост только туда, где подтверждён отказ. При неизвестном результате сначала проверьте площадку: пост мог уже появиться. Если пост уже вышел, а не дошли только PNG, они дошлются к нему же — второй пост не создаётся.</p>
+      ${journalHtml(st.pub_id,'progress')}`;
   }
 
   // ---------------- История ----------------
@@ -929,6 +945,7 @@
     const w = S().worker;
     if (!w) return "";
     if (w.running) return `<span class="muted small">Пост отправит фоновая отправка — окно Crosspost можно закрыть.</span>`;
+    if(!w.running && !w.off && w.work)return `<p class="muted small">Фоновая отправка запускается. Дождитесь подтверждения перед закрытием окна.</p>`;
     if (w.idle) return `<span class="muted small">Фоновая отправка запустится сама, когда пост будет запланирован, — окно Crosspost можно закрыть.</span>`;
     return `<div class="wk warn small">Фоновая отправка выключена: пост выйдет, только если окно Crosspost будет открыто.
       <button class="btn small" data-pa="wk-start">Включить</button></div>`;
@@ -939,6 +956,7 @@
     if (!P) return "";
     const ICON = C().ICON, c = P.cfg, items = P.items || [];
     const hint = C().hint;
+    if(!items.length&&!c.enabled&&!s.pipeCfg)return `<details class="more"><summary>Автоматическая очередь</summary><div class="morebody"><p class="muted">Автоматическая очередь пока не используется. Посты с ручным временем публикуются по своему расписанию.</p><button class="btn small" data-pa="pipe-toggle">Включить автоматическую очередь</button><button class="btn small ghost" data-pa="pipe-cfg">Настройки</button></div></details>`;
     const EXPL = [[0, "Только лучшие окна"], [0.25, "Иногда пробовать новые"], [0.45, "Часто пробовать новые"]];
     const exSel = EXPL.reduce((b, x) => Math.abs(x[0] - c.explore) < Math.abs(b[0] - c.explore) ? x : b);
     const opt = (v, cur, l) => `<option value="${v}" ${String(v) === String(cur) ? "selected" : ""}>${l}</option>`;
@@ -947,14 +965,14 @@
       const when = r.state === "running" ? `<span class="small" style="color:var(--accent)">публикуется…</span>`
         : r.state === "editing" ? `<span class="warnline small">Редактируется — отправка приостановлена</span>` : r.state === "failed" ? `<span class="err small">не вышел: ${esc(r.error || "ошибка")}</span>`
         : r.state === "missed" ? `<span class="err small">пропущен — получит новое время</span>`
-        : at ? `<span class="muted small">${esc(r.human)}</span>` : `<span class="muted small">${c.enabled ? "ищу свободное окно…" : "ждёт включения конвейера"}</span>`;
+        : at ? `<span class="muted small">${esc(r.human)}</span>` : `<span class="muted small">${c.enabled ? "ищу свободное время…" : "ждёт включения конвейера"}</span>`;
       const mv = s.pipeMove === r.id;
       const box = at ? `<div class="datebox"><b>${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}</b><span>${at.getDate()} ${MONS[at.getMonth()]}</span></div>` : `<div class="datebox"><b>—</b><span>очередь</span></div>`;
       return `<div class="sitem ${r.state === "missed" || r.state === "failed" ? "missed" : ""}">
         ${box}
         ${img ? `<img src="/uthumb/${esc(img)}?t=${tok()}" alt="" onerror="this.style.visibility='hidden'">` : `<div class="noimg"></div>`}
         <div style="min-width:0;display:flex;flex-direction:column;gap:3px">
-          <div style="display:flex;gap:8px;align-items:center;min-width:0"><b class="clip" style="-webkit-line-clamp:1;color:var(--ink)">${esc(r.title || r.text || "Без названия")}</b>${ratingPill(r.rating)}${r.pinned ? `<span class="pill" data-tip="Время закреплено — конвейер его не двигает">📌</span>` : ""}</div>
+          <div style="display:flex;gap:8px;align-items:center;min-width:0"><b class="clip" style="-webkit-line-clamp:1;color:var(--ink)" translate="no">${esc(r.title || r.text || "Без названия")}</b>${ratingPill(r.rating)}${r.pinned ? `<span class="pill" data-tip="Время закреплено — конвейер его не двигает">📌</span>` : ""}</div>
           <span style="display:flex;gap:10px;flex-wrap:wrap">${when}<span class="muted small">${r.dests} ${C().plural(r.dests, "место", "места", "мест")}</span></span>
           ${r.why && r.state !== "failed" ? `<span class="muted small">${esc(r.why)}</span>` : ""}
           ${mv ? `<div class="row" style="align-items:center;gap:8px;margin-top:4px"><input type="datetime-local" id="pmv-${r.id}" min="${localInput(new Date())}" value="${at ? localInput(at) : ""}"><button class="btn small primary" data-pa="pipe-pin" data-id="${r.id}">Закрепить</button>${r.pinned ? `<button class="btn small" data-pa="pipe-unpin" data-id="${r.id}">Снять закрепление</button>` : ""}<button class="btn small ghost" data-pa="pipe-pin-cancel">Отмена</button></div>` : ""}
@@ -966,7 +984,7 @@
           <button class="icon-btn danger" data-pa="pipe-remove" data-id="${r.id}" data-tip="Убрать из конвейера" aria-label="Убрать">${ICON.trash}</button></div>` : ""}
       </div>`;
     };
-    return `<section class="card pipecard"><div class="head"><h2>Конвейер ${hint("Кладёте готовые посты в очередь кнопкой «В конвейер» на экране нового поста — Crosspost сам выбирает время по вашей статистике (окна «день недели × 3 часа») и публикует в фоновой отправке. Время можно закрепить вручную. Если пост сорвался — повторит через 20 минут, до двух раз.")}</h2>
+    return `<section class="card pipecard"><div class="head"><h2>Автоматическая очередь ${hint("Кладёте готовые посты в очередь кнопкой «В конвейер» на экране нового поста — Crosspost сам выбирает время по вашей статистике (окна «день недели × 3 часа») и публикует в фоновой отправке. Время можно закрепить вручную. Если пост сорвался — повторит через 20 минут, до двух раз.")}</h2>
         <span class="spacer"></span><button class="btn small ${c.enabled ? "" : "primary"}" data-pa="pipe-toggle">${c.enabled ? "Поставить на паузу" : "Включить"}</button>
         <button class="btn small ghost" data-pa="pipe-cfg">Настройки</button></div>
       ${!c.enabled ? `<p class="muted small" style="margin:0 0 8px">Конвейер на паузе: посты ждут в очереди без времени.</p>` : ""}
@@ -976,7 +994,7 @@
         <label>Окна<select data-pipe="explore">${EXPL.map((x) => opt(x[0], exSel[0], x[1])).join("")}</select></label>
         <label>Планировать вперёд<select data-pipe="horizon_days">${[7, 14, 30, 60].map((v) => opt(v, c.horizon_days, v + " дн")).join("")}</select></label>
         <p class="muted small" style="margin:6px 0 0">Изучено окон: ${P.windows.solid} из ${P.windows.cells} (3 и больше постов). «Пробовать новые» — иногда ставить пост в окно, где данных мало, чтобы статистика пополнялась. Лимит «в сутки» общий для всех площадок.</p></div>` : ""}
-      ${items.length ? `<div class="pinned" style="margin-top:6px">${items.map(row).join("")}</div>` : `<p class="muted small" style="margin:0">Очередь пуста. Подготовьте пост и нажмите «В конвейер».</p>`}
+      ${items.length ? `<div class="pinned" style="margin-top:6px">${items.map(row).join("")}</div>` : `<p class="muted small" style="margin:0">В автоматической очереди пока нет постов. Подготовьте пост и нажмите «В конвейер».</p>`}
     </section>`;
   }
   function schedHtml() {
@@ -986,12 +1004,12 @@
     return `<div class="pinned">${list.map((r) => {
       const img = (r.files || [])[0], at = new Date(r.run_at);
       const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-      const state = r.state === "editing" ? `<span class="warnline small">Редактируется — отправка приостановлена</span>` : r.state === "missed" ? `<span class="err small">пропущен — окно было закрыто</span>` : r.state === "running" ? `<span class="small" style="color:var(--accent)">публикуется…</span>` : `<span class="muted small">${esc(r.human)}</span>`;
+      const state = r.state === "editing" ? `<span class="warnline small">Редактируется — отправка приостановлена</span>` : r.state === "missed" ? `<span class="err small">время прошло — выберите новое</span>` : r.state === "running" ? `<span class="small" style="color:var(--accent)">публикуется…</span>` : `<span class="muted small">${esc(r.human)}</span>`;
       return `<div class="sitem ${r.state === "missed" ? "missed" : ""}">
         <div class="datebox"><b>${time}</b><span>${at.getDate()} ${MONS[at.getMonth()]}</span></div>
         ${img ? `<img src="/uthumb/${esc(img)}?t=${tok()}" alt="" onerror="this.style.visibility='hidden'">` : `<div class="noimg"></div>`}
         <div style="min-width:0;display:flex;flex-direction:column;gap:3px">
-          <div style="display:flex;gap:8px;align-items:center;min-width:0"><b class="clip" style="-webkit-line-clamp:1;color:var(--ink)">${esc(r.title || r.text || "Без названия")}</b>${ratingPill(r.rating)}</div>
+          <div style="display:flex;gap:8px;align-items:center;min-width:0"><b class="clip" style="-webkit-line-clamp:1;color:var(--ink)" translate="no">${esc(r.title || r.text || "Без названия")}</b>${ratingPill(r.rating)}</div>
           <span style="display:flex;gap:10px;flex-wrap:wrap">${state}<span class="muted small">${r.dests} ${C().plural(r.dests, "место", "места", "мест")}</span></span>
           ${s.moving === r.id ? `<div class="row" style="align-items:center;gap:8px;margin-top:4px"><input type="datetime-local" id="mv-${r.id}" min="${localInput(new Date())}" value="${localInput(at)}"><button class="btn small primary" data-pa="sched-move" data-id="${r.id}">Сохранить</button><button class="btn small ghost" data-pa="sched-move-cancel">Отмена</button></div>` : ""}
         </div>
@@ -1023,7 +1041,7 @@
   const pubKind = (r) => { const k = new Set((r.files || []).map((f) => f.kind)); return k.has("video") ? "vid" : k.has("gif") ? "gif" : "img"; };
   // нет превью (в выгрузке не было файла) — вместо пустого квадрата: тип и начало подписи, чтобы пост можно было узнать
   const phKind = (kind, media) => kind === "vid" ? "▶ Видео" : kind === "gif" ? "GIF" : media === "text" ? "Текст" : media === "document" ? "Файл" : "Фото";
-  const phHtml = (it) => `<span class="ph"><b>${phKind(it.kind, it.media)}</b><i>${esc((it.text || "").trim().slice(0, 48))}</i></span>`;
+  const phHtml = (it) => `<span class="ph"><b>${phKind(it.kind, it.media)}</b><i translate="no">${esc((it.text || "").trim().slice(0, 48))}</i></span>`;
   const thumbOf = (it) => it.preview ? `/mthumb/${encodeURIComponent(it.preview)}?t=${tok()}` : it.pub_id ? `/pthumb/${it.pub_id}?t=${tok()}` : "";
   const curYm = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
   const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
@@ -1081,7 +1099,7 @@
     if (!c || !c.leaders || !c.leaders.length) return "";
     return `<div class="leaders"><h3>${title || "Лидеры месяца"}</h3><div class="lrow">${c.leaders.map((it, i) => `<button class="ld" data-cw="${esc(it.key)}">
           <span class="lt">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : phHtml(it)}${C().badges({ kind: it.kind, n: it.n_media, rank: it.index != null ? i + 1 : 0, scope: "за месяц", index: it.index, est: it.est, sm: true })}${mk(it.index, it.est)}</span>
-          <span class="ln"><b>${esc((it.text || "").split("\n")[0].slice(0, 40) || it.channels.join(", "))}</b><span class="muted small">${it.day.slice(8)}.${it.day.slice(5, 7)}, ${esc(it.channels[0] || "")}</span></span></button>`).join("")}</div></div>`;
+          <span class="ln"><b translate="no">${esc((it.text || "").split("\n")[0].slice(0, 40) || it.channels.join(", "))}</b><span class="muted small">${it.day.slice(8)}.${it.day.slice(5, 7)}, ${esc(it.channels[0] || "")}</span></span></button>`).join("")}</div></div>`;
   }
   function calendarHtml() {
     const s = S(), ym = s.calYm || curYm(), c = (s.cal || {})[ym], ICON = C().ICON;
@@ -1108,7 +1126,7 @@
       const best = list.length ? list[0].index : null;
       const show = list.slice(0, 4), more = list.length - show.length;
       const n = show.length;
-      const works = show.map((it, i) => `<button class="cw ${(s.calSel || []).includes(it.key) ? "picked" : ""}" data-cw="${esc(it.key)}" aria-label="${esc(it.text || it.channels.join(", "))}">
+      const works = show.map((it, i) => `<button class="cw ${(s.calSel || []).includes(it.key) ? "picked" : ""}" data-cw="${esc(it.key)}" data-user-attrs="aria-label" aria-label="${esc(it.text || it.channels.join(", "))}">
           ${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : phHtml(it)}
           ${C().badges({ kind: it.kind, n: it.n_media, kinds: false, single: true, rank: rankOf[it.key], scope: "за месяц", index: it.index, est: it.est, sm: true })}
           ${mk(it.index, it.est)}${i === 3 && more > 0 ? `<span class="more">+${more}</span>` : ""}${it.app ? "" : ""}</button>`).join("");
@@ -1119,7 +1137,7 @@
         ${n ? `<div class="cg n${Math.min(n, 4)}">${works}</div>` : ""}${plan ? `<div class="csl">${plan}</div>` : ""}</div>`;
     }
     h += `<div class="cal"><div class="cdow">${DOWS.map((x) => `<span>${x}</span>`).join("")}</div><div class="cgrid">${cells}</div></div>`;
-    h += leadersHtml(c);
+
     return h + `</section>`;
   }
   // список работ выбранного дня (под календарём)
@@ -1132,7 +1150,7 @@
         <button class="btn small ghost" data-pa="cal-day-clear">${ICON.close} Весь месяц</button></div>
       ${list.length ? `<div class="hlist">${list.map((it) => `<div class="hitem" role="button" tabindex="0" data-cw="${esc(it.key)}">
         <span class="hthumb">${thumbOf(it) ? `<img src="${thumbOf(it)}" alt="" loading="lazy">` : phHtml(it)}${C().badges({ kind: it.kind, n: it.n_media, rank: rankOfMonth(it.key), scope: "за месяц", index: it.index, est: it.est, sm: true })}</span>
-        <div class="ht"><b>${esc((it.text || "").split("\n")[0].slice(0, 80) || "Без подписи")}</b><span>${it.time} · ${esc(it.channels.join(", "))}${it.app ? ` <span class="pill">Crosspost</span>` : ""}</span></div>
+        <div class="ht"><b translate="no">${esc((it.text || "").split("\n")[0].slice(0, 80) || "Без подписи")}</b><span>${it.time} · ${esc(it.channels.join(", "))}${it.app ? ` <span class="pill">Crosspost</span>` : ""}</span></div>
         <div></div><div class="metrics">${it.views != null ? `<span class="metric">${ICON.eye}${n(it.views)}</span>` : ""}${it.index != null ? mk(it.index, it.est, "big") : ""}</div><span class="chev">${ICON.chev}</span></div>`).join("")}</div>`
         : `<p class="muted">В этот день ничего не выходило.</p>`}`;
   }
@@ -1146,7 +1164,7 @@
     const n = C().num;
     const views = it.views != null ? n(it.views) : "—";
     return `${thumbOf(it) ? `<div class="hci"><img src="${thumbOf(it).replace("/mthumb/", "/media/")}" alt="">${C().badges({ kind: it.kind, n: it.n_media, rank: rankOfMonth(it.key), scope: "за месяц", index: it.index, est: it.est })}</div>` : ""}
-      <div class="hcb"><div class="hch"><b>${esc((it.text || "").split("\n")[0].slice(0, 70) || "Без подписи")}</b>${mk(it.index, it.est, "big")}</div>
+      <div class="hcb"><div class="hch"><b translate="no">${esc((it.text || "").split("\n")[0].slice(0, 70) || "Без подписи")}</b>${mk(it.index, it.est, "big")}</div>
         <span class="muted small">${new Date(it.ts * 1000).toLocaleString(LOC, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })} · ${esc(it.channels.join(", "))}</span>
         <div class="hcn"><span>${it.by_views ? "Просмотры" : "Реакции"}<b>${it.by_views ? views : n(it.reactions || 0)}</b></span>
           ${it.by_views ? `<span>Реакции<b>${n(it.reactions || 0)}</b></span>` : ""}<span>Пересылки<b>${n(it.forwards || 0)}</b></span></div>
@@ -1202,22 +1220,20 @@
   }, true);
   document.addEventListener("dragend", () => { S().dragSid = null; document.querySelectorAll(".cc.drop").forEach((el) => el.classList.remove("drop")); });
 
+  async function loadInsights(){const key=curYm(),ticket=requests.begin('insights',key);try{const c=await C().api('calendar_month',{ym:key});if(requests.current(ticket))S().statsCalendar=c;}catch(e){S().statsCalendar=null;}}
+  function insightsHtml(){const c=S().statsCalendar;return C().newsStrip()+(c&&!c.error&&c.leaders?.length?`<section class="card">${leadersHtml(c,'Лидеры месяца')}</section>`:'');}
   function renderHistory() {
     const s = S(), rows = s.hist;
-    const mode = s.histMode || (s.histMode = C().store.get("histMode", "cal"));
-    const nSched = (s.sched || []).filter((r) => ["pending", "running", "missed", "editing"].includes(r.state)).length;
-    let h = `<div class="toolbar"><h1>История</h1><span class="spacer"></span>
-      ${mode === "list" && rows && rows.length ? `${C().seg("hf", [["all", `Все ${rows.length}`], ["hits", "Хиты"], ["sched", `Запланированные${nSched ? " " + nSched : ""}`]], s.hf || "all")}
-        <select class="sm" id="hsort" aria-label="Сортировка"><option value="date">Сначала новые</option><option value="index" ${s.hsort === "index" ? "selected" : ""}>По индексу на странице</option></select>` : ""}
-      ${C().seg("histMode", [["cal", "Календарь"], ["list", "Список"]], mode)}</div>`;
-    if (mode === "list") h += historySearchHtml();
-    if (mode === "cal") {
-      h += pipelineHtml() + schedHtml() + C().newsStrip() + calendarHtml() + dayListHtml();
-    } else {
-      const cm = (s.cal || {})[s.calYm || curYm()], [ly, lm] = (s.calYm || curYm()).split("-").map(Number);
-      h += pipelineHtml() + C().newsStrip();
-      if (s.hf !== "hits") h += schedHtml();
-      if (cm && !cm.error && cm.leaders && cm.leaders.length) h += `<section class="card">${leadersHtml(cm, `Лидеры: ${MONTHS[lm - 1].toLowerCase()} ${ly}`)}</section>`;
+    const previous=s.histMode||C().store.get('histMode','calendar');
+    const mode=s.histMode=['published','list'].includes(previous)?'published':'calendar';
+    const nSched=(s.sched||[]).filter(r=>['pending','running','missed','editing','queued','failed'].includes(r.state)).length;
+    let h=`<div class="toolbar"><h1>Публикации</h1><span class="spacer"></span><button class="btn small ${s.queueOpen?'on':''}" data-pa="history-queue" aria-expanded="${!!s.queueOpen}" aria-controls="history-queue">Очередь${nSched?' · '+nSched:''}</button><div class="seg" role="tablist" aria-label="Вид публикаций">${[['calendar','history.calendar'],['published','history.list']].map(([key,label])=>`<button role="tab" aria-selected="${mode===key}" class="${mode===key?'on':''}" data-pa="history-tab" data-tab="${key}">${window.I18N.key(label)}</button>`).join('')}</div></div>`;
+    h+=`<div id="history-queue" ${s.queueOpen?'':'hidden'}>${s.queueOpen?`<section class="card"><div class="head"><h2>Очередь</h2><button class="btn small ghost" data-pa="history-queue">Свернуть очередь</button></div>${workerHtml()}${schedHtml()}${pipelineHtml()}${nSched?'':'<p class="muted">Очередь пуста. Подготовьте пост и выберите время публикации.</p>'}</section>`:''}</div>`;
+    if(mode==='calendar'){
+      h+=calendarHtml()+dayListHtml();
+    }else{
+      h+=historySearchHtml();
+      h+=`<div class="toolbar">${C().seg('hf',[['all','Все'],['hits','Хиты на странице']],s.hf==='hits'?'hits':'all')}<span class="spacer"></span><select class="sm" id="hsort" aria-label="Сортировка"><option value="date">Сначала новые</option><option value="index" ${s.hsort==='index'?'selected':''}>По индексу на странице</option></select></div>`;
       if (!rows) { C().$main.innerHTML = h + `<p class="muted">Загрузка…</p>`; return; }
       if (!rows.length) {
         const filtered=Object.values(s.historyFilters||{}).some(Boolean);
@@ -1227,16 +1243,16 @@
       let list = rows.slice();
       if (s.hf === "hits") list = list.filter((r) => (sum[String(r.id)] || {}).index >= C().LV().hit);
       if (s.hsort === "index") list.sort((a, b) => ((sum[String(b.id)] || {}).index || 0) - ((sum[String(a.id)] || {}).index || 0));
-      if (s.hf !== "sched") h += list.length ? `<div class="hlist">${list.map((r) => {
+      h += list.length ? `<div class="hlist">${list.map((r) => {
         const title = r.title || (r.text || "").split("\n")[0].slice(0, 80) || "Без названия";
         const dt = new Date(r.created), x = sum[String(r.id)] || {};
-        return `<div class="hitem ${x.index >= C().LV().super ? "lead" : ""}" role="button" tabindex="0" data-pa="pstat" data-id="${r.id}" aria-label="Статистика поста ${esc(title)}">
+        return `<div class="hitem ${x.index >= C().LV().super ? "lead" : ""}" role="button" tabindex="0" data-pa="pstat" data-id="${r.id}" data-user-attrs="aria-label" aria-label="Статистика поста ${esc(title)}">
           <span class="hthumb">${pubThumb(r)}${C().badges({ kind: pubKind(r), n: (r.files || []).length, rank: x.rank, scope: "за месяц", index: x.index, est: x.fresh, sm: true })}</span>
-          <div class="ht"><b>${esc(title)}</b><span>${dt.toLocaleDateString(LOC, { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
+          <div class="ht"><b translate="no">${esc(title)}</b><span>${dt.toLocaleDateString(LOC, { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
           ${destBadges(r.dests)}${metricsHtml(r)}<span class="chev">${C().ICON.chev}</span></div>`;
       }).join("")}</div>` : `<p class="muted">Хитов пока нет — здесь будут посты лучше 90% постов канала (сейчас это ${String(C().LV().hit.toFixed(2)).replace(".", DEC)} к норме и выше).</p>`;
     }
-    if (s.pubErr?.features) h += `<p class="err">${esc(s.pubErr.features)}</p>`;
+    if (s.pubErr?.features) h += C().problemHtml(s.pubErr.features);
     if (s.pstatOpen) h += drawerHtml(s.pstatOpen);
     C().$main.innerHTML = h;
   }
@@ -1270,11 +1286,11 @@
       ${big ? bigHtml(big, false) : ""}
       <aside class="drawer" role="dialog" aria-label="Статистика поста">
         <div class="dh">${img || `<div class="noimg"></div>`}
-          <div style="min-width:0;display:flex;flex-direction:column;gap:6px"><b style="font-size:15px">${esc(title || "Без названия")}</b>
+          <div style="min-width:0;display:flex;flex-direction:column;gap:6px"><b style="font-size:15px" translate="no">${esc(title || "Без названия")}</b>
             <span class="muted small">${sub}</span>${badges}
-            ${(() => { const d = (s.pstat || {})[key] || {}; if (kind === "pub" || kind === "cal") return ""; const t = d.text && d.text.length > (title || "").length ? esc(d.text.slice(0, 140)) : ""; const hint = !d.preview && d.media !== "text" ? "Превью нет: файла не было в выгрузке. Сделайте экспорт канала с включёнными фото и видео и импортируйте снова — превью добавятся." : ""; return t || hint ? `<span class="muted small">${t}${t && hint ? "<br>" : ""}${hint}</span>` : ""; })()}</div>
+            ${(() => { const d = (s.pstat || {})[key] || {}; if (kind === "pub" || kind === "cal") return ""; const t = d.text && d.text.length > (title || "").length ? esc(d.text.slice(0, 140)) : ""; const hint = !d.preview && d.media !== "text" ? "Превью нет: файла не было в выгрузке. Сделайте экспорт канала с включёнными фото и видео и импортируйте снова — превью добавятся." : ""; return t || hint ? `<span class="muted small"><span translate="no">${t}</span>${t && hint ? "<br>" : ""}${hint}</span>` : ""; })()}</div>
           <button class="icon-btn" data-pa="pstat-close" aria-label="Закрыть">${C().ICON.close}</button></div>
-        <div class="db">${kind === "pub" ? journalHtml(id) : ""}${String(key).startsWith("cal:") ? calStatHtml(String(key).slice(4)) : pstatHtml(key)}</div></aside>`;
+        <div class="db">${String(key).startsWith("cal:") ? calStatHtml(String(key).slice(4)) : pstatHtml(key)}${kind === "pub" ? journalHtml(id,'history') : ""}</div></aside>`;
   }
   function calStatHtml(ik) {
     const it = calItems()[ik];
@@ -1297,7 +1313,7 @@
     if (i < 0) return "";
     const f = d.files[i], n = d.files.length;
     return bigHtml(`/ubig/${f.id}?t=${tok()}`, true, `<button class="bpclose" data-pa="view-close" aria-label="Закрыть">${C().ICON.close}</button>
-      <div class="bpcap"><b>${esc(f.name)}</b><span>${f.width ? f.width + "×" + f.height + " · " : ""}${mb(f.size)}${n > 1 ? ` · ${i + 1} из ${n}` : ""}</span></div>
+      <div class="bpcap"><b translate="no">${esc(f.name)}</b><span>${f.width ? f.width + "×" + f.height + " · " : ""}${mb(f.size)}${n > 1 ? ` · ${i + 1} из ${n}` : ""}</span></div>
       ${n > 1 ? `<button class="bpnav prev" data-pa="view-prev" aria-label="Предыдущая">‹</button><button class="bpnav next" data-pa="view-next" aria-label="Следующая">›</button>` : ""}`);
   }
   function viewStep(dir) {
@@ -1400,7 +1416,7 @@
   async function openDrawer(key) {
     const s = S(), api = C().api, [kind, id] = String(key).split(":");
     hideHoverCard();
-    s.pstatOpen = key; s.pstatErr = ""; s.pstat = s.pstat || {}; C().render();
+    s.pstatOpen = key; s.journalOpen=null; s.pstatErr = ""; s.pstat = s.pstat || {}; C().render();
     if (kind === "cal") return;
     try { s.pstat[key] = kind === "pub" ? await api("pub_stats", { pub_id: +id }) : await api("post_detail", { post_id: +id }); }
     catch (err) { s.pstat[key] = { error: err.message }; }
@@ -1453,7 +1469,7 @@
     if (!shown.length) h += `<p class="muted small">Площадки этого поста не отдают цифр — смотреть их можно только на самой площадке.</p>`;
     for (const x of shown) {
       const plat = x.platform || (x.key || "").split(":")[0];
-      h += `<div class="pdest"><div class="pdhead">${C().pbadge(plat)}<b>${esc(x.name)}</b>${x.link && /^https?:/.test(x.link) ? `<a href="#" data-open="${esc(x.link)}" class="small">открыть</a>` : ""}</div>`;
+      h += `<div class="pdest"><div class="pdhead">${C().pbadge(plat)}<b translate="no">${esc(x.name)}</b>${x.link && /^https?:/.test(x.link) ? `<a href="#" data-open="${esc(x.link)}" class="small">открыть</a>` : ""}</div>`;
       if (x.stats && x.stats.ok) {
         const st = x.stats, fc = x.forecast;
         if (x.verdict) h += `<p class="verdict">${esc(x.verdict)}</p>`;
@@ -1573,34 +1589,34 @@
       } else {
         h += `<div class="status">${badge("ok", "✓ Подключён")}<span>Публикует бот <b>@${esc(tg.bot_name)}</b></span><span class="grow1"></span>
             <button class="btn small ghost" data-pa="tg-newtoken">Сменить токен</button></div>
-          <div class="field"><span class="lbl">Связь с Telegram ${hint(tg.transport === "mtproto" ? "MTProto идёт теми же путями, что Telegram Desktop и импорт: с вашими настройками соединения (zapret, прокси)." : "Bot API ходит на api.telegram.org. Если он у вас не открывается — выберите MTProto.")}</span>
-            ${segP(`data-pa="tg-transport"`, [["botapi", "Bot API"], ["mtproto", "MTProto, как Telegram Desktop"]], tg.transport || "botapi")}</div>`;
+          <details class="more"><summary>Дополнительные параметры соединения</summary><div class="field"><span class="lbl">Связь с Telegram ${hint(tg.transport === "mtproto" ? "MTProto идёт теми же путями, что Telegram Desktop и импорт: с вашими настройками соединения (zapret, прокси)." : "Bot API ходит на api.telegram.org. Если он у вас не открывается — выберите MTProto.")}</span>
+            ${segP(`data-pa="tg-transport"`, [["botapi", "Bot API"], ["mtproto", "MTProto, как Telegram Desktop"]], tg.transport || "botapi")}</div></details>`;
       }
       h += `</section>`;
       if (tg.has_token && !s.tgNewToken) {
         h += `<section class="card setc"><div class="head"><h2>Каналы ${hint("SFW-канал — «Только SFW». 18+ канал — «Любой»: SFW-работы тоже уходят туда, а 18+ — только туда.")}</h2></div>
           ${tg.channels.length ? `<table class="dtable"><thead><tr><th>Канал</th><th>Что публиковать</th><th>PNG-оригиналы ${hint("«В комментарии» — у канала должна быть группа обсуждения, бот — админ и в ней. Бот ждёт копию поста в обсуждении до минуты.")}</th><th></th></tr></thead><tbody>
-            ${tg.channels.map((c, i) => `<tr><td><b>${esc(c.title || c.id)}</b><small>${esc(c.id)}</small></td>
+            ${tg.channels.map((c, i) => `<tr><td><b translate="no">${esc(c.title || c.id)}</b><small>${esc(c.id)}</small></td>
               <td>${sel(`data-pa="tg-chrating" data-i="${i}"`, RATE_OPTS, c.rating, "Что публиковать")}</td>
               <td>${sel(`data-pa="tg-chorig" data-i="${i}"`, ORIG, c.originals, "PNG-оригиналы")}</td>
               <td class="acts"><button class="btn small ghost" data-pa="tg-chcheck" data-i="${i}" ${busy("tg")}>Проверить</button><button class="icon-btn danger" data-pa="tg-chdel" data-i="${i}" data-tip="Убрать канал" aria-label="Убрать канал">${ICON.trash}</button></td></tr>`).join("")}
             </tbody></table>` : `<p class="muted">Каналов пока нет.</p>`}
           <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 300px"><label for="tgadd">Добавить канал</label>
             <input id="tgadd" list="tgknown" placeholder="@my_channel, ссылка t.me/… или id -100…">
-            <datalist id="tgknown">${known.filter((c) => c.broadcast !== false).map((c) => `<option value="${esc(c.chat_id)}">${esc(c.title)}</option>`).join("")}</datalist></div>
+            <datalist id="tgknown">${known.filter((c) => c.broadcast !== false).map((c) => `<option value="${esc(c.chat_id)}" translate="no">${esc(c.title)}</option>`).join("")}</datalist></div>
             <button class="btn" data-pa="tg-chadd" ${busy("tg")}>Проверить и добавить</button></div></section>`;
         const g = tg.group || {};
         h += `<section class="card setc"><div class="head"><h2>Группа с темами ${hint("Пост пересылается в тему группы: SFW — из SFW-канала, 18+ — из 18+ канала, под спойлером. Оригиналы в группу не идут.")}</h2><span class="muted small">необязательно</span></div>
           <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 300px"><label for="tggroup">Группа</label>
             <input id="tggroup" list="tgknowng" value="${esc(g.id || "")}" placeholder="ссылка t.me/… или id -100…">
-            <datalist id="tgknowng">${known.filter((c) => c.broadcast !== true).map((c) => `<option value="${esc(c.chat_id)}">${esc(c.title)}</option>`).join("")}</datalist></div>
+            <datalist id="tgknowng">${known.filter((c) => c.broadcast !== true).map((c) => `<option value="${esc(c.chat_id)}" translate="no">${esc(c.title)}</option>`).join("")}</datalist></div>
             <button class="btn" data-pa="tg-group" ${busy("tg")}>Проверить</button>${g.id ? `<button class="icon-btn danger" data-pa="tg-groupdel" data-tip="Убрать группу" aria-label="Убрать группу">${ICON.trash}</button>` : ""}</div>`;
         if (g.id) {
           const topics = s.topics || [];
           const tsel = (key, cur) => topics.length
-            ? `<select data-pa="tg-topic" data-k="${key}"><option value="0">не пересылать</option>${topics.map((t) => `<option value="${t.id}" ${+cur === t.id ? "selected" : ""}>${esc(t.title)}</option>`).join("")}</select>`
+            ? `<select data-pa="tg-topic" data-k="${key}"><option value="0">не пересылать</option>${topics.map((t) => `<option value="${t.id}" ${+cur === t.id ? "selected" : ""} translate="no">${esc(t.title)}</option>`).join("")}</select>`
             : `<input data-pa="tg-topicin" data-k="${key}" value="${cur || ""}" placeholder="номер или ссылка на тему">`;
-          h += `<p><b>${esc(g.title || g.id)}</b></p>
+          h += `<p><b translate="no">${esc(g.title || g.id)}</b></p>
             <div class="row"><div class="field" style="flex:1 1 220px"><label>Тема для SFW</label>${tsel("sfw", g.sfw_topic)}</div>
               <div class="field" style="flex:1 1 220px"><label>Тема для 18+</label>${tsel("nsfw", g.nsfw_topic)}</div></div>
             ${topics.length ? "" : `<div class="cardfoot">${s.pubKnown && s.pubKnown.authorized ? `<button class="btn small" data-pa="tg-topics">Загрузить список тем</button>` : `<span class="muted small">Номер темы — последнее число в ссылке на неё ${hint("«Копировать ссылку» на теме → t.me/c/123456/5, номер — 5. Можно вставить ссылку целиком.")}</span>`}
@@ -1624,7 +1640,7 @@
         <details class="how" ${dc.webhooks.length ? "" : "open"}><summary>Как получить ссылку вебхука</summary>
           <p>Канал Discord → «Настройки канала» → «Интеграция» → «Вебхуки» → «Новый вебхук» → «Копировать URL». Для 18+ канала включите в Discord «Канал с возрастным ограничением».</p></details>
         ${dc.webhooks.length ? `<table class="dtable"><thead><tr><th>Вебхук</th><th>Что публиковать</th><th></th></tr></thead><tbody>
-          ${dc.webhooks.map((w, i) => `<tr><td><b>${esc(w.name || "вебхук")}</b><small>…${esc((w.url || "").slice(-8))}</small></td>
+          ${dc.webhooks.map((w, i) => `<tr><td><b translate="no">${esc(w.name || "вебхук")}</b><small>…${esc((w.url || "").slice(-8))}</small></td>
             <td>${sel(`data-pa="dc-rating" data-i="${i}"`, RATE_OPTS, w.rating, "Что публиковать")}</td>
             <td class="acts"><button class="icon-btn danger" data-pa="dc-del" data-i="${i}" data-tip="Убрать вебхук" aria-label="Убрать вебхук">${ICON.trash}</button></td></tr>`).join("")}</tbody></table>` : ""}
         <div class="row" style="align-items:flex-end"><div class="field" style="flex:2 1 320px"><label for="dcurl">Ссылка вебхука</label><input id="dcurl" placeholder="https://discord.com/api/webhooks/…"></div>
@@ -1895,7 +1911,7 @@
       if (s.daWaiting) h += `<div class="callout"><p>Жду ответ DeviantArt… Если браузер показал ошибку адреса, скопируйте адрес из строки браузера сюда:</p>
           <div class="row" style="align-items:flex-end;flex:1 1 100%"><div class="field" style="flex:1 1 300px"><input id="daurl" placeholder="http://localhost:8765/callback?code=…"></div><button class="btn" data-pa="da-finish">Готово</button></div></div>`;
       h += `<div class="row" style="align-items:flex-end"><div class="field" style="flex:0 1 220px"><label for="darating">Какие посты сюда</label>${ratingSel("darating", d.rating, [["sfw", "Только SFW"], ["all", "SFW и эротика"]])}</div>
-          <div class="field" style="flex:1 1 220px"><label for="dagal">Папка галереи</label>${gal ? `<select id="dagal"><option value="">Без папки (Featured)</option>${gal.map((g) => `<option value="${esc(g.id)}" ${d.gallery_id === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select>`
+          <div class="field" style="flex:1 1 220px"><label for="dagal">Папка галереи</label>${gal ? `<select id="dagal"><option value="">Без папки (Featured)</option>${gal.map((g) => `<option value="${esc(g.id)}" ${d.gallery_id === g.id ? "selected" : ""} translate="no">${esc(g.name)}</option>`).join("")}</select>`
             : `<div style="display:flex;gap:8px;align-items:center"><span class="muted small">${esc(d.gallery_name || "Featured")}</span><button class="btn small" data-pa="da-gal">Выбрать…</button></div>`}</div></div>
         <div class="tgls"><label class="tgl"><input type="checkbox" id="daon" ${d.enabled ? "checked" : ""}><span>Публиковать на DeviantArt</span></label>
           <label class="tgl"><input type="checkbox" id="daai" ${d.is_ai_generated !== false ? "checked" : ""}><span>Отмечать как созданное ИИ ${hint("Правила DeviantArt требуют отмечать ИИ-работы. Без отметки работу могут скрыть.")}</span></label>
@@ -2089,26 +2105,29 @@
     const saveSec = async (sec, ch) => { s.pub = await api("pub_save", { section: sec, changes: ch }); };
     const backupFile = document.getElementById("backup-file")?.files[0];
     switch (act) {
+      case 'history-queue': s.queueOpen=!s.queueOpen;C().render();return true;
+      case 'history-tab': s.histMode=a.dataset.tab;C().store.set('histMode',s.histMode);C().render();return true;
+      case 'onboarding-dismiss': C().store.set('onboardingDone',true);C().render();return true;
       case 'post-panel':
         s.postPanel=s.postPanel===a.dataset.panel?null:a.dataset.panel;C().render();return true;
       case 'post-panel-close': s.postPanel=null;C().render();return true;
       case 'post-check':
         s.postPanel='checks';
         await guard('features',async()=>{
-          const payload=apiDraft();
+          const payload=apiDraft(),key=draftKey(),ticket=requests.begin("review",key);
           const results=await Promise.all([api('post_composition',{draft:payload}),api('post_readiness',{draft:payload,remote:false})]);
-          s.composition=results[0];s.readiness=results[1];
+          if(requests.current(ticket,draftKey())){s.composition=results[0];s.readiness=results[1];}
         });
         document.getElementById('post-tools')?.scrollIntoView({behavior:'smooth',block:'start'});return true;
       case 'draft-save': await guard('features',async()=>{
         if(d._saved){await flushSavedDraft();return;}
-        const name=prompt('Название черновика',d.title||'Без названия');if(!name)return;
+        const name=val('new-draft-name')||d.title||'Без названия';
         d._saved=await api('post_draft_save',{name,draft:apiDraft(),status:'working'});
         C().store.set('draft',d);s.savedDrafts=await api('post_drafts');s.draftLibraryOpen=true;
       });return true;
       case 'draft-copy': await guard('features',async()=>{
         clearTimeout(savedDraftTimer);await savedDraftChain.catch(()=>{});
-        const name=prompt('Название копии черновика',(d._saved?.name||d.title||'Черновик')+' (копия)');if(!name)return;
+        const name=val('draft-copy-name')||(d._saved?.name||d.title||'Черновик')+' (копия)';
         d._saved=await api('post_draft_save',{name,draft:apiDraft(),status:d._saved?.status||'working'});
         s.draftSaveError='';C().store.set('draft',d);s.savedDrafts=await api('post_drafts');
       });return true;
@@ -2157,7 +2176,7 @@
           await api('post_schedule_discard',{sid:edit.id,token:edit.token,revision:edit.revision});
           closeExtend();s.view='history';await load('history');
         });return true;
-      case 'duplicates': await guard('features',async()=>{s.duplicateResult=await api('post_duplicates',{draft:apiDraft()});});return true;
+      case 'duplicates': await guard('features',async()=>{const key=draftKey(),ticket=requests.begin('duplicates',key);const result=await api('post_duplicates',{draft:apiDraft()});if(requests.current(ticket,draftKey()))s.duplicateResult=result;});return true;
       case 'history-search': case 'history-reset': await guard('features',async()=>{
         s.historyFilters=act==='history-reset'?{}:{q:val('history-query'),platform:val('history-platform'),state:val('history-state'),date_from:val('history-from'),date_to:val('history-to')};
         await loadHistoryPage(0);
@@ -2166,10 +2185,17 @@
         await loadHistoryPage(act==='history-prev'?Math.max(0,s.historyPage.offset-s.historyPage.limit):s.historyPage.next_offset||0);
       });return true;
 
-      case "journal": await guard("features", async () => { s.publicationLog = await api("post_journal", {pub_id:+a.dataset.id}); }); return true;
+      case 'journal-toggle': {
+        const key=a.dataset.location+':'+(+a.dataset.id);
+        const focus=()=>document.getElementById('publication-journal-'+a.dataset.location+'-'+(+a.dataset.id))?.previousElementSibling?.focus({preventScroll:true});
+        if(s.journalOpen===key){s.journalOpen=null;C().render();focus();return true;}
+        s.journalOpen=key;
+        await guard('journal',async()=>{s.publicationLog=await api('post_journal',{pub_id:+a.dataset.id});});focus();return true;
+      }
+      case "journal": await guard("journal", async () => { s.publicationLog = await api("post_journal", {pub_id:+a.dataset.id}); }); return true;
       case "templates-refresh": s.templates = await api("post_templates"); C().render(); return true;
       case "template-save": {
-        const name = prompt("Название шаблона");
+        const name=val("template-name")||d.title||"Шаблон";
         if (!name) return true;
         await guard("features", async () => { s.templates = await api("post_template_save", {name, draft:apiDraft()}); }); return true;
       }
@@ -2186,8 +2212,8 @@
       case "template-reset": delete d.profile; delete d.templateName; saveDraft(); await refreshPlan(); C().render(); return true;
       case "template-delete":
         if (confirm("Удалить шаблон?")) { s.templates = await api("post_template_delete", {tid:a.dataset.id}); C().render(); } return true;
-      case "composition": await guard("features", async () => { s.composition = await api("post_composition", {draft:apiDraft()}); }); return true;
-      case "readiness": case "readiness-remote": await guard("features", async () => { s.readiness = await api("post_readiness", {draft:apiDraft(),remote:act === "readiness-remote"}); }); return true;
+      case "composition": await guard("features", async () => {const key=draftKey(),ticket=requests.begin("review",key);const result=await api("post_composition", {draft:apiDraft()});if(requests.current(ticket,draftKey()))s.composition=result;}); return true;
+      case "readiness": case "readiness-remote": await guard("features", async () => { const key=draftKey(),ticket=requests.begin("review",key);const result=await api("post_readiness", {draft:apiDraft(),remote:act === "readiness-remote"});if(requests.current(ticket,draftKey()))s.readiness=result; }); return true;
       case "backup-cancel":
         if (confirm("Отменить восстановление и оставить текущие данные? Фоновую отправку нужно будет включить вручную.")) await guard("backup", async () => { s.backupState = await api("backup_cancel_restore"); }); return true;
       case "backup-refresh": await guard("backup", async () => { s.backupState = await api("backup_status"); }); return true;
@@ -2365,6 +2391,7 @@
         try {
           const checked = await checkedPost(); if(!checked){s.publishing=false;C().render();return true;}
           const r = await api("post_schedule", Object.assign({},checked,{run_at:new Date(s.whenAt).toISOString()}));
+          if(r.worker)s.worker=r.worker;
           s.schedMsg = `Запланировано: ${r.human}`;
           // новый пост; файлы НЕ удаляем — они нужны запланированной публикации
           s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
@@ -2376,8 +2403,9 @@
         s.publishing = true; paintSide();
         try {
           const checked = await checkedPost(); if(!checked){s.publishing=false;C().render();return true;}
-          await api("pipeline_add", checked);
-          s.schedMsg = "Добавлено в конвейер";
+          const result=await api("pipeline_add", checked);
+          if(result.worker)s.worker=result.worker;
+          s.schedMsg=result.notice;
           s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
           saveDraft(); s.when = "now"; s.whenAt = null; await refreshPlan();
         } catch (err) { alert(err.message); }
@@ -2446,10 +2474,12 @@
         const srcT = toMain ? en : d, dstT = toMain ? d : en;
         if (!(srcT.title || "").trim() && !(srcT.text || "").trim()) { s.trMsg = "err:" + (toMain ? "Сначала напишите английский вариант" : "Сначала напишите заголовок или описание по-русски"); C().render(); return true; }
         if (((dstT.title || "").trim() || (dstT.text || "").trim()) && !confirm(toMain ? "Заменить основной заголовок и описание переводом с английского?" : "Заменить английский вариант новым переводом?")) return true;
+        const translationKey=JSON.stringify([srcT.title,srcT.text,dstT.title,dstT.text]);
         s.trBusy = true; s.trMsg = ""; C().render();
         try {
           const r = await api("pub_translate", { title: srcT.title || "", text: srcT.text || "", src: toMain ? "en" : "ru", dst: toMain ? "ru" : "en" });
-          if (!r.ok) s.trMsg = "err:" + r.error;
+          if(d!==draft()||translationKey!==JSON.stringify([srcT.title,srcT.text,dstT.title,dstT.text])){s.trMsg="warn:Текст изменился во время перевода — результат не применён. Повторите перевод.";}
+          else if (!r.ok) s.trMsg = "err:" + r.error;
           else {
             if (toMain) { d.title = r.title; d.text = r.text; }
             else { d.variants = d.variants || {}; d.variants.en = { title: r.title, text: r.text }; }
@@ -2807,5 +2837,5 @@
     if (files.length) { e.preventDefault(); uploadFiles(files); }
   });
 
-  window.Pub = { order: porder, byOrder, setOrder: async (o) => { S().pub = await C().api("pub_save", { section: "platform_order", changes: o }); await refreshPlan(); }, bpInit, drawerHtml, loadTags, load, tick, renderPost, renderHistory, settingsHtml, platStatus, onClick, onChange, openDrawer };
+  window.Pub = { insightsHtml, loadInsights, order: porder, byOrder, setOrder: async (o) => { S().pub = await C().api("pub_save", { section: "platform_order", changes: o }); await refreshPlan(); }, bpInit, drawerHtml, loadTags, load, tick, renderPost, renderHistory, settingsHtml, platStatus, onClick, onChange, openDrawer };
 })();

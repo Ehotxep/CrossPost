@@ -236,8 +236,9 @@ def apply(stop_worker: bool = True, restart: bool = True) -> dict:
     helper = _upd() / "apply_update.py"
     shutil.copyfile(Path(__file__).with_name("apply_update.py"), helper)
     from app import worker as W
+    from app.subproc import python_exe
     cmd = [sys.executable, str(helper), "--root", str(app_dir()), "--new", str(root), "--data", str(data_dir()),
-           "--pid", str(os.getpid()), "--version", rd["version"], "--python", sys.executable, "--pythonw", W._pythonw()]
+           "--pid", str(os.getpid()), "--version", rd["version"], "--python", python_exe(), "--pythonw", W._pythonw()]
     if not restart:
         cmd.append("--no-restart")
     kw = {"cwd": str(_upd()), "stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "close_fds": True}

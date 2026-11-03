@@ -10,8 +10,12 @@
   const api = { lang, loc: lang === "en" ? "en-GB" : "ru-RU" };
   window.LOC = api.loc;
   window.DEC = lang === "en" ? "." : ",";   // десятичный разделитель в числах, которые форматируем руками
+  const nativeConfirm=window.confirm.bind(window);
+  api.confirm=(label,content='',suffix='')=>nativeConfirm(api.t(label)+content+api.t(suffix));
   window.I18N = api;
   document.documentElement.lang = lang;
+  const KEYS_RU={'post.publish':'Опубликовать сейчас','post.check':'Проверить пост','history.queue':'Очередь','history.published':'Опубликовано','history.calendar':'Календарь','history.list':'Список'};
+  api.key=(key)=>KEYS_RU[key]||key;
   api.t = (s) => s;
   api.dom = () => {};
   api.html = (s) => s;
@@ -96,11 +100,13 @@
     cache.set(s, out);
     return out;
   }
+  api.key = (key)=>tr(KEYS_RU[key]||key);
   api.t = tr;
 
   // ----- DOM -----
-  const ATTRS = ["title", "placeholder", "aria-label", "data-tip", "alt", "label", "data-title"];
+  const ATTRS = ["title", "placeholder", "aria-label", "data-tip", "label", "data-title"];
   function node(n) {
+    if ((n.nodeType===1?n:n.parentElement)?.closest?.('[translate="no"], [data-user-content]')) return;
     if (n.nodeType === 3) {
       const p = n.parentNode; if (p && (p.nodeName === "TEXTAREA" || p.nodeName === "SCRIPT" || p.nodeName === "STYLE" || p.nodeName === "PRE")) return;
       const v = n.nodeValue, t = tr(v); if (t !== v) n.nodeValue = t;
@@ -108,7 +114,7 @@
       const nm = n.nodeName;
       if (nm === "SCRIPT" || nm === "STYLE") return;
       if (n.classList && n.classList.contains("notes")) return;   // описание выпуска с GitHub — как есть
-      for (const a of ATTRS) if (n.hasAttribute(a)) { const v = n.getAttribute(a), t = tr(v); if (t !== v) n.setAttribute(a, t); }
+      for (const a of ATTRS) if (n.hasAttribute(a) && !(n.dataset.userAttrs||'').split(' ').includes(a)) { const v = n.getAttribute(a), t = tr(v); if (t !== v) n.setAttribute(a, t); }
       if (nm === "INPUT" && (n.type === "button" || n.type === "submit")) { const t = tr(n.value); if (t !== n.value) n.value = t; }
       if (nm === "TEXTAREA" || nm === "PRE") return;   // внутри — текст пользователя
       for (let c = n.firstChild; c; c = c.nextSibling) node(c);
@@ -124,7 +130,7 @@
       for (const m of list) {
         if (m.type === "childList") m.addedNodes.forEach(node);
         else if (m.type === "characterData") node(m.target);
-        else if (m.type === "attributes") { const v = m.target.getAttribute(m.attributeName), t = tr(v); if (t !== v) m.target.setAttribute(m.attributeName, t); }
+        else if (m.type === "attributes") { if(m.target.closest('[translate="no"], [data-user-content]')||(m.target.dataset.userAttrs||'').split(' ').includes(m.attributeName))continue;const v = m.target.getAttribute(m.attributeName), t = tr(v); if (t !== v) m.target.setAttribute(m.attributeName, t); }
       }
     }).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });
   }

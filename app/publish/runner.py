@@ -178,7 +178,7 @@ LANGS = ("main", "en")
 
 def variant(cfg, draft, platform: str) -> tuple[str, str, str]:
     """(заголовок, текст, язык) для площадки: английский вариант, если площадка на него настроена и он заполнен, иначе основной."""
-    lang = (cfg.get("text_lang") or {}).get(platform, "main")
+    lang = (cfg.get("text_lang") or {}).get(platform, "main") if (cfg.get("modules") or {}).get("translation") else "main"
     title, text, used = (draft.get("title") or "").strip(), (draft.get("text") or "").strip(), "main"
     if lang in LANGS and lang != "main":
         v = (draft.get("variants") or {}).get(lang) or {}

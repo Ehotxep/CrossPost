@@ -10,7 +10,12 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
   release:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +45,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" dist/*.zip dist/*.zip.sha256 --clobber
+            gh release upload "${GITHUB_REF_NAME}" dist/*.zip dist/*.zip.sha256
             gh release edit "${GITHUB_REF_NAME}" --title "Crosspost ${GITHUB_REF_NAME#v}" --notes-file notes.md
           else
             gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/*.zip.sha256 \

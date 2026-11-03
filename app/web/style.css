@@ -348,6 +348,19 @@ details.how > :not(summary) { margin-top: 8px; }
 @media (max-width: 520px) { .curve { gap: 3px; } .cv b { font-size: 11px; } }
 
 /* ---------- Новый пост ---------- */
+.settings-search { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+#settings-results { display: flex; gap: 8px; flex-wrap: wrap; }
+#settings-results[hidden] { display: none; }
+.problem { padding: 12px; border: 1px solid var(--bad); border-radius: var(--r-md); overflow-wrap: anywhere; }
+.problem pre { white-space: pre-wrap; }
+.onboarding ol { padding-left: 22px; line-height: 1.8; }
+.onboarding .row { flex-wrap: wrap; }
+.publication-journal { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; font-size: 13px; }
+.journal-toggle { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 4px 0; color: var(--ink-2); font: inherit; cursor: pointer; }
+.journal-toggle:hover { color: var(--ink); }
+.journal-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.journal-body { padding-top: 12px; overflow-wrap: anywhere; }
+.journal-body[hidden] { display: none; }
 .post-tools-buttons, .post-draft-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .post-tools-buttons .on { border-color: var(--accent); background: var(--accent-soft); }
 .post-draft-status { margin-top: -8px; overflow-wrap: anywhere; }
@@ -1158,3 +1171,18 @@ main > div:empty, .platbody > div:empty, .postmain > div:empty, .postside > div:
 .nitem.sub .nt { font-weight: 400; color: var(--ink-2, inherit); }
 .newsstrip .nrow > .nitem { padding: 10px; }
 .newsstrip .nrow > .nitem.unread { background: color-mix(in srgb, var(--accent) 7%, var(--card-2)); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+
+/* Путеводитель — над обычными настройками; при переходе к полям сворачивается. */
+.setup-guide { display: flex; flex-direction: column; gap: 16px; }
+.guide-steps, .guide-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.guide-platforms, .guide-items { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 12px; }
+.guide-item { padding: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-md); min-width: 0; }
+.guide-item .row, .setup-guide > .row { flex-wrap: wrap; }
+.guide-item p { margin: 8px 0 12px; }
+.guide-footer { border-top: 1px solid var(--line); padding-top: 14px; }
+.guide-footer .spacer { flex: 1; }
+.guide-check { padding-top: 14px; border-top: 1px solid var(--line); }
+.guide-result { margin-top: 12px; }
+
+.guide-choice { display: flex; align-items: center; gap: 10px; min-height: 32px; cursor: pointer; }
+.guide-choice input { width: 18px; height: 18px; accent-color: var(--accent-fill); }

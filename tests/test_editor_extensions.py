@@ -133,6 +133,7 @@ class EditorExtensions(unittest.TestCase):
     def test_platform_text_is_independent_and_used_in_composition(self):
         from app.publish import review
         self.settings.update('platform_texts_enabled', {'discord': True})
+        self.settings.update('modules', {'translation': True})
         draft = self.draft()
         draft['variants'] = {'en': {'title': 'English', 'text': 'Shared English'}}
         draft['platform_texts'] = {'discord': {'enabled': True, 'title': '', 'text': 'Discord only'}}
@@ -157,6 +158,7 @@ class EditorExtensions(unittest.TestCase):
         self.assertEqual(review.composition(draft)['platforms'][0]['text'], '**Закат**\nОписание')
         self.assertEqual(self.drafts.get(meta['id'])['draft']['platform_texts'], draft['platform_texts'])
         cfg = self.settings.load()
+        cfg['modules']['translation'] = True
         cfg['text_lang']['discord'] = 'en'
         draft['variants'] = {'en': {'title': 'English', 'text': 'English body'}}
         self.assertEqual(self.runner.variant(cfg, draft, 'discord')[:2], ('English', 'English body'))
@@ -228,3 +230,62 @@ class EditorExtensions(unittest.TestCase):
         saved = self.drafts.get(meta['id'])['draft']
         self.assertEqual(saved['platform_texts']['discord']['text'], 'Saved custom text')
         self.assertEqual(saved['alts'][draft['files'][0]], 'An image description')
+
+    def test_disabled_features_keep_document_but_are_not_applied(self):
+        from app.publish import templates
+        draft = self.draft()
+        draft.update(variants={'en': {'title': 'English', 'text': 'Saved English'}},
+                     multi=True, marks={draft['files'][0]: 'en'}, profile={'text_lang': {'discord': 'en'}})
+        self.settings.update('modules', {'translation': False, 'targeting': False})
+        meta = self.drafts.save('Complete document', draft)
+        saved = self.drafts.get(meta['id'])['draft']
+        self.assertEqual(saved['variants'], draft['variants'])
+        self.assertTrue(saved['multi'])
+        self.assertEqual(saved['marks'], draft['marks'])
+        cfg = templates.effective(self.settings.load(), saved)
+        self.assertEqual(self.runner.variant(cfg, saved, 'discord')[:2], ('Закат', 'Описание'))
+        self.settings.update('modules', {'translation': True})
+        cfg = templates.effective(self.settings.load(), saved)
+        self.assertEqual(self.runner.variant(cfg, saved, 'discord')[:2], ('English', 'Saved English'))
+
+    def test_basic_first_run_defaults_do_not_reset_existing_preferences(self):
+        import copy
+        self.settings._path().unlink()
+        cfg = self.settings.load()
+        self.assertTrue(cfg['modules']['crosspost'])
+        self.assertFalse(cfg['modules']['stats'])
+        self.assertFalse(cfg['modules']['tagger'])
+        legacy = copy.deepcopy(self.settings.DEFAULTS)
+        self.settings.save(legacy)
+        self.assertTrue(self.settings.load()['modules']['stats'])
+        self.assertTrue(self.settings.load()['modules']['tagger'])
+
+    def test_paused_queue_addition_reports_that_it_will_not_send_yet(self):
+        row = self.pipeline.add(self.draft())
+        self.assertTrue(row['paused'])
+        self.assertIsNone(row['run_at'])
+        self.assertIn('приостановлена', row['notice'])
+        self.assertEqual(self.db.query('SELECT state FROM scheduled WHERE id=?', (row['id'],))[0]['state'], 'queued')
+
+    def test_scheduling_wakes_sender_without_waiting_for_interface_poll(self):
+        from app.api import Api
+        from app import worker
+        api = Api.__new__(Api)
+        with patch.object(api, '_tg_ctx'), \
+             patch.dict(os.environ, {'CROSSPOST_NO_SCHEDULER': ''}), \
+             patch.object(worker, 'ensure_running', return_value=True) as wake, \
+             patch.object(worker, 'describe', return_value={'running': True, 'off': False, 'work': 'scheduled'}):
+            result = api.post_schedule(self.draft(), (self.schedule._now()+timedelta(days=2)).isoformat())
+        wake.assert_called_once()
+        self.assertTrue(result['worker']['running'])
+        self.assertEqual(self.db.query('SELECT state FROM scheduled WHERE id=?', (result['id'],))[0]['state'], 'pending')
+
+    def test_disabled_scheduler_does_not_spawn_a_real_sender(self):
+        from app.api import Api
+        from app import worker
+        api = Api.__new__(Api)
+        with patch.dict(os.environ, {'CROSSPOST_NO_SCHEDULER': '1'}), \
+             patch.object(worker, 'ensure_running') as wake, \
+             patch.object(worker, 'describe', return_value={'running': False}):
+            api.worker_status()
+        wake.assert_not_called()

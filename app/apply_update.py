@@ -65,6 +65,11 @@ def popen_detached(cmd, cwd):
     return subprocess.Popen(cmd, **kw)
 
 
+def dependency_signature(root: Path):
+    return tuple((root / name).read_text(encoding='utf-8') if (root / name).exists() else ''
+                 for name in ('requirements-app.txt', 'requirements-constraints.txt'))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)      # папка программы
@@ -113,7 +118,7 @@ def main() -> int:
         time.sleep(1)
         rmtree(backup)
         backup.mkdir(parents=True, exist_ok=True)
-        old_req = (root / "requirements-app.txt").read_text(encoding="utf-8") if (root / "requirements-app.txt").exists() else ""
+        old_req = dependency_signature(root)
         names = [p.name for p in new.iterdir() if p.name not in KEEP]
         for n in names:
             if (root / n).exists():
@@ -122,7 +127,7 @@ def main() -> int:
             shutil.move(str(new / n), str(root / n))
             done.append(n)
         log(lg, f"заменено: {', '.join(names)}")
-        new_req = (root / "requirements-app.txt").read_text(encoding="utf-8") if (root / "requirements-app.txt").exists() else ""
+        new_req = dependency_signature(root)
         if new_req != old_req:
             log(lg, "список библиотек изменился — ставлю")
             r = subprocess.run([a.python, "-m", "pip", "install", "-r", str(root / "requirements-app.txt")], cwd=root, capture_output=True, text=True, timeout=900)

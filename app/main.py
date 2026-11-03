@@ -65,7 +65,7 @@ def main():
             import webview  # pywebview
         except ImportError:
             api.window_expected = False
-            print("pywebview не установлен — открываю в браузере. Установка: pip install pywebview")
+            print("pywebview не установлен — открываю в браузере. Для установки запустите Install.bat.")
         else:
             from app import icon
             icon.set_app_id()   # Windows: своё приложение в панели задач, а не «Python»
