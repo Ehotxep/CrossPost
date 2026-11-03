@@ -248,8 +248,7 @@
   }
   let savedDraftTimer = null, savedDraftChain = Promise.resolve();
   function paintSavedState(text, error=false) {
-    const el = document.getElementById('saved-draft-state');
-    if (el) { el.textContent=text; el.className=error?'err small':'muted small'; }
+    document.querySelectorAll('[data-saved-draft-state]').forEach(el=>{el.textContent=text;el.className=error?'err small':'muted small';});
   }
   function queueDraftSave() {
     clearTimeout(savedDraftTimer);
@@ -291,9 +290,9 @@
   function libraryHtml() {
     const s=S(),d=draft(),m=d._saved,locked=d.editing_schedule||d.extend;
     return `<section class="card"><div class="head"><h2>Черновики</h2><button class="btn small" data-pa="draft-new" ${locked?'disabled':''}>Новый черновик</button></div>
-      ${m?`<div class="row"><input id="draft-name" maxlength="120" value="${esc(m.name)}" aria-label="Название черновика"><select id="draft-status"><option value="working" ${m.status==='working'?'selected':''}>В работе</option><option value="ready" ${m.status==='ready'?'selected':''}>Готов</option></select><button class="btn small" data-pa="draft-save">Сохранить</button><button class="btn small" data-pa="draft-copy">Сохранить копию</button></div><p id="saved-draft-state" class="${s.draftSaveError?'err':'muted'} small">${esc(s.draftSaveError||'Черновик сохраняется автоматически')}</p>`:
+      ${m?`<div class="row"><input id="draft-name" maxlength="120" value="${esc(m.name)}" aria-label="Название черновика"><select id="draft-status"><option value="working" ${m.status==='working'?'selected':''}>В работе</option><option value="ready" ${m.status==='ready'?'selected':''}>Готов</option></select><button class="btn small" data-pa="draft-save">Сохранить</button><button class="btn small" data-pa="draft-copy">Сохранить копию</button></div><p id="saved-draft-state" data-saved-draft-state class="${s.draftSaveError?'err':'muted'} small">${esc(s.draftSaveError||'Черновик сохраняется автоматически')}</p>`:
       `<button class="btn small" data-pa="draft-save" ${locked?'disabled':''}>Сохранить отдельным черновиком</button>`}
-      <details class="more" ${s.draftLibraryOpen?'open':''}><summary>Коллекция черновиков</summary><div class="morebody">
+      <details class="more" open><summary>Коллекция черновиков</summary><div class="morebody">
         <div class="row"><input id="draft-query" value="${esc(s.draftQuery||'')}" placeholder="Поиск черновика"><select id="draft-filter"><option value="">Все статусы</option><option value="working" ${s.draftFilter==='working'?'selected':''}>В работе</option><option value="ready" ${s.draftFilter==='ready'?'selected':''}>Готов</option></select><button class="btn small" data-pa="draft-refresh">Найти / обновить</button></div>
         ${(s.savedDrafts||[]).map(r=>`<div class="row" style="margin-top:8px">${r.files[0]?`<img src="/uthumb/${encodeURIComponent(r.files[0])}?t=${tok()}" width="48" alt="" onerror="this.style.display='none'">`:''}<span><b>${esc(r.name)}</b><br>${r.status==='ready'?'Готов':'В работе'} · ${esc(new Date(r.updated).toLocaleString())}</span><button class="btn small" data-pa="draft-open" data-id="${r.id}" ${locked?'disabled':''}>Открыть</button><button class="btn small" data-pa="draft-delete" data-id="${r.id}" data-revision="${r.revision}">Удалить</button></div>`).join('')}
         ${s.savedDrafts && !s.savedDrafts.length?'<p class="muted">Черновиков не найдено</p>':''}</div></details></section>`;
@@ -311,13 +310,13 @@
     const d=draft(),s=S(),over=d.platform_texts||{};
     const platforms=LANGP.filter(([p])=>s.pub?.modules[p]!==false && s.pub?.platform_texts_enabled?.[p]===true);
     if (!platforms.length) return '';
-    return `<details class="card"><summary>Свой текст для каждой площадки</summary><p class="muted small">Отдельный текст заменяет основной или английский вариант только для выбранной площадки. Подписи и хэштеги добавляются по её настройкам.</p>
+    return `<details class="more post-extra"><summary>Свой текст для каждой площадки</summary><p class="muted small">Отдельный текст заменяет основной или английский вариант только для выбранной площадки. Подписи и хэштеги добавляются по её настройкам.</p>
       ${platforms.map(([p,name])=>{const t=over[p]||{};return `<div class="field"><label class="tgl"><input type="checkbox" data-platform-enable="${p}" ${t.enabled?'checked':''}><span>${esc(name)}: отдельный текст</span></label>${t.enabled?`<label>Заголовок<input data-platform-title="${p}" value="${esc(t.title||'')}"></label><label>Описание<textarea rows="3" data-platform-text="${p}">${esc(t.text||'')}</textarea></label>`:''}</div>`;}).join('')}</details>`;
   }
   function altsHtml() {
     const d=draft();
     if (!d.files.length || S().pub?.modules.bluesky===false) return '';
-    return `<details class="card"><summary>Описания картинок для Bluesky (alt)</summary><p class="muted small">Опишите каждую картинку для людей, использующих экранный диктор. Пустое поле использует заголовок, если это включено в настройках Bluesky.</p>${d.files.map(f=>`<label class="field">${esc(f.name)}<textarea rows="2" maxlength="1000" data-image-alt="${f.id}">${esc((d.alts||{})[f.id]||'')}</textarea></label>`).join('')}</details>`;
+    return `<details class="more post-extra"><summary>Описания картинок для Bluesky (alt)</summary><p class="muted small">Опишите каждую картинку для людей, использующих экранный диктор. Пустое поле использует заголовок, если это включено в настройках Bluesky.</p>${d.files.map(f=>`<label class="field">${esc(f.name)}<textarea rows="2" maxlength="1000" data-image-alt="${f.id}">${esc((d.alts||{})[f.id]||'')}</textarea></label>`).join('')}</details>`;
   }
   function duplicatesHtml() {
     const r=S().duplicateResult;
@@ -344,7 +343,7 @@
 
   function templateToolsHtml() {
     const s = S(), d = draft();
-    return `<details class="card"><summary>Шаблоны публикации${d.templateName ? " · " + esc(d.templateName) : ""}</summary><div class="morebody">
+    return `<details class="card" open><summary>Шаблоны публикации${d.templateName ? " · " + esc(d.templateName) : ""}</summary><div class="morebody">
       <p class="muted small">Сохраняются текст, рейтинг, выбор площадок, подписи, теги и параметры файлов. Аккаунты и сами файлы в шаблон не входят.</p>
       ${d.templateName ? `<p>Применён шаблон: <b>${esc(d.templateName)}</b> <button class="btn small" data-pa="template-reset">Использовать текущие настройки</button></p>` : ""}
       <button class="btn small" data-pa="template-save">Сохранить текущий пост как шаблон</button>
@@ -403,23 +402,21 @@
     const titleFor = p ? [["telegram", p.telegram.include_title], ["discord", p.discord.include_title], ["vk", p.vk.include_title]].filter(([, on]) => on).map(([k]) => k) : [];
     const tagsOn = p && ((p.e6ai && p.e6ai.enabled) || (p.hashtags && p.hashtags.enabled));
     const X = d.extend;
-    const head = (X ? `<div class="toolbar"><h1>Дослать пост</h1><span class="spacer"></span><button class="btn ghost" data-pa="extend-cancel">${C().ICON.close} Отменить досылку</button></div>
+    const toolButtons = `<div class="post-tools-buttons"><button class="btn small ${s.postPanel==='drafts'?'on':''}" data-pa="post-panel" data-panel="drafts" aria-expanded="${s.postPanel==='drafts'}" aria-controls="post-tools">Черновики</button><button class="btn small ${s.postPanel==='templates'?'on':''}" data-pa="post-panel" data-panel="templates" aria-expanded="${s.postPanel==='templates'}" aria-controls="post-tools">Шаблоны</button></div>`;
+    const head = (X ? `<div class="toolbar"><h1>Дослать пост</h1><span class="spacer"></span>${toolButtons}<button class="btn ghost" data-pa="extend-cancel">${C().ICON.close} Отменить досылку</button></div>
       <div class="card extbanner"><b>${esc(X.title || "Пост без названия")}</b>
         <span class="muted small">Уже вышел: ${esc((X.done || []).join(", ") || "никуда")}${(X.failed || []).length ? ` · с ошибкой: ${esc(X.failed.join(", "))}` : ""}</span>
         <span class="small">Включите справа, куда дослать. В истории и календаре это останется одним постом — у него просто добавятся площадки.
           Текст и теги можно поправить: изменения уйдут только на новые площадки.</span>
         ${(X.missing || []).length ? `<span class="warnline small">Оригиналы уже удалены (хранятся неделю после публикации): ${esc(X.missing.join(", "))}. Добавьте эти файлы заново.</span>` : ""}</div>`
-      : `<div class="toolbar"><h1>Новый пост</h1><span class="spacer"></span>${d.files.length || d.text || d.title ? `<button class="btn ghost" data-pa="clear">${C().ICON.trash} Очистить</button>` : ""}</div>`);
+      : `<div class="toolbar"><h1>Новый пост</h1><span class="spacer"></span>${toolButtons}${d.files.length || d.text || d.title ? `<button class="btn ghost" data-pa="clear">${C().ICON.trash} Очистить</button>` : ""}</div>`);
     const h = `${head}
+      ${d._saved?`<div class="post-draft-status"><span class="small">${esc(d._saved.name)}</span><span data-saved-draft-state class="${s.draftSaveError?'err':'muted'} small" role="status">${esc(s.draftSaveError||'Черновик сохраняется автоматически')}</span></div>`:''}
       ${scheduledEditorHtml()}
-      ${libraryHtml()}
-      ${templateToolsHtml()}
+      <div id="post-tools" ${s.postPanel?'':'hidden'}>${s.postPanel?`<div class="post-panel-close"><button class="btn small ghost" data-pa="post-panel-close">Закрыть панель</button></div>${s.postPanel==='drafts'?libraryHtml():s.postPanel==='templates'?templateToolsHtml():reviewToolsHtml()+duplicatesHtml()}`:''}</div>
       ${s.pubErr && s.pubErr.top ? `<p class="err">${esc(s.pubErr.top)}</p>` : ""}
+      ${s.pubErr?.features && s.postPanel!=='checks' && s.postPanel!=='templates'?`<p class="err" role="alert">${esc(s.pubErr.features)}</p>`:''}
       <div class="postgrid"><div class="postmain">
-        ${reviewToolsHtml()}
-        ${platformTextsHtml()}
-        ${altsHtml()}
-        ${duplicatesHtml()}
         <section class="card"><div class="cardhead"><h2>Файлы</h2>
             ${d.files.some((f) => f.kind !== "image") ? `<span class="optline">GIF и видео уходят как есть ${C().hint("Переделываются только там, где площадка иначе не примет: ужать под лимит Discord или Telegram, перекодировать в H.264 или в WebM для " + BN() + ". Подробности — «Настройки» → «Видео и GIF».")}</span>` :
             `<span class="optline">JPEG-превью для соцсетей, PNG-оригинал в Telegram и на ${BN()} ${C().hint("Оригиналы не меняются. Для постов делается JPEG-превью по рецепту из «Настроек» → «JPEG-превью»; он готовится сразу, пока вы пишете текст. PNG-оригиналы уходят файлами в Telegram и на e6ai.")}</span>`}
@@ -433,11 +430,13 @@
           <div class="cardhead" style="padding-top:4px"><div class="rseg ${s.tried && !d.rating ? "need" : ""}" role="radiogroup" aria-label="Рейтинг">${RATINGS.map(([k, l]) =>
             `<button role="radio" aria-checked="${d.rating === k}" class="${d.rating === k ? "on" : ""}" data-pa="rating" data-val="${k}" ${X && d.rating !== k ? "disabled" : ""} data-tip="${RATING_TIP[k]}"><span class="dot ${k}"></span>${l}</button>`).join("")}</div>
             ${d.rating ? "" : `<span class="${s.tried ? "err" : "muted"} small">Выберите рейтинг — от него зависит, куда уйдёт пост ${C().hint("18+ работы уходят только туда, где разрешено 18+, и под спойлер. ВК — только SFW.")}</span>`}</div>
+          ${altsHtml()}
         </section>
         <section class="card"><h2>Текст</h2>
           ${textColsHtml(titleFor)}
           <label class="tgl"><input type="checkbox" data-dfield="signature" ${d.signature ? "checked" : ""}>
             <span>Подпись со ссылками ${sigOn.length ? pfor(sigOn) : `<a href="#" data-view-link="platforms" data-tab="signatures">задать</a>`}</span></label>
+          ${platformTextsHtml()}
         </section>
         ${tagsOn ? `<section class="card" id="tagcard"><div class="cardhead"><h2>Теги</h2></div>
           <div id="htbox" class="tagsec">${htHtml()}</div>${e6Html()}</section>` : ""}
@@ -828,7 +827,9 @@
     if (errs.length) h += `<ul class="errs">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`;
     h += `</div>`;
     if (d.rating && will.some((x) => x.key.startsWith("telegram:") && x.key !== "telegram:group")) h += `<div class="side-sec" id="fcbox">${fcHtml()}</div>`;
-    if (d.rating && will.length) h += `<div class="side-sec"><button class="btn small" data-pa="composition">Посмотреть состав по площадкам</button></div>`;
+    h += `<div class="side-sec"><button class="btn small" data-pa="post-check" aria-expanded="${s.postPanel==='checks'}" aria-controls="post-tools" ${s.pubBusy==='features'?'disabled':''}>${s.pubBusy==='features'?'Проверяю…':'Проверить пост'}</button>
+      ${s.readiness && !s.readiness.ready || s.composition?.errors?.length?'<p class="err small" role="alert">Есть замечания — откройте проверку поста.</p>':''}
+      ${s.readiness?.ready?'<span class="ok small">Локальные проверки пройдены</span>':''}</div>`;
     const hard = (p.errors || []).filter((e) => !soft(e));
     const can = !hard.length && (will.length || !d.rating) && !s.publishing;
     h += `<div class="side-sec">`;
@@ -2088,6 +2089,17 @@
     const saveSec = async (sec, ch) => { s.pub = await api("pub_save", { section: sec, changes: ch }); };
     const backupFile = document.getElementById("backup-file")?.files[0];
     switch (act) {
+      case 'post-panel':
+        s.postPanel=s.postPanel===a.dataset.panel?null:a.dataset.panel;C().render();return true;
+      case 'post-panel-close': s.postPanel=null;C().render();return true;
+      case 'post-check':
+        s.postPanel='checks';
+        await guard('features',async()=>{
+          const payload=apiDraft();
+          const results=await Promise.all([api('post_composition',{draft:payload}),api('post_readiness',{draft:payload,remote:false})]);
+          s.composition=results[0];s.readiness=results[1];
+        });
+        document.getElementById('post-tools')?.scrollIntoView({behavior:'smooth',block:'start'});return true;
       case 'draft-save': await guard('features',async()=>{
         if(d._saved){await flushSavedDraft();return;}
         const name=prompt('Название черновика',d.title||'Без названия');if(!name)return;
@@ -2106,7 +2118,7 @@
       });return true;
       case 'draft-new': await guard('features',async()=>{
         await keepCurrentDraft();s.draft=EMPTY();C().store.set('draft',s.draft);s.draftSaveError='';s.postMode='edit';
-        s.savedDrafts=await api('post_drafts');await refreshPlan();
+        s.savedDrafts=await api('post_drafts');s.postPanel=null;await refreshPlan();
       });return true;
       case 'draft-open': await guard('features',async()=>{
         try{await keepCurrentDraft();}catch(err){
@@ -2114,7 +2126,7 @@
         }
         const r=await api('post_draft_get',{did:+a.dataset.id});
         s.draft=restoreDraft(r.draft);s.draft._saved={id:r.id,revision:r.revision,name:r.name,status:r.status,updated:r.updated};
-        C().store.set('draft',s.draft);s.draftSaveError='';s.postMode='edit';s.when='now';s.tried=false;await refreshPlan();
+        C().store.set('draft',s.draft);s.draftSaveError='';s.postMode='edit';s.when='now';s.tried=false;s.postPanel=null;await refreshPlan();
       });return true;
       case 'draft-delete':
         if(!confirm('Удалить сохранённый черновик? Посты в очереди и истории останутся.'))return true;
@@ -2124,6 +2136,7 @@
           if(d._saved?.id===+a.dataset.id){delete d._saved;C().store.set('draft',d);}
         });return true;
       case 'schedule-edit': await guard('features',async()=>{
+        s.postPanel=null;
         if(d.editing_schedule?.id===+a.dataset.id){s.view='post';s.postMode='edit';return;}
         await keepCurrentDraft();const r=await api('post_schedule_edit',{sid:+a.dataset.id});
         C().store.set('draft_saved',d);s.draft=restoreDraft(r.draft);
@@ -2167,7 +2180,7 @@
           s.draft = Object.assign({title:"",text:"",rating:null,signature:true,exclude:[],variants:{},hashtags:null,multi:false}, t.draft,
             {files:d.files, _saved:d._saved, editing_schedule:d.editing_schedule, alts:d.alts||{}, marks:d.marks || {}, e6tags:d.e6tags || {}, e6meta:d.e6meta || {}, templateName:t.name});
           if (d.extend) s.draft.extend = d.extend;
-          saveDraft(); await refreshPlan();
+          s.postPanel=null;saveDraft(); await refreshPlan();
         }); return true;
       }
       case "template-reset": delete d.profile; delete d.templateName; saveDraft(); await refreshPlan(); C().render(); return true;

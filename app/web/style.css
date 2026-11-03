@@ -348,6 +348,16 @@ details.how > :not(summary) { margin-top: 8px; }
 @media (max-width: 520px) { .curve { gap: 3px; } .cv b { font-size: 11px; } }
 
 /* ---------- Новый пост ---------- */
+.post-tools-buttons, .post-draft-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.post-tools-buttons .on { border-color: var(--accent); background: var(--accent-soft); }
+.post-draft-status { margin-top: -8px; overflow-wrap: anywhere; }
+.post-panel-close { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+#post-tools { scroll-margin-top: 76px; }
+#post-tools[hidden] { display: none; }
+#post-tools .row { flex-wrap: wrap; }
+#post-tools input, #post-tools select { min-width: 0; max-width: 100%; }
+details.post-extra { margin-top: 12px; }
+.post-extra > .field { margin-top: 12px; }
 .postgrid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
 .postmain { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .postside { position: sticky; top: 72px; max-height: calc(100vh - 88px); overflow-y: auto; display: flex; flex-direction: column; gap: 16px; scrollbar-width: thin; }
