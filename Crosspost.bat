@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set "PYTHONUTF8=1"
 set "PYTHONHOME="
 set "PYTHONPATH="
 cd /d "%~dp0"
