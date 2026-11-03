@@ -2,7 +2,7 @@
 import json
 import re
 
-from core.common import PlatformError, check_json
+from core.common import PlatformError, NotPublishedError, check_json
 
 NAME = "Discord"
 MAX_IMAGES = 10
@@ -54,6 +54,8 @@ def post(c: dict, images, p) -> list[str]:
         from core import retry
         r = retry.post(hook, idempotent=False, what="Discord", params={"wait": "true"},
                        data={"payload_json": json.dumps(payload)}, files=files, timeout=300)
+        if r.status_code in (400, 401, 403, 404, 413, 415, 422):
+            raise NotPublishedError(f"Discord отказал в публикации: HTTP {r.status_code}")
         msg = check_json(r, NAME)
         results.append(f"сообщение {msg.get('id')} в канале {msg.get('channel_id')}")
     return results

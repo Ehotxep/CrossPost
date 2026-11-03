@@ -108,7 +108,7 @@ def ensure_pub_thumbs() -> int:
 def _scheduled_ids() -> set:
     from app.publish import schedule  # noqa: F401  (таблица scheduled)
     out = set()
-    for r in db.query("SELECT draft FROM scheduled WHERE state IN ('pending','running','missed','queued')"):
+    for r in db.query("SELECT draft FROM scheduled WHERE state IN ('pending','running','missed','queued','editing')"):
         try:
             out |= set(json.loads(r["draft"] or "{}").get("files") or [])
         except Exception:
@@ -119,7 +119,8 @@ def _scheduled_ids() -> set:
 def used_ids() -> set:
     """Файлы, которые нужны опубликованным (для досылки) и запланированным постам."""
     import app.publish.runner  # noqa: F401
-    ids = set(_scheduled_ids())
+    from app.publish.drafts import protected_ids
+    ids = set(_scheduled_ids()) | protected_ids()
     for r in db.query("SELECT files FROM publications"):
         for f in json.loads(r["files"] or "[]"):
             ids.add(f["id"] if isinstance(f, dict) else f)
@@ -136,7 +137,8 @@ def _dir_size(p: Path) -> int:
 def cleanup(days: int = KEEP_DAYS, everything_published: bool = False) -> dict:
     """Удалить тяжёлые копии опубликованных постов старше days дней. Возвращает {"files", "bytes"}."""
     import app.publish.runner  # noqa: F401
-    keep = _scheduled_ids()
+    from app.publish.drafts import protected_ids
+    keep = _scheduled_ids() | protected_ids()
     edge = datetime.now(timezone.utc) - timedelta(days=days)
     published = set()
     freed, n = 0, 0

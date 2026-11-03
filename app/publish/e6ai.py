@@ -72,7 +72,7 @@ def upload(cfg, path, tags, rating: str, sources=(), description: str = "", pare
         data["upload[parent_id]"] = str(parent_id)
     with open(path, "rb") as f:
         from core import retry   # сайт сам отсекает повторную загрузку того же файла (reason=duplicate) — повторять после обрыва безопасно
-        r = retry.post(f"{base(cfg)}/uploads.json", idempotent=True, what=f"{name(cfg)}: загрузка", data=data,
+        r = retry.post(f"{base(cfg)}/uploads.json", idempotent=False, what=f"{name(cfg)}: публикация", data=data,
                        files={"upload[file]": (filename or os.path.basename(path), f)},
                        auth=(cfg["username"], cfg["api_key"]), headers=_ua(cfg), timeout=600)
     try:

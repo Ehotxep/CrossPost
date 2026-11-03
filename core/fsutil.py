@@ -11,8 +11,56 @@ import shutil
 import threading
 import time
 from pathlib import Path
+from contextlib import contextmanager
 
 _lock = threading.Lock()
+_file_mutexes = {}
+_file_registry_lock = threading.Lock()
+_held = threading.local()
+
+
+@contextmanager
+def file_lock(path):
+    """Reentrant read/modify/write lock shared by threads and application processes."""
+    key = os.path.normcase(str(Path(path).resolve()))
+    with _file_registry_lock:
+        mutex = _file_mutexes.setdefault(key, threading.RLock())
+    with mutex:
+        held = getattr(_held, "paths", set())
+        if key in held:
+            yield
+            return
+        lock_path = Path(key + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "a+b") as f:
+            if os.name == "nt":
+                import msvcrt
+                # Lock a real byte; retry contention without a fixed 10-second limit.
+                if f.seek(0, os.SEEK_END) == 0:
+                    f.write(b"\0")
+                    f.flush()
+                while True:
+                    f.seek(0)
+                    try:
+                        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError as e:
+                        if e.errno not in (13, 11, 36):
+                            raise
+                        time.sleep(0.05)
+            else:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            _held.paths = held | {key}
+            try:
+                yield
+            finally:
+                _held.paths = held
+                if os.name == "nt":
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def atomic_write(path, text: str, backup: bool = True) -> None:

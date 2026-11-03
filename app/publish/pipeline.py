@@ -163,16 +163,22 @@ def pin(sid: int, run_at: str | None):
         dt = sch._parse(run_at)
         if dt < sch._now() + timedelta(minutes=1):
             raise ValueError("Время уже прошло — выберите время в будущем")
-        sch._set(int(sid), run_at=dt.isoformat(timespec="seconds"), state="pending", pinned=1, error=None, why="время задано вами")
+        with db.tx() as c:
+            if c.execute("UPDATE scheduled SET run_at=?,state='pending',pinned=1,error=NULL,why='время задано вами' WHERE id=? AND queue=1 AND state NOT IN ('editing','running')",
+                         (dt.isoformat(timespec='seconds'), int(sid))).rowcount != 1:
+                raise ValueError('Пост редактируется или уже отправляется')
     else:
-        sch._set(int(sid), run_at=FAR, state="queued", pinned=0, why=None)
+        with db.tx() as c:
+            if c.execute("UPDATE scheduled SET run_at=?,state='queued',pinned=0,why=NULL WHERE id=? AND queue=1 AND state NOT IN ('editing','running')",
+                         (FAR, int(sid))).rowcount != 1:
+                raise ValueError('Пост редактируется или уже отправляется')
     maintain(force=True)
 
 
 def state() -> dict:
     sch = _schedule()
     items = []
-    for r in db.query("""SELECT * FROM scheduled WHERE queue=1 AND state IN ('queued','pending','running','missed','failed')
+    for r in db.query("""SELECT * FROM scheduled WHERE queue=1 AND state IN ('queued','pending','running','missed','failed','editing')
                          ORDER BY CASE state WHEN 'running' THEN 0 WHEN 'pending' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END, run_at, COALESCE(qpos, id)"""):
         d = json.loads(r.pop("draft") or "{}")
         r["files"] = d.get("files") or []
@@ -194,7 +200,7 @@ def _occupied(now: datetime, skip_ids: set) -> list:
     """Времена, которые уже заняты: вышедшие недавно, запланированные вручную и закреплённые."""
     sch = _schedule()
     out = []
-    for r in db.query("SELECT run_at, id FROM scheduled WHERE state IN ('pending','running') "):
+    for r in db.query("SELECT run_at, id FROM scheduled WHERE state IN ('pending','running','editing') "):
         if r["id"] in skip_ids:
             continue
         try:
@@ -265,26 +271,36 @@ def maintain(force: bool = False):
         sch = _schedule()
         now = sch._now()
         c = cfg()
+        if not c["enabled"]:
+            # Пауза действует и на ближайшие посты. Закреплённое время сохраняем:
+            # отправку таких постов блокирует schedule.tick до снятия паузы.
+            with db.tx() as cn:
+                cn.execute("UPDATE scheduled SET state='queued', run_at=?, why=NULL WHERE queue=1 AND state='pending' AND pinned=0", (FAR,))
+            return
         with db.tx() as cn:
             # пропущенные (программа была закрыта) — обратно в очередь, получат новое время
             cn.execute("UPDATE scheduled SET state='queued', run_at=?, error=NULL, why=NULL, pinned=0 WHERE queue=1 AND state='missed'", (FAR,))
             # сорвавшиеся целиком — повтор через 20 минут, до двух раз
-            for r in cn.execute("SELECT id, tries, done_at FROM scheduled WHERE queue=1 AND state='failed' AND pub_id IS NULL AND tries<2").fetchall():
+            for r in cn.execute("SELECT id, tries, done_at, pub_id, draft, retry_safe FROM scheduled WHERE queue=1 AND state='failed' AND tries<2").fetchall():
+                draft = json.loads(r["draft"] or "{}")
+                if r["pub_id"] is None and not r["retry_safe"]:
+                    continue   # после падения процесса отсутствие pub_id не доказывает, что пост не вышел
+                if r["pub_id"] is not None:
+                    from app.publish import runner
+                    pub = runner._pub_row(r["pub_id"])
+                    dests = json.loads(pub["dests"] or "[]") if pub else []
+                    if not dests or not all(d.get("state") == "error" and d.get("outcome") == "not_sent" for d in dests):
+                        continue   # частичный успех и неизвестный результат никогда не повторяем автоматически
+                    draft["extend"] = r["pub_id"]   # повтор остаётся в той же записи истории
                 try:
                     recent = now - sch._parse(r["done_at"]) < timedelta(hours=6) if r["done_at"] else False
                 except ValueError:
                     recent = False
                 if recent:
-                    cn.execute("UPDATE scheduled SET state='pending', run_at=?, pinned=1, tries=tries+1, why=? WHERE id=?",
-                               ((now + timedelta(minutes=20)).isoformat(timespec="seconds"), f"повтор после сбоя ({r['tries'] + 1}-й)", r["id"]))
+                    cn.execute("UPDATE scheduled SET state='pending', run_at=?, pinned=1, tries=tries+1, why=?, draft=? WHERE id=?",
+                               ((now + timedelta(minutes=20)).isoformat(timespec="seconds"), f"повтор после сбоя ({r['tries'] + 1}-й)", json.dumps(draft, ensure_ascii=False), r["id"]))
         rows = _rows()
         free = [r for r in rows if not r["pinned"] and (r["state"] == "queued" or sch._parse(r["run_at"]) > now + SOON)]
-        if not c["enabled"]:   # пауза: время снимаем, посты ждут в очереди
-            with db.tx() as cn:
-                for r in free:
-                    if r["state"] == "pending":
-                        cn.execute("UPDATE scheduled SET state='queued', run_at=?, why=NULL WHERE id=?", (FAR, r["id"]))
-            return
         if not free:
             return
         occ = _occupied(now, {r["id"] for r in free})
@@ -293,13 +309,13 @@ def maintain(force: bool = False):
             for r, x in zip(free, res):
                 if x is None:
                     if r["state"] == "pending":
-                        cn.execute("UPDATE scheduled SET state='queued', run_at=?, why=? WHERE id=?", (FAR, "нет свободного окна в ближайшие дни", r["id"]))
+                        cn.execute("UPDATE scheduled SET state='queued', run_at=?, why=? WHERE id=? AND state IN ('queued','pending') AND pinned=0", (FAR, "нет свободного окна в ближайшие дни", r["id"]))
                     else:
-                        cn.execute("UPDATE scheduled SET why=? WHERE id=?", ("нет свободного окна в ближайшие дни", r["id"]))
+                        cn.execute("UPDATE scheduled SET why=? WHERE id=? AND state IN ('queued','pending') AND pinned=0", ("нет свободного окна в ближайшие дни", r["id"]))
                     continue
                 t, why = x
                 iso = t.isoformat(timespec="seconds")
                 if r["state"] != "pending" or r["run_at"] != iso or r["why"] != why:
-                    cn.execute("UPDATE scheduled SET state='pending', run_at=?, why=? WHERE id=?", (iso, why, r["id"]))
+                    cn.execute("UPDATE scheduled SET state='pending', run_at=?, why=? WHERE id=? AND state IN ('queued','pending') AND pinned=0", (iso, why, r["id"]))
     finally:
         _lock.release()

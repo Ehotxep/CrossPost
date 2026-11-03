@@ -7,7 +7,7 @@ import json
 import re
 
 import app.publish  # noqa: F401  (путь к platforms/)
-from core.common import PlatformError
+from core.common import PlatformError, NotPublishedError, PublicationUnknown
 from platforms import telegram as T
 
 VIDEO_LIMIT = 50 * 1024 * 1024
@@ -46,12 +46,12 @@ def norm_chat(s) -> str:
     raise PlatformError(f"Не понимаю адрес канала: {s!r}. Нужен @username, ссылка t.me/… или id вида -100…")
 
 
-def check_chat(token: str, chat: str, need_post: bool = True) -> dict:
+def check_chat(token: str, chat: str, need_post: bool = True, timeout: float = 60) -> dict:
     """Название чата и права бота в нём."""
     chat = norm_chat(chat)
-    info = call(token, "getChat", {"chat_id": chat})
-    me = call(token, "getMe")
-    member = call(token, "getChatMember", {"chat_id": info["id"], "user_id": me["id"]})
+    info = call(token, "getChat", {"chat_id": chat}, timeout=timeout)
+    me = call(token, "getMe", timeout=timeout)
+    member = call(token, "getChatMember", {"chat_id": info["id"], "user_id": me["id"]}, timeout=timeout)
     status = member.get("status")
     problems = []
     if status not in ("administrator", "creator"):
@@ -88,27 +88,32 @@ def send_to_channel(token: str, cfg: dict, ch: dict, media: dict, text: str, tit
     if long_text:
         call(token, "sendMessage", {"chat_id": chat, "text": caption[:4096], **({"parse_mode": parse_mode} if parse_mode else {})})
         caption = ""
-    if media["kind"] == "images":
-        log("отправляю картинки")
-        msgs = T._send_photos(token, chat, media["photos"], caption, parse_mode, spoiler)
-    else:
-        f = media["file"]
-        method, field = ("sendAnimation", "animation") if media["kind"] == "gif" else ("sendVideo", "video")
-        data = {"chat_id": chat, "caption": caption}
-        if parse_mode and caption:
-            data["parse_mode"] = parse_mode
-        if spoiler:
-            data["has_spoiler"] = "true"
-        if method == "sendVideo":
-            data["supports_streaming"] = "true"
-            inf = media.get("info") or {}
-            for k in ("width", "height"):
-                if inf.get(k):
-                    data[k] = str(inf[k])
-            if inf.get("duration"):
-                data["duration"] = str(round(inf["duration"]))
-        log("отправляю " + ("GIF" if media["kind"] == "gif" else "видео"))
-        msgs = [call(token, method, data, {field: (media.get("name") or f.name, f.read_bytes(), "video/mp4" if f.suffix.lower() != ".gif" else "image/gif")}, timeout=900)]
+    try:
+        if media["kind"] == "images":
+            log("отправляю картинки")
+            msgs = T._send_photos(token, chat, media["photos"], caption, parse_mode, spoiler)
+        else:
+            f = media["file"]
+            method, field = ("sendAnimation", "animation") if media["kind"] == "gif" else ("sendVideo", "video")
+            data = {"chat_id": chat, "caption": caption}
+            if parse_mode and caption:
+                data["parse_mode"] = parse_mode
+            if spoiler:
+                data["has_spoiler"] = "true"
+            if method == "sendVideo":
+                data["supports_streaming"] = "true"
+                inf = media.get("info") or {}
+                for k in ("width", "height"):
+                    if inf.get(k):
+                        data[k] = str(inf[k])
+                if inf.get("duration"):
+                    data["duration"] = str(round(inf["duration"]))
+            log("отправляю " + ("GIF" if media["kind"] == "gif" else "видео"))
+            msgs = [call(token, method, data, {field: (media.get("name") or f.name, f.read_bytes(), "video/mp4" if f.suffix.lower() != ".gif" else "image/gif")}, timeout=900)]
+    except NotPublishedError as e:
+        if long_text:
+            raise PublicationUnknown("Текст уже отправлен, но медиа не опубликовано. Проверьте канал перед повтором.") from e
+        raise
     first = msgs[0]
     out = {"link": T._link(first), "chat_id": first["chat"]["id"], "message_ids": [m["message_id"] for m in msgs], "note": ""}
     if on_posted:   # пост уже в канале — остальным местам можно не ждать оригиналов

@@ -129,7 +129,7 @@ def main() -> int:
             log(lg, (r.stdout + r.stderr)[-1500:])
             if r.returncode != 0:
                 raise RuntimeError("не установились новые библиотеки (подробности — в updates\\update.log)")
-        r = subprocess.run([a.python, "-c", "import app.main"], cwd=root, capture_output=True, text=True, timeout=180)
+        r = subprocess.run([a.python, "-c", "import app.main, app.api"], cwd=root, capture_output=True, text=True, timeout=180)
         if r.returncode != 0:
             log(lg, r.stderr[-1500:])
             raise RuntimeError("новая версия не запускается: " + (r.stderr.strip().splitlines() or ["ошибка"])[-1][:200])

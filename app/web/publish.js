@@ -33,22 +33,24 @@
     if (!s.draft) s.draft = C().store.get("draft", null) || { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
     return s.draft;
   }
-  function saveDraft() { C().store.set("draft", S().draft); }
-  function apiDraft() {
-    const d = draft();
-    return { files: d.files.map((f) => f.id), variants: featOn("translation") ? (d.variants || {}) : {}, title: d.title, text: d.text, rating: d.rating, signature: d.signature, exclude: d.exclude, e6ai_tags: d.e6tags || {}, e6ai_meta: d.e6meta || {}, hashtags: d.hashtags == null ? null : d.hashtags, multi: multiOn(), marks: multiOn() ? (d.marks || {}) : {}, tagger: S().taggerOn !== false, extend: d.extend ? d.extend.pub_id : undefined };
+  function saveDraft() { C().store.set("draft", S().draft); queueDraftSave(); }
+  function apiDraft(value = draft()) {
+    const d = value;
+    return { files: d.files.map((f) => f.id), variants: featOn("translation") ? (d.variants || {}) : {}, title: d.title, text: d.text, rating: d.rating, signature: d.signature, exclude: d.exclude, e6ai_tags: d.e6tags || {}, e6ai_meta: d.e6meta || {}, hashtags: d.hashtags == null ? null : d.hashtags, multi: multiOn(), marks: featOn("targeting") && d.multi ? (d.marks || {}) : {}, tagger: S().taggerOn !== false, platform_texts: d.platform_texts || {}, alts: d.alts || {}, profile: d.profile || null, extend: d.extend ? d.extend.pub_id : undefined };
   }
   const EMPTY = () => ({ files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} });
   // досылка опубликованного поста на другие площадки: черновик этого поста открывается на экране «Новый пост»,
   // а ваш текущий черновик откладывается и возвращается после
   async function openExtend(pubId) {
     const s = S(), r = await C().api("post_extend_draft", { pub_id: pubId });
+    await flushSavedDraft();
     const cur = draft();
+    if(cur.editing_schedule) throw new Error("Сначала завершите редактирование поста в очереди");
     if (!cur.extend) C().store.set("draft_saved", cur);
     const x = r.draft || {};
     s.draft = { files: r.files, variants: x.variants || {}, title: x.title || "", text: x.text || "", rating: x.rating, signature: x.signature !== false,
       exclude: x.exclude || [], hashtags: x.hashtags == null ? null : x.hashtags, e6tags: x.e6ai_tags || {}, e6meta: x.e6ai_meta || {}, multi: !!x.multi, marks: x.marks || {},
-      extend: { pub_id: r.pub_id, title: r.title, done: r.done, failed: r.failed, missing: r.missing } };
+      platform_texts:x.platform_texts||{},alts:x.alts||{},profile:x.profile||null,extend: { pub_id: r.pub_id, title: r.title, done: r.done, failed: r.failed, missing: r.missing } };
     saveDraft();
     s.pstatOpen = null; s.postMode = "edit"; s.when = "now"; s.tried = false; s.schedMsg = "";
     s.view = "post"; C().store.set("view", "post");
@@ -66,12 +68,14 @@
     try {
       if (view === "post") {
         if (!s.pub) s.pub = await api("pub_settings");
+        s.templates = await api("post_templates");
+        s.savedDrafts = await api("post_drafts");
         const st = await api("post_state");
         s.pubState = st.state; s.pubJob = st.job;
         if (st.job && st.job.state === "running") { s.postMode = "progress"; C().startPoll(); }
         await refreshPlan(); pollPrep(); loadTags(true);
       } else if (view === "history") {
-        s.hist = await api("post_history");
+        await loadHistoryPage(s.historyOffset || 0);
         s.sched = await api("post_scheduled");
         try { s.pipe = await api("pipeline_state"); } catch (e) { s.pipe = null; }
         try { s.histSum = await api("pub_stats_summary"); } catch (e) { s.histSum = {}; }
@@ -89,13 +93,13 @@
   }
   async function refreshPlan() {
     const s = S();
+    const key = JSON.stringify(apiDraft());
+    if (s.reviewKey !== key) { s.composition = null; s.readiness = null; s.duplicateResult=null; s.reviewKey = key; }
     try { s.plan = await C().api("post_plan", { draft: apiDraft() }); s.planErr = ""; scheduleFc(); }
     catch (e) {
       s.plan = null; s.planErr = e.message;
-      if (/не найден/.test(e.message)) {   // файл удалили из папки — убираем его из черновика
-        const d = draft(); d.files = []; saveDraft();
-        s.planErr = "Файлы прошлого черновика не найдены — добавьте их заново.";
-        s.plan = await C().api("post_plan", { draft: apiDraft() }).catch(() => null);
+      if (/не найден/.test(e.message)) {
+        s.planErr = "Некоторые вложения недоступны — удалите отсутствующие файлы или добавьте их заново.";
       }
     }
   }
@@ -242,6 +246,152 @@
     return `<div class="gallery ${multiOn() ? "multi" : ""} ${multiOn() && s.brush ? "brush" : ""}">${d.files.map(tile).join("")}
       ${d.files.length < maxFiles() ? `<label class="addtile" id="drop" tabindex="0"><input type="file" id="fileinp" multiple accept="${ACCEPT}" hidden><b>+</b>Добавить<span>${d.files.length} из ${maxFiles()}</span></label>` : ""}</div>${multiOn() ? versionsBar() : ""}`;
   }
+  let savedDraftTimer = null, savedDraftChain = Promise.resolve();
+  function paintSavedState(text, error=false) {
+    const el = document.getElementById('saved-draft-state');
+    if (el) { el.textContent=text; el.className=error?'err small':'muted small'; }
+  }
+  function queueDraftSave() {
+    clearTimeout(savedDraftTimer);
+    if (!draft()._saved || draft().editing_schedule || draft().extend) return;
+    paintSavedState('Изменения сохраняются…');
+    savedDraftTimer=setTimeout(()=>flushSavedDraft().catch(()=>{}),800);
+  }
+  function flushSavedDraft() {
+    clearTimeout(savedDraftTimer);
+    const current=draft();
+    if (!current._saved || current.editing_schedule || current.extend) return savedDraftChain.catch(()=>{});
+    const payload=apiDraft(current), name=current._saved.name, status=current._saved.status;
+    const work=async()=>{
+      try {
+        const meta=await C().api('post_draft_save',{name,status,draft:payload,did:current._saved.id,revision:current._saved.revision});
+        Object.assign(current._saved,{revision:meta.revision,updated:meta.updated});
+        if (draft()===current) { C().store.set('draft',current); S().draftSaveError=''; paintSavedState('Сохранено автоматически'); }
+        S().savedDrafts=(S().savedDrafts||[]).map(r=>r.id===meta.id?Object.assign({},r,meta):r);
+      } catch(err) {
+        if (draft()===current) { S().draftSaveError=err.message; paintSavedState(err.message,true); }
+        throw err;
+      }
+    };
+    savedDraftChain=savedDraftChain.catch(()=>{}).then(work);
+    return savedDraftChain;
+  }
+  function restoreDraft(raw) {
+    return Object.assign(EMPTY(),raw,{files:raw.files||[],e6tags:raw.e6ai_tags||raw.e6tags||{},e6meta:raw.e6ai_meta||raw.e6meta||{}});
+  }
+  async function keepCurrentDraft() {
+    const d=draft();
+    if (d.editing_schedule || d.extend) throw new Error('Сначала завершите редактирование или досылку поста');
+    if (d._saved) { await flushSavedDraft(); return; }
+    if (d.files.length || d.title || d.text) {
+      d._saved=await C().api('post_draft_save',{name:(d.title||'Без названия').slice(0,120),draft:apiDraft(),status:'working'});
+      C().store.set('draft',d);
+    }
+  }
+  function libraryHtml() {
+    const s=S(),d=draft(),m=d._saved,locked=d.editing_schedule||d.extend;
+    return `<section class="card"><div class="head"><h2>Черновики</h2><button class="btn small" data-pa="draft-new" ${locked?'disabled':''}>Новый черновик</button></div>
+      ${m?`<div class="row"><input id="draft-name" maxlength="120" value="${esc(m.name)}" aria-label="Название черновика"><select id="draft-status"><option value="working" ${m.status==='working'?'selected':''}>В работе</option><option value="ready" ${m.status==='ready'?'selected':''}>Готов</option></select><button class="btn small" data-pa="draft-save">Сохранить</button><button class="btn small" data-pa="draft-copy">Сохранить копию</button></div><p id="saved-draft-state" class="${s.draftSaveError?'err':'muted'} small">${esc(s.draftSaveError||'Черновик сохраняется автоматически')}</p>`:
+      `<button class="btn small" data-pa="draft-save" ${locked?'disabled':''}>Сохранить отдельным черновиком</button>`}
+      <details class="more" ${s.draftLibraryOpen?'open':''}><summary>Коллекция черновиков</summary><div class="morebody">
+        <div class="row"><input id="draft-query" value="${esc(s.draftQuery||'')}" placeholder="Поиск черновика"><select id="draft-filter"><option value="">Все статусы</option><option value="working" ${s.draftFilter==='working'?'selected':''}>В работе</option><option value="ready" ${s.draftFilter==='ready'?'selected':''}>Готов</option></select><button class="btn small" data-pa="draft-refresh">Найти / обновить</button></div>
+        ${(s.savedDrafts||[]).map(r=>`<div class="row" style="margin-top:8px">${r.files[0]?`<img src="/uthumb/${encodeURIComponent(r.files[0])}?t=${tok()}" width="48" alt="" onerror="this.style.display='none'">`:''}<span><b>${esc(r.name)}</b><br>${r.status==='ready'?'Готов':'В работе'} · ${esc(new Date(r.updated).toLocaleString())}</span><button class="btn small" data-pa="draft-open" data-id="${r.id}" ${locked?'disabled':''}>Открыть</button><button class="btn small" data-pa="draft-delete" data-id="${r.id}" data-revision="${r.revision}">Удалить</button></div>`).join('')}
+        ${s.savedDrafts && !s.savedDrafts.length?'<p class="muted">Черновиков не найдено</p>':''}</div></details></section>`;
+  }
+  function scheduledEditorHtml() {
+    const edit=draft().editing_schedule;
+    if (!edit) return '';
+    const date=new Date(edit.run_at),time=date.getFullYear()<2100?localInput(date):'';
+    return `<section class="card"><h2>Редактирование поста в очереди</h2><p class="warnline">Отправка этого поста приостановлена до сохранения или отмены изменений. После перезапуска редактирование можно продолжить из очереди.</p>
+      <label>Время публикации<input type="datetime-local" id="edit-when" value="${edit.new_time?localInput(new Date(edit.new_time)):time}"></label>
+      ${edit.queue&&!edit.pinned?'<p class="muted small">Без изменения времени конвейер сам выберет окно; место в очереди сохранится.</p>':''}
+      <button class="btn primary" data-pa="schedule-save">Сохранить изменения в очереди</button><button class="btn" data-pa="schedule-discard">Оставить прежнюю версию</button></section>`;
+  }
+  function platformTextsHtml() {
+    const d=draft(),s=S(),over=d.platform_texts||{};
+    const platforms=LANGP.filter(([p])=>s.pub?.modules[p]!==false && s.pub?.platform_texts_enabled?.[p]===true);
+    if (!platforms.length) return '';
+    return `<details class="card"><summary>Свой текст для каждой площадки</summary><p class="muted small">Отдельный текст заменяет основной или английский вариант только для выбранной площадки. Подписи и хэштеги добавляются по её настройкам.</p>
+      ${platforms.map(([p,name])=>{const t=over[p]||{};return `<div class="field"><label class="tgl"><input type="checkbox" data-platform-enable="${p}" ${t.enabled?'checked':''}><span>${esc(name)}: отдельный текст</span></label>${t.enabled?`<label>Заголовок<input data-platform-title="${p}" value="${esc(t.title||'')}"></label><label>Описание<textarea rows="3" data-platform-text="${p}">${esc(t.text||'')}</textarea></label>`:''}</div>`;}).join('')}</details>`;
+  }
+  function altsHtml() {
+    const d=draft();
+    if (!d.files.length || S().pub?.modules.bluesky===false) return '';
+    return `<details class="card"><summary>Описания картинок для Bluesky (alt)</summary><p class="muted small">Опишите каждую картинку для людей, использующих экранный диктор. Пустое поле использует заголовок, если это включено в настройках Bluesky.</p>${d.files.map(f=>`<label class="field">${esc(f.name)}<textarea rows="2" maxlength="1000" data-image-alt="${f.id}">${esc((d.alts||{})[f.id]||'')}</textarea></label>`).join('')}</details>`;
+  }
+  function duplicatesHtml() {
+    const r=S().duplicateResult;
+    return `<section class="card"><div class="head"><h2>Проверка на повтор</h2><button class="btn small" data-pa="duplicates">Найти похожие работы</button></div><p class="muted small">Сравниваются доступные изображения и превью из истории. Похожесть не доказывает, что это одна работа.</p>${r?`<p>${r.total?'Найдено совпадений: '+r.total:'Похожих работ среди доступных превью не найдено'} · проверено файлов: ${r.checked}</p>${r.matches.map(m=>`<p><b>${esc(m.title||'Без названия')}</b> · ${esc(m.destination)} · ${esc(new Date(m.created).toLocaleDateString())}${/^https?:/.test(m.link)?` <a href="#" data-open="${esc(m.link)}">Открыть</a>`:''}</p>`).join('')}`:''}</section>`;
+  }
+  async function checkedPost() {
+    await flushSavedDraft();
+    const payload=apiDraft();
+    const result=await C().api('post_duplicates',{draft:payload});S().duplicateResult=result;
+    if (result.total && !confirm('В истории есть похожие работы:\n'+result.matches.map(m=>(m.title||'Без названия')+' · '+m.destination).join('\n')+'\nПродолжить? Это может быть повторная публикация.')) return null;
+    return {draft:payload,duplicate_ack:result.token};
+  }
+  async function loadHistoryPage(offset=0) {
+    const s=S();s.historyOffset=offset;
+    const result=await C().api('post_history_search',Object.assign({},s.historyFilters||{},{offset,limit:30}));
+    s.historyPage=result;s.hist=result.items;
+    try{s.histSum=await C().api('pub_stats_summary',{ids:result.items.map(r=>r.id)});}catch(e){s.histSum={};}
+  }
+  function historySearchHtml() {
+    const s=S(),f=s.historyFilters||{},r=s.historyPage;
+    return `<section class="card"><div class="row" style="flex-wrap:wrap"><input id="history-query" value="${esc(f.q||'')}" placeholder="Текст, название, имя файла или тег"><select id="history-platform"><option value="">Все площадки</option>${LANGP.map(([p,n])=>`<option value="${p}" ${f.platform===p?'selected':''}>${esc(n)}</option>`).join('')}</select><select id="history-state">${[['','Любой результат'],['done','Полностью отправлено'],['partial','Частично отправлено'],['error','Есть ошибки'],['unknown','Возможно, опубликовано']].map(([k,n])=>`<option value="${k}" ${f.state===k?'selected':''}>${n}</option>`).join('')}</select><label>С<input type="date" id="history-from" value="${esc(f.date_from||'')}"></label><label>По<input type="date" id="history-to" value="${esc(f.date_to||'')}"></label><button class="btn" data-pa="history-search">Найти</button><button class="btn small" data-pa="history-reset">Сбросить</button></div>
+      ${r?`<p class="muted small">Найдено: ${r.total} · на странице: ${r.items.length} <button class="btn small" data-pa="history-prev" ${r.offset?'':'disabled'}>Назад</button><button class="btn small" data-pa="history-next" ${r.next_offset!=null?'':'disabled'}>Дальше</button></p>`:''}</section>`;
+  }
+
+  function templateToolsHtml() {
+    const s = S(), d = draft();
+    return `<details class="card"><summary>Шаблоны публикации${d.templateName ? " · " + esc(d.templateName) : ""}</summary><div class="morebody">
+      <p class="muted small">Сохраняются текст, рейтинг, выбор площадок, подписи, теги и параметры файлов. Аккаунты и сами файлы в шаблон не входят.</p>
+      ${d.templateName ? `<p>Применён шаблон: <b>${esc(d.templateName)}</b> <button class="btn small" data-pa="template-reset">Использовать текущие настройки</button></p>` : ""}
+      <button class="btn small" data-pa="template-save">Сохранить текущий пост как шаблон</button>
+      <button class="btn small" data-pa="templates-refresh">Обновить список</button>
+      ${(s.templates || []).map(t => `<div class="row" style="margin-top:8px"><b>${esc(t.name)}</b><button class="btn small" data-pa="template-apply" data-id="${esc(t.id)}">Применить</button><button class="btn small" data-pa="template-delete" data-id="${esc(t.id)}">Удалить</button></div>`).join("")}
+      ${s.pubErr && s.pubErr.features ? `<p class="err">${esc(s.pubErr.features)}</p>` : ""}</div></details>`;
+  }
+  function reviewToolsHtml() {
+    const s = S(), r = s.composition, checks = s.readiness;
+    const list = (xs) => xs.map(x => `<li>${esc(x)}</li>`).join("");
+    return `<section class="card"><h2>Проверка перед публикацией</h2>
+      <div class="row" style="flex-wrap:wrap"><button class="btn" data-pa="composition">Посмотреть по площадкам</button>
+      <button class="btn" data-pa="readiness">Проверить файлы и ограничения</button>
+      <button class="btn" data-pa="readiness-remote">Проверить доступ и права</button></div>
+      ${s.pubBusy === "features" ? `<p class="muted">Проверяю…</p>` : ""}
+      ${checks ? `<p><b>${checks.ready ? "Локальные проверки пройдены" : "Есть препятствия для публикации"}</b> · ${esc(new Date(checks.checked_at).toLocaleString())}</p><ul>${checks.checks.map(c => `<li class="${c.state === 'error' ? 'err' : c.state === 'ok' ? 'ok' : 'muted'}"><b>${esc(c.name)}</b>: ${esc(c.message)}</li>`).join("")}</ul>` : ""}
+      ${r ? `${r.errors.length ? `<ul class="errs">${list(r.errors)}</ul>` : ""}${r.platforms.map(p => `<details class="more" open><summary>${esc(p.destinations.join(", "))}</summary><div class="morebody">
+        <p class="muted small">Язык: ${esc(p.language)} · Формат: ${esc(p.format)}. Показан состав поста; оформление зависит от площадки.</p>
+        ${p.title ? `<p><b>${esc(p.title)}</b></p>` : ""}<pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(p.text || "Без текста")}</pre>
+        <ul>${list(p.details)}${list(p.warnings)}</ul>
+        ${p.files.map(f => `<div class="row" style="align-items:flex-start;margin:8px 0"><img src="/uthumb/${encodeURIComponent(f.id)}?t=${tok()}" width="72" alt="" onerror="this.style.display='none'"><div><b>${esc(f.name)}</b> · ${esc(f.kind)} · ${Math.round((f.size || 0)/1024)} КБ<br><span class="muted small">${esc(f.transform)}</span>${f.alt ? `<p class="small">Alt: ${esc(f.alt)}</p>` : ""}${f.tags.length ? `<p class="small">Теги: ${esc(f.tags.join(" "))}</p>` : ""}</div></div>`).join("")}</div></details>`).join("")}` : ""}
+      ${s.pubErr && s.pubErr.features ? `<p class="err">${esc(s.pubErr.features)}</p>` : ""}</section>`;
+  }
+  function journalHtml(pubId) {
+    if (!pubId) return "";
+    const log = S().publicationLog, current = log && log.pub_id === +pubId;
+    const labels = {created:"Создано",queued:"В очереди",running:"Выполняется",done:"Готово",error:"Ошибка"};
+    return `<section class="card"><div class="head"><h2>Журнал публикации</h2><button class="btn small" data-pa="journal" data-id="${+pubId}">Показать / обновить</button></div>
+      ${current ? `<ul>${log.events.map(e => `<li><time>${esc(new Date(e.at).toLocaleString())}</time> · ${esc(log.dests.find(d => d.key === e.dest)?.name || "Публикация")} · <b>${esc(labels[e.state] || e.state)}</b>${e.message ? ": " + esc(labels[e.message] || e.message) : ""}</li>`).join("") || `<li>Для старой публикации подробные этапы не записаны.</li>`}</ul>
+      ${log.dests.map(d => `<p><b>${esc(d.name || d.key)}</b>: ${d.state === "done" ? "Опубликовано" : d.state === "running" ? "Публикуется…" : d.state === "queued" ? "В очереди" : d.state === "error" && d.outcome === "not_sent" ? "Подтверждён отказ — можно повторить" : "Проверьте результат на площадке"}${d.message ? " · " + esc(d.message) : ""}</p>`).join("")}` : ""}</section>`;
+  }
+  function backupsHtml() {
+    const s = S(), state = s.backupState;
+    return `<section class="card setc"><h2>Резервные копии</h2>
+      <p class="muted small">История, очередь, черновики, шаблоны и настройки. Ключи, вебхуки, пароли и сессии входа не включаются. Копия содержит личные посты — храните её у себя.</p>
+      <label class="tgl"><input type="checkbox" id="backup-originals"><span>Включить оригиналы файлов (копия будет больше)</span></label>
+      <div class="row" style="flex-wrap:wrap;margin-top:10px"><button class="btn" data-pa="backup-create" ${s.pubBusy === 'backup' ? 'disabled' : ''}>Создать копию</button><button class="btn" data-pa="backup-refresh">Обновить список</button></div>
+      <p><input type="file" id="backup-file" accept=".zip,application/zip" aria-label="Файл резервной копии"><button class="btn" data-pa="backup-import">Добавить копию из файла</button></p>
+      ${s.pubBusy === 'backup' ? '<p class="muted">Обрабатываю копию…</p>' : ''}
+      ${state && state.pending ? '<p class="warnline">Восстановление подготовлено. Полностью закройте и снова запустите приложение. Очередь после восстановления будет приостановлена.</p>' : ''}
+      ${state && state.error ? `<p class="err">${esc(state.error)}. Текущие данные сохранены; отмените восстановление и попробуйте снова.</p>` : ''}
+      ${state && state.pending ? '<button class="btn small" data-pa="backup-cancel">Отменить восстановление</button>' : ''}
+      ${s.pubErr && s.pubErr.backup ? `<p class="err">${esc(s.pubErr.backup)}</p>` : ''}
+      ${state ? state.items.map(b => `<div class="row" style="flex-wrap:wrap;margin-top:8px"><span>${esc(new Date(b.created).toLocaleString())} · ${Math.round(b.size/1024/1024)} МБ · ${b.originals ? 'с оригиналами' : 'без оригиналов'}</span><a class="btn small" download="Crosspost-backup-${b.id}.zip" href="/backup/${b.id}?t=${tok()}">Скачать</a><button class="btn small" data-pa="backup-restore" data-id="${b.id}" ${state.pending ? 'disabled' : ''}>Восстановить</button></div>`).join('') : ''}
+      <p class="muted small">Восстановление заменяет историю и очередь после перезапуска. Перед ним автоматически сохраняется копия текущих данных. Без оригиналов некоторые вложения могут потребовать повторного добавления. Готовые файлы из внешней папки Files не включаются.</p></section>`;
+  }
+
   function renderPost() {
     const s = S();
     if (s.postMode === "progress" && s.pubState) { C().$main.innerHTML = progressHtml(); return; }
@@ -261,8 +411,15 @@
         ${(X.missing || []).length ? `<span class="warnline small">Оригиналы уже удалены (хранятся неделю после публикации): ${esc(X.missing.join(", "))}. Добавьте эти файлы заново.</span>` : ""}</div>`
       : `<div class="toolbar"><h1>Новый пост</h1><span class="spacer"></span>${d.files.length || d.text || d.title ? `<button class="btn ghost" data-pa="clear">${C().ICON.trash} Очистить</button>` : ""}</div>`);
     const h = `${head}
+      ${scheduledEditorHtml()}
+      ${libraryHtml()}
+      ${templateToolsHtml()}
       ${s.pubErr && s.pubErr.top ? `<p class="err">${esc(s.pubErr.top)}</p>` : ""}
       <div class="postgrid"><div class="postmain">
+        ${reviewToolsHtml()}
+        ${platformTextsHtml()}
+        ${altsHtml()}
+        ${duplicatesHtml()}
         <section class="card"><div class="cardhead"><h2>Файлы</h2>
             ${d.files.some((f) => f.kind !== "image") ? `<span class="optline">GIF и видео уходят как есть ${C().hint("Переделываются только там, где площадка иначе не примет: ужать под лимит Discord или Telegram, перекодировать в H.264 или в WebM для " + BN() + ". Подробности — «Настройки» → «Видео и GIF».")}</span>` :
             `<span class="optline">JPEG-превью для соцсетей, PNG-оригинал в Telegram и на ${BN()} ${C().hint("Оригиналы не меняются. Для постов делается JPEG-превью по рецепту из «Настроек» → «JPEG-превью»; он готовится сразу, пока вы пишете текст. PNG-оригиналы уходят файлами в Telegram и на e6ai.")}</span>`}
@@ -609,6 +766,13 @@
     if (!(e.target.closest && e.target.closest("#acl"))) acClose();
   });
   document.addEventListener("input", (e) => {
+    const target=e.target, ds=target.dataset||{};
+    if(ds.platformText || ds.platformTitle){
+      const p=ds.platformText||ds.platformTitle,d=draft();d.platform_texts=d.platform_texts||{};d.platform_texts[p]=d.platform_texts[p]||{enabled:true};
+      d.platform_texts[p][ds.platformText?'text':'title']=target.value;saveDraft();schedulePlan();return;
+    }
+    if(ds.imageAlt){const d=draft();d.alts=d.alts||{};d.alts[ds.imageAlt]=target.value;saveDraft();schedulePlan();return;}
+
     if (!(e.target.dataset && e.target.dataset.tagadd)) return;
     clearTimeout(acTimer); acTimer = setTimeout(() => acQuery(e.target), 120);
   });
@@ -664,11 +828,13 @@
     if (errs.length) h += `<ul class="errs">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`;
     h += `</div>`;
     if (d.rating && will.some((x) => x.key.startsWith("telegram:") && x.key !== "telegram:group")) h += `<div class="side-sec" id="fcbox">${fcHtml()}</div>`;
-    if (d.rating && will.length && p.texts) h += `<div class="side-sec">${previewHtml(will)}</div>`;
+    if (d.rating && will.length) h += `<div class="side-sec"><button class="btn small" data-pa="composition">Посмотреть состав по площадкам</button></div>`;
     const hard = (p.errors || []).filter((e) => !soft(e));
     const can = !hard.length && (will.length || !d.rating) && !s.publishing;
     h += `<div class="side-sec">`;
-    if (d.extend) {
+    if (d.editing_schedule) {
+      h += `<button class="btn primary big" data-pa="schedule-save" ${can && will.length ? "" : "disabled"}>Сохранить изменения в очереди</button>`;
+    } else if (d.extend) {
       h += `<button class="btn primary big" style="width:100%" data-pa="publish" ${can && will.length ? "" : "disabled"}>${will.length ? `Дослать: ${will.length} ${C().plural(will.length, "место", "места", "мест")}` : "Выберите, куда дослать"}</button>`;
     } else if (s.when === "later") {
       const at = s.whenAt ? new Date(s.whenAt) : null;
@@ -683,26 +849,6 @@
     if (hard.some(e6wait) && hard.length === (p.errors || []).filter(e6wait).length) h += `<p class="small warnline">${BN()} ждёт теги: заполните форму «Теги ${BN()}» или выключите ${BN()} для этого поста.</p>`;
     if (s.schedMsg) h += `<p class="ok small">${esc(s.schedMsg)}. <a href="#" data-view-link="history">Открыть «Историю»</a></p>`;
     return h + `</div>`;
-  }
-  function previewHtml(will) {
-    const s = S(), d = draft(), p = s.plan;
-    const plats = byOrder(TEXTP.filter((k) => will.some((x) => x.platform === k)), (x) => x);
-    if (!plats.length) return "";
-    const cur = plats.includes(s.pvTab) ? s.pvTab : plats[0];
-    const t = (p.texts[cur] || "");
-    const pub = s.pub, ttl = ((p.titles || {})[cur] != null ? p.titles[cur] : d.title) || "";
-    const withTitle = ttl && cur !== "deviantart" && (pub[cur] || {}).include_title !== false;
-    const lg = (p.langs || {})[cur] === "en" ? "English" : "основной";
-    let body = esc(t);
-    if (cur === "telegram") {
-      const n = (withTitle ? ttl.length + 1 : 0);
-      if (n + t.length > 1024) body = esc(t.slice(0, Math.max(0, 1024 - n))) + `<span class="cut">⋯ дальше отдельным сообщением</span>`;
-    }
-    body = body.replace(/\[([^\]\n]+)\]\(&lt;?(https?:\/\/[^\s)]+?)(&gt;)?\)/g, '<a href="#">$1</a>');
-    return `<details class="more" ${s.pvOpen ? "open" : ""} id="pvbox"><summary>Как будет выглядеть</summary><div class="morebody">
-      <div class="seg" role="tablist">${plats.map((k) => `<button role="tab" aria-selected="${k === cur}" class="${k === cur ? "on" : ""}" data-pa="pv" data-val="${k}" data-tip="${C().PLAT[k][2]}">${plats.length > 3 ? C().PLAT[k][0] : C().PLAT[k][2]}</button>`).join("")}</div>
-      <p class="muted small">Язык текста: ${lg}${ttl ? "" : ""}. Это ровно то, что уйдёт на площадку.</p>
-      <div class="preview">${withTitle ? `<b>${esc(ttl)}</b>\n` : ""}${body || `<span class="muted">Без текста</span>`}</div></div></details>`;
   }
   // ----- когда публиковать -----
   const WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"], MON = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -743,15 +889,16 @@
     const s = S(), st = s.pubState, job = s.pubJob;
     const running = job && job.state === "running";
     const ok = st.dests.filter((x) => x.state === "done").length, bad = st.dests.filter((x) => x.state === "error").length;
+    const uncertain = st.dests.filter((x) => x.state === "error" && x.outcome !== "not_sent").length;
     const row = (x) => {
-      const [ic, lbl] = STATE_ICON[x.state] || ["?", x.state];
+      const [ic, lbl] = (x.state === "error" && x.outcome !== "not_sent" ? ["?", "возможно, опубликовано"] : STATE_ICON[x.state]) || ["?", x.state];
       const warn = x.note && /⚠/.test(x.note);
       return `<div class="prow ${x.state}"><span class="pic" title="${lbl}">${ic}</span>
         <div style="flex:1;min-width:0"><b>${esc(x.name)}</b><br>
           <span class="muted small">${esc((x.details || []).join(" · "))}</span>
           ${x.state === "running" ? `<div class="progress thin"><div style="width:${Math.round((x.progress || 0) * 100)}%"></div></div>` : ""}
           ${x.state === "running" && x.message ? `<span class="small">${esc(x.message)} ${Math.round((x.progress || 0) * 100)}%</span>` : ""}
-          ${x.state === "error" ? `<br><span class="err small">${esc(x.message)}</span>` : ""}
+          ${x.state === "error" ? `<br><span class="err small">${x.outcome !== "not_sent" ? "Возможно, опубликовано. " : ""}${esc(x.message)}</span>` : ""}
           ${(() => { const m = /снимок экрана: ([\w.-]+\.png)/.exec((x.message || "") + " " + (x.note || "")); return m ? `<figure class="shot"><img src="/bdebug/${encodeURIComponent(m[1])}?t=${tok()}" alt="Снимок экрана"><figcaption class="muted small">Так выглядела страница в момент ошибки — пришлите этот снимок, если непонятно, что пошло не так.</figcaption></figure>` : ""; })()}
           ${x.note ? `<br><span class="small ${warn ? "warn" : "muted"}">${esc(x.note)}</span>` : ""}</div>
         ${x.link && /^https?:/.test(x.link) ? `<a href="#" class="small" data-open="${esc(x.link)}">Открыть</a>` : ""}</div>`;
@@ -765,12 +912,14 @@
       </section>
       ${job && job.state === "error" ? `<p class="err">Публикация прервалась: ${esc(job.error)}</p>` : ""}
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        ${!running && bad ? `<button class="btn primary" data-pa="retry">Повторить неудачные</button>` : ""}
+        ${!running && bad > uncertain ? `<button class="btn primary" data-pa="retry">Повторить подтверждённые отказы</button>` : ""}
+        ${!running && uncertain ? `<button class="btn" data-pa="retry-checked">Проверить перед повтором (${uncertain})</button>` : ""}
         ${!running && st.pub_id && st.dests.some((d) => d.originals_pending) ? `<button class="btn primary" data-pa="resend" data-id="${st.pub_id}" data-tip="Пост уже вышел — досылаем только PNG-оригиналы, нового поста не будет">Дослать PNG</button>` : ""}
         ${!running && st.pub_id ? `<button class="btn" data-pa="extend" data-id="${st.pub_id}" data-tip="Отправить этот же пост туда, куда он не ушёл — без второго поста в истории">Дослать на другие площадки</button>` : ""}
         ${!running ? `<button class="btn ${bad ? "" : "primary"}" data-pa="newpost">Новый пост</button><button class="btn" data-pa="backedit">Вернуться к посту</button>` : ""}
       </div>
-      <p class="note">Повтор отправит пост только туда, где была ошибка — дублей в остальных местах не будет. Если пост уже вышел, а не дошли только PNG, они дошлются к нему же — второй пост не создаётся.</p>`;
+      ${journalHtml(st.pub_id)}
+      <p class="note">Обычный повтор отправит пост только туда, где подтверждён отказ. При неизвестном результате сначала проверьте площадку: пост мог уже появиться. Если пост уже вышел, а не дошли только PNG, они дошлются к нему же — второй пост не создаётся.</p>`;
   }
 
   // ---------------- История ----------------
@@ -795,7 +944,7 @@
     const row = (r) => {
       const img = (r.files || [])[0], at = r.state === "pending" || r.state === "running" || r.state === "missed" ? new Date(r.run_at) : null;
       const when = r.state === "running" ? `<span class="small" style="color:var(--accent)">публикуется…</span>`
-        : r.state === "failed" ? `<span class="err small">не вышел: ${esc(r.error || "ошибка")}</span>`
+        : r.state === "editing" ? `<span class="warnline small">Редактируется — отправка приостановлена</span>` : r.state === "failed" ? `<span class="err small">не вышел: ${esc(r.error || "ошибка")}</span>`
         : r.state === "missed" ? `<span class="err small">пропущен — получит новое время</span>`
         : at ? `<span class="muted small">${esc(r.human)}</span>` : `<span class="muted small">${c.enabled ? "ищу свободное окно…" : "ждёт включения конвейера"}</span>`;
       const mv = s.pipeMove === r.id;
@@ -809,7 +958,7 @@
           ${r.why && r.state !== "failed" ? `<span class="muted small">${esc(r.why)}</span>` : ""}
           ${mv ? `<div class="row" style="align-items:center;gap:8px;margin-top:4px"><input type="datetime-local" id="pmv-${r.id}" min="${localInput(new Date())}" value="${at ? localInput(at) : ""}"><button class="btn small primary" data-pa="pipe-pin" data-id="${r.id}">Закрепить</button>${r.pinned ? `<button class="btn small" data-pa="pipe-unpin" data-id="${r.id}">Снять закрепление</button>` : ""}<button class="btn small ghost" data-pa="pipe-pin-cancel">Отмена</button></div>` : ""}
         </div>
-        ${r.state !== "running" ? `<div class="acts">
+        ${r.state !== "running" ? `<div class="acts">${["pending","queued","missed","editing"].includes(r.state)?`<button class="btn small" data-pa="schedule-edit" data-id="${r.id}">Редактировать</button>`:""}
           <button class="icon-btn" data-pa="pipe-up" data-id="${r.id}" data-tip="Выше в очереди" aria-label="Выше">↑</button>
           <button class="icon-btn" data-pa="pipe-down" data-id="${r.id}" data-tip="Ниже в очереди" aria-label="Ниже">↓</button>
           <button class="btn small" data-pa="pipe-move" data-id="${r.id}">${ICON.cal} Время</button>
@@ -830,13 +979,13 @@
     </section>`;
   }
   function schedHtml() {
-    const s = S(), list = (s.sched || []).filter((r) => ["pending", "running", "missed"].includes(r.state) && !r.queue);
+    const s = S(), list = (s.sched || []).filter((r) => ["pending", "running", "missed", "editing"].includes(r.state) && !r.queue);
     if (!list.length) return "";
     const ICON = C().ICON;
     return `<div class="pinned">${list.map((r) => {
       const img = (r.files || [])[0], at = new Date(r.run_at);
       const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-      const state = r.state === "missed" ? `<span class="err small">пропущен — окно было закрыто</span>` : r.state === "running" ? `<span class="small" style="color:var(--accent)">публикуется…</span>` : `<span class="muted small">${esc(r.human)}</span>`;
+      const state = r.state === "editing" ? `<span class="warnline small">Редактируется — отправка приостановлена</span>` : r.state === "missed" ? `<span class="err small">пропущен — окно было закрыто</span>` : r.state === "running" ? `<span class="small" style="color:var(--accent)">публикуется…</span>` : `<span class="muted small">${esc(r.human)}</span>`;
       return `<div class="sitem ${r.state === "missed" ? "missed" : ""}">
         <div class="datebox"><b>${time}</b><span>${at.getDate()} ${MONS[at.getMonth()]}</span></div>
         ${img ? `<img src="/uthumb/${esc(img)}?t=${tok()}" alt="" onerror="this.style.visibility='hidden'">` : `<div class="noimg"></div>`}
@@ -845,7 +994,7 @@
           <span style="display:flex;gap:10px;flex-wrap:wrap">${state}<span class="muted small">${r.dests} ${C().plural(r.dests, "место", "места", "мест")}</span></span>
           ${s.moving === r.id ? `<div class="row" style="align-items:center;gap:8px;margin-top:4px"><input type="datetime-local" id="mv-${r.id}" min="${localInput(new Date())}" value="${localInput(at)}"><button class="btn small primary" data-pa="sched-move" data-id="${r.id}">Сохранить</button><button class="btn small ghost" data-pa="sched-move-cancel">Отмена</button></div>` : ""}
         </div>
-        ${r.state !== "running" ? `<div class="acts">
+        ${r.state !== "running" ? `<div class="acts">${["pending","queued","missed","editing"].includes(r.state)?`<button class="btn small" data-pa="schedule-edit" data-id="${r.id}">Редактировать</button>`:""}
           <button class="btn small primary" data-pa="sched-now" data-id="${r.id}">${ICON.play} Опубликовать сейчас</button>
           ${s.moving === r.id ? "" : `<button class="btn small" data-pa="sched-move" data-id="${r.id}">${ICON.cal} Перенести</button>`}
           <button class="icon-btn danger" data-pa="sched-cancel" data-id="${r.id}" data-tip="Отменить публикацию" aria-label="Отменить публикацию">${ICON.trash}</button></div>` : ""}
@@ -854,7 +1003,7 @@
   }
   const destBadges = (dests) => `<div class="pbs">${dests.map((x) => {
     const st = x.state === "error" ? "err" : x.state === "done" ? "" : "wait";
-    const tip = `${x.name}: ${x.state === "done" ? "опубликовано" : x.state === "error" ? "ошибка — " + (x.message || "") : "не дошло"}`;
+    const tip = `${x.name}: ${x.state === "done" ? "опубликовано" : x.state === "error" ? (x.outcome !== "not_sent" ? "возможно, опубликовано — " : "ошибка — ") + (x.message || "") : "не дошло"}`;
     return C().pbadge(x.platform || (x.key || "").split(":")[0], { cls: st, tip, link: x.state === "done" && /^https?:/.test(x.link || "") ? x.link : "" });
   }).join("")}</div>`;
   // единая шкала успеха: ×3+ супер-хит, ×2–3 хит, ×1,3–2 выше нормы, ниже ×0,77 — слабее
@@ -1055,11 +1204,12 @@
   function renderHistory() {
     const s = S(), rows = s.hist;
     const mode = s.histMode || (s.histMode = C().store.get("histMode", "cal"));
-    const nSched = (s.sched || []).filter((r) => ["pending", "running", "missed"].includes(r.state)).length;
+    const nSched = (s.sched || []).filter((r) => ["pending", "running", "missed", "editing"].includes(r.state)).length;
     let h = `<div class="toolbar"><h1>История</h1><span class="spacer"></span>
       ${mode === "list" && rows && rows.length ? `${C().seg("hf", [["all", `Все ${rows.length}`], ["hits", "Хиты"], ["sched", `Запланированные${nSched ? " " + nSched : ""}`]], s.hf || "all")}
-        <select class="sm" id="hsort" aria-label="Сортировка"><option value="date">Сначала новые</option><option value="index" ${s.hsort === "index" ? "selected" : ""}>По индексу успеха</option></select>` : ""}
+        <select class="sm" id="hsort" aria-label="Сортировка"><option value="date">Сначала новые</option><option value="index" ${s.hsort === "index" ? "selected" : ""}>По индексу на странице</option></select>` : ""}
       ${C().seg("histMode", [["cal", "Календарь"], ["list", "Список"]], mode)}</div>`;
+    if (mode === "list") h += historySearchHtml();
     if (mode === "cal") {
       h += pipelineHtml() + schedHtml() + C().newsStrip() + calendarHtml() + dayListHtml();
     } else {
@@ -1068,7 +1218,10 @@
       if (s.hf !== "hits") h += schedHtml();
       if (cm && !cm.error && cm.leaders && cm.leaders.length) h += `<section class="card">${leadersHtml(cm, `Лидеры: ${MONTHS[lm - 1].toLowerCase()} ${ly}`)}</section>`;
       if (!rows) { C().$main.innerHTML = h + `<p class="muted">Загрузка…</p>`; return; }
-      if (!rows.length) { C().$main.innerHTML = h + `<section class="card soon"><h2>Здесь появятся ваши публикации</h2><p class="muted">Со статистикой каждого поста и ссылками на все площадки.</p><div><button class="btn primary" data-view-link="post">Новый пост</button></div></section>`; return; }
+      if (!rows.length) {
+        const filtered=Object.values(s.historyFilters||{}).some(Boolean);
+        C().$main.innerHTML=h+`<section class="card soon"><h2>${filtered?'Публикаций по фильтрам не найдено':'Здесь появятся ваши публикации'}</h2><p class="muted">${filtered?'Измените запрос или условия поиска.':'Со статистикой каждого поста и ссылками на все площадки.'}</p>${filtered?'':`<button class="btn primary" data-view-link="post">Новый пост</button>`}</section>`;return;
+      }
       const sum = s.histSum || {};
       let list = rows.slice();
       if (s.hf === "hits") list = list.filter((r) => (sum[String(r.id)] || {}).index >= C().LV().hit);
@@ -1082,6 +1235,7 @@
           ${destBadges(r.dests)}${metricsHtml(r)}<span class="chev">${C().ICON.chev}</span></div>`;
       }).join("")}</div>` : `<p class="muted">Хитов пока нет — здесь будут посты лучше 90% постов канала (сейчас это ${String(C().LV().hit.toFixed(2)).replace(".", DEC)} к норме и выше).</p>`;
     }
+    if (s.pubErr?.features) h += `<p class="err">${esc(s.pubErr.features)}</p>`;
     if (s.pstatOpen) h += drawerHtml(s.pstatOpen);
     C().$main.innerHTML = h;
   }
@@ -1103,7 +1257,7 @@
       img = `<span class="hthumb">${pubThumb(r || { id, files: [] })}${r ? C().badges({ kind: pubKind(r), n: (r.files || []).length, rank: x.rank, scope: "за месяц", index: x.index, est: x.fresh, sm: true }) : ""}</span>`;
       big = `/pbig/${id}?t=${tok()}`;
       sub = r ? `${new Date(r.created).toLocaleString(LOC)} ${ratingPill(r.rating)}` : "";
-      badges = r ? destBadges(r.dests) + (r.dests.some((d) => d.originals_pending) ? `<button class="btn small" style="align-self:flex-start" data-pa="resend" data-id="${id}" data-tip="Пост уже вышел — досылаем только PNG-оригиналы, нового поста не будет">Дослать PNG</button>` : "") + `<button class="btn small" style="align-self:flex-start" data-pa="extend" data-id="${id}" data-tip="Отправить этот пост на площадки, куда он не ушёл">Дослать на другие площадки</button>` : "";
+      badges = r ? destBadges(r.dests) + (r.dests.some((d) => d.state === "error" && d.outcome !== "not_sent") ? `<button class="btn small" data-pa="retry-checked" data-id="${id}">Проверить перед повтором</button>` : "") + (r.dests.some((d) => d.originals_pending) ? `<button class="btn small" style="align-self:flex-start" data-pa="resend" data-id="${id}" data-tip="Пост уже вышел — досылаем только PNG-оригиналы, нового поста не будет">Дослать PNG</button>` : "") + `<button class="btn small" style="align-self:flex-start" data-pa="extend" data-id="${id}" data-tip="Отправить этот пост на площадки, куда он не ушёл">Дослать на другие площадки</button>` : "";
     } else {
       const d = (s.pstat || {})[key] || {};
       title = d.title || "Пост";
@@ -1119,7 +1273,7 @@
             <span class="muted small">${sub}</span>${badges}
             ${(() => { const d = (s.pstat || {})[key] || {}; if (kind === "pub" || kind === "cal") return ""; const t = d.text && d.text.length > (title || "").length ? esc(d.text.slice(0, 140)) : ""; const hint = !d.preview && d.media !== "text" ? "Превью нет: файла не было в выгрузке. Сделайте экспорт канала с включёнными фото и видео и импортируйте снова — превью добавятся." : ""; return t || hint ? `<span class="muted small">${t}${t && hint ? "<br>" : ""}${hint}</span>` : ""; })()}</div>
           <button class="icon-btn" data-pa="pstat-close" aria-label="Закрыть">${C().ICON.close}</button></div>
-        <div class="db">${String(key).startsWith("cal:") ? calStatHtml(String(key).slice(4)) : pstatHtml(key)}</div></aside>`;
+        <div class="db">${kind === "pub" ? journalHtml(id) : ""}${String(key).startsWith("cal:") ? calStatHtml(String(key).slice(4)) : pstatHtml(key)}</div></aside>`;
   }
   function calStatHtml(ik) {
     const it = calItems()[ik];
@@ -1687,10 +1841,14 @@
           <button class="btn" data-pa="tr-test" ${busy("tr")} ${t.ready ? "" : "disabled"}>Проверить подключение</button>
           ${t.has_key ? `<button class="btn ghost" data-pa="tr-clear">Удалить ключ</button>` : ""}</div></section>`;
     }
-    if (sec === "files") h += filesHtml(err, ok, busy, tgl, hint);
+    if (sec === "files") h += filesHtml(err, ok, busy, tgl, hint) + backupsHtml();
     if (sec === "media") h += mediaHtml();
     if (sec === "bluesky") h += blueskyHtml(err, ok, busy);
     if (sec === "deviantart") h += daHtml(err, ok, busy);
+    if (LANGP.some(([key])=>key===sec)) {
+      h += `<section class="card setc"><h2>Текст публикации</h2>${tgl(`data-platform-texts-setting="${sec}"`, p.platform_texts_enabled?.[sec]===true, "Отдельные заголовок и текст для этой площадки")}
+        <p class="muted small">Добавляет поля в редактор поста. Если выключено, используется основной или английский вариант, в том числе для постов в очереди. Сохранённые отдельные тексты не удаляются.</p></section>`;
+    }
     return h;
   }
   const ratingSel = (id, cur, opts = DEST_RATING) => `<select id="${id}">${opts.map(([k, l]) => `<option value="${k}" ${cur === k ? "selected" : ""}>${l}</option>`).join("")}</select>`;
@@ -1928,7 +2086,113 @@
     document.querySelectorAll("#main input, #main textarea, #main select").forEach((el) => { if (el.id) snap[el.id] = el.type === "checkbox" ? el.checked : el.value; });
     const val = (id) => String(snap[id] == null ? "" : snap[id]).trim();
     const saveSec = async (sec, ch) => { s.pub = await api("pub_save", { section: sec, changes: ch }); };
+    const backupFile = document.getElementById("backup-file")?.files[0];
     switch (act) {
+      case 'draft-save': await guard('features',async()=>{
+        if(d._saved){await flushSavedDraft();return;}
+        const name=prompt('Название черновика',d.title||'Без названия');if(!name)return;
+        d._saved=await api('post_draft_save',{name,draft:apiDraft(),status:'working'});
+        C().store.set('draft',d);s.savedDrafts=await api('post_drafts');s.draftLibraryOpen=true;
+      });return true;
+      case 'draft-copy': await guard('features',async()=>{
+        clearTimeout(savedDraftTimer);await savedDraftChain.catch(()=>{});
+        const name=prompt('Название копии черновика',(d._saved?.name||d.title||'Черновик')+' (копия)');if(!name)return;
+        d._saved=await api('post_draft_save',{name,draft:apiDraft(),status:d._saved?.status||'working'});
+        s.draftSaveError='';C().store.set('draft',d);s.savedDrafts=await api('post_drafts');
+      });return true;
+      case 'draft-refresh': await guard('features',async()=>{
+        await flushSavedDraft();s.draftQuery=val('draft-query');s.draftFilter=val('draft-filter');
+        s.savedDrafts=await api('post_drafts',{q:s.draftQuery,status:s.draftFilter});s.draftLibraryOpen=true;
+      });return true;
+      case 'draft-new': await guard('features',async()=>{
+        await keepCurrentDraft();s.draft=EMPTY();C().store.set('draft',s.draft);s.draftSaveError='';s.postMode='edit';
+        s.savedDrafts=await api('post_drafts');await refreshPlan();
+      });return true;
+      case 'draft-open': await guard('features',async()=>{
+        try{await keepCurrentDraft();}catch(err){
+          if(!confirm(err.message+'\nМожно сначала сохранить свои изменения отдельной копией. Отбросить локальные изменения и открыть выбранный черновик?'))return;
+        }
+        const r=await api('post_draft_get',{did:+a.dataset.id});
+        s.draft=restoreDraft(r.draft);s.draft._saved={id:r.id,revision:r.revision,name:r.name,status:r.status,updated:r.updated};
+        C().store.set('draft',s.draft);s.draftSaveError='';s.postMode='edit';s.when='now';s.tried=false;await refreshPlan();
+      });return true;
+      case 'draft-delete':
+        if(!confirm('Удалить сохранённый черновик? Посты в очереди и истории останутся.'))return true;
+        await guard('features',async()=>{
+          await flushSavedDraft();const meta=d._saved?.id===+a.dataset.id?d._saved:{revision:+a.dataset.revision};
+          s.savedDrafts=await api('post_draft_delete',{did:+a.dataset.id,revision:meta.revision});
+          if(d._saved?.id===+a.dataset.id){delete d._saved;C().store.set('draft',d);}
+        });return true;
+      case 'schedule-edit': await guard('features',async()=>{
+        if(d.editing_schedule?.id===+a.dataset.id){s.view='post';s.postMode='edit';return;}
+        await keepCurrentDraft();const r=await api('post_schedule_edit',{sid:+a.dataset.id});
+        C().store.set('draft_saved',d);s.draft=restoreDraft(r.draft);
+        s.draft.editing_schedule={id:r.id,token:r.token,revision:r.revision,run_at:r.run_at,queue:r.queue,pinned:r.pinned};
+        C().store.set('draft',s.draft);s.view='post';C().store.set('view','post');s.postMode='edit';
+        if(!s.pub)s.pub=await api('pub_settings');await refreshPlan();
+      });return true;
+      case 'schedule-save': await guard('features',async()=>{
+        const edit=d.editing_schedule;if(!edit)throw new Error('Пост не открыт для редактирования');
+        const checked=await checkedPost();if(!checked)return;
+        await api('post_schedule_save',Object.assign({},checked,{sid:edit.id,token:edit.token,revision:edit.revision,run_at:edit.new_time||null}));
+        closeExtend();s.view='history';await load('history');
+      });return true;
+      case 'schedule-discard':
+        if(!confirm('Отменить изменения и оставить прежний текст, файлы и получателей?'))return true;
+        await guard('features',async()=>{
+          const edit=d.editing_schedule;
+          await api('post_schedule_discard',{sid:edit.id,token:edit.token,revision:edit.revision});
+          closeExtend();s.view='history';await load('history');
+        });return true;
+      case 'duplicates': await guard('features',async()=>{s.duplicateResult=await api('post_duplicates',{draft:apiDraft()});});return true;
+      case 'history-search': case 'history-reset': await guard('features',async()=>{
+        s.historyFilters=act==='history-reset'?{}:{q:val('history-query'),platform:val('history-platform'),state:val('history-state'),date_from:val('history-from'),date_to:val('history-to')};
+        await loadHistoryPage(0);
+      });return true;
+      case 'history-prev': case 'history-next': await guard('features',async()=>{
+        await loadHistoryPage(act==='history-prev'?Math.max(0,s.historyPage.offset-s.historyPage.limit):s.historyPage.next_offset||0);
+      });return true;
+
+      case "journal": await guard("features", async () => { s.publicationLog = await api("post_journal", {pub_id:+a.dataset.id}); }); return true;
+      case "templates-refresh": s.templates = await api("post_templates"); C().render(); return true;
+      case "template-save": {
+        const name = prompt("Название шаблона");
+        if (!name) return true;
+        await guard("features", async () => { s.templates = await api("post_template_save", {name, draft:apiDraft()}); }); return true;
+      }
+      case "template-apply": {
+        if (!confirm("Заменить текст и параметры поста шаблоном? Добавленные файлы сохранятся.")) return true;
+        await guard("features", async () => {
+          const t = await api("post_template_get", {tid:a.dataset.id});
+          s.draft = Object.assign({title:"",text:"",rating:null,signature:true,exclude:[],variants:{},hashtags:null,multi:false}, t.draft,
+            {files:d.files, _saved:d._saved, editing_schedule:d.editing_schedule, alts:d.alts||{}, marks:d.marks || {}, e6tags:d.e6tags || {}, e6meta:d.e6meta || {}, templateName:t.name});
+          if (d.extend) s.draft.extend = d.extend;
+          saveDraft(); await refreshPlan();
+        }); return true;
+      }
+      case "template-reset": delete d.profile; delete d.templateName; saveDraft(); await refreshPlan(); C().render(); return true;
+      case "template-delete":
+        if (confirm("Удалить шаблон?")) { s.templates = await api("post_template_delete", {tid:a.dataset.id}); C().render(); } return true;
+      case "composition": await guard("features", async () => { s.composition = await api("post_composition", {draft:apiDraft()}); }); return true;
+      case "readiness": case "readiness-remote": await guard("features", async () => { s.readiness = await api("post_readiness", {draft:apiDraft(),remote:act === "readiness-remote"}); }); return true;
+      case "backup-cancel":
+        if (confirm("Отменить восстановление и оставить текущие данные? Фоновую отправку нужно будет включить вручную.")) await guard("backup", async () => { s.backupState = await api("backup_cancel_restore"); }); return true;
+      case "backup-refresh": await guard("backup", async () => { s.backupState = await api("backup_status"); }); return true;
+      case "backup-create": await guard("backup", async () => {
+        await api("backup_create", {include_originals:!!snap["backup-originals"]});
+        do { await new Promise(resolve => setTimeout(resolve,750)); s.backupState = await api("backup_status"); }
+        while (s.backupState.job && s.backupState.job.state === "running");
+        if (s.backupState.job?.state === "error") throw new Error(s.backupState.job.error);
+      }); return true;
+      case "backup-import": await guard("backup", async () => {
+        if (!backupFile) throw new Error("Выберите ZIP-файл резервной копии");
+        const response = await fetch("/backup-upload", {method:"POST",headers:{"X-Token":window.API_TOKEN},body:backupFile});
+        const result = await response.json(); if (!result.ok) throw new Error(result.error);
+        s.backupState = await api("backup_status");
+      }); return true;
+      case "backup-restore":
+        if (!confirm("Заменить историю, очередь и настройки этой копией после перезапуска? Текущие данные будут сохранены в отдельную резервную копию. Фоновая отправка должна быть выключена.")) return true;
+        await guard("backup", async () => { await api("backup_restore", {bid:a.dataset.id}); s.backupState = await api("backup_status"); }); return true;
       case "e6t": e6toggle(a.dataset.id, a.dataset.row, a.dataset.tag); await e6changed(true); return true;
       case "e6ok": {
         const F = (s.e6form || {})[a.dataset.id];
@@ -2023,7 +2287,7 @@
       case "clear":
         if (!confirm("Очистить пост?")) return true;
         d.files.forEach((f) => api("post_remove_file", { file_id: f.id }).catch(() => {}));
-        s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
+        s.draft = { _saved:d._saved, editing_schedule:d.editing_schedule, files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
       case "wk-start": a.disabled = true; try { s.worker = await api("worker_start"); } catch (err) { alert(err.message); } C().loadWorker(); C().render(); return true;
       case "wk-stop": if (!confirm("Выключить фоновую отправку? Запланированные посты будут выходить, только пока открыто окно Crosspost.")) return true;
         s.worker = await api("worker_stop"); setTimeout(async () => { s.worker = await api("worker_status"); C().render(); }, 16000); C().render(); return true;
@@ -2086,7 +2350,8 @@
       case "schedule": {
         s.publishing = true; paintSide();
         try {
-          const r = await api("post_schedule", { draft: apiDraft(), run_at: new Date(s.whenAt).toISOString() });
+          const checked = await checkedPost(); if(!checked){s.publishing=false;C().render();return true;}
+          const r = await api("post_schedule", Object.assign({},checked,{run_at:new Date(s.whenAt).toISOString()}));
           s.schedMsg = `Запланировано: ${r.human}`;
           // новый пост; файлы НЕ удаляем — они нужны запланированной публикации
           s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
@@ -2097,7 +2362,8 @@
       case "pipe-add": {
         s.publishing = true; paintSide();
         try {
-          await api("pipeline_add", { draft: apiDraft() });
+          const checked = await checkedPost(); if(!checked){s.publishing=false;C().render();return true;}
+          await api("pipeline_add", checked);
           s.schedMsg = "Добавлено в конвейер";
           s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
           saveDraft(); s.when = "now"; s.whenAt = null; await refreshPlan();
@@ -2134,7 +2400,8 @@
         }
         s.publishing = true; paintSide();
         try {
-          await api("post_publish", { draft: apiDraft() });
+          const checked = await checkedPost(); if(!checked){s.publishing=false;C().render();return true;}
+          await api("post_publish", checked);
           if (d.extend) closeExtend();   // досылка ушла — возвращаем ваш прежний черновик
           s.postMode = "progress";
           const st = await api("post_state"); s.pubState = st.state; s.pubJob = st.job;
@@ -2186,6 +2453,11 @@
       }
       case "job-cancel": a.disabled = true; try { await api("job_cancel", { key: a.dataset.key }); } catch (err) { C().toast(err.message, "error"); } return true;
       case "upload-cancel": upStopped = true; if (upAbort) upAbort.abort(); return true;
+      case "retry-checked":
+        if (!confirm("Проверьте все площадки со статусом «возможно, опубликовано». Вы убедились, что поста нет на каждой из них? Повтор может создать дубль, если пост уже появился.")) return true;
+        await api("post_retry", { confirm_unknown: true, pub_id: a.dataset.id ? +a.dataset.id : null });
+        { const st = await api("post_state"); s.pubState = st.state; s.pubJob = st.job; }
+        s.view = "post"; s.postMode = "progress"; await C().loadInfo(); C().startPoll(); C().render(); return true;
       case "retry": await api("post_retry"); { const st = await api("post_state"); s.pubState = st.state; s.pubJob = st.job; } await C().loadInfo(); C().startPoll(); C().render(); return true;
       case "newpost": s.postMode = "edit"; s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
       case "backedit": s.postMode = "edit"; await refreshPlan(); C().render(); return true;
@@ -2350,6 +2622,19 @@
 
   async function onChange(e) {
     const t = e.target, s = S(), api = C().api;
+    if(t.dataset.platformTextsSetting){
+      try { s.pub=await api('pub_save',{section:'platform_texts_enabled',changes:{[t.dataset.platformTextsSetting]:t.checked}});s.reviewKey=null;await refreshPlan(); }
+      catch(err){alert(err.message);}
+      C().render();return true;
+    }
+    if(t.id==='draft-status'){draft()._saved.status=t.value;saveDraft();return true;}
+    if(t.id==='draft-name'){draft()._saved.name=t.value.trim()||'Без названия';saveDraft();return true;}
+    if(t.id==='edit-when'){draft().editing_schedule.new_time=t.value?new Date(t.value).toISOString():null;saveDraft();return true;}
+    if(t.dataset.platformEnable){
+      const p=t.dataset.platformEnable,d=draft();d.platform_texts=d.platform_texts||{};
+      d.platform_texts[p]=Object.assign({title:s.plan?.titles?.[p]||d.title||'',text:s.plan?.base_texts?.[p]||d.text||''},d.platform_texts[p]||{},{enabled:t.checked});
+      saveDraft();await refreshPlan();C().render();return true;
+    }
     if (t.dataset.pa === "wk-auto") { try { s.worker = await api("worker_autostart", { on: t.checked }); } catch (err) { alert(err.message); } C().render(); return true; }
     if (t.dataset.pipe) { try { s.pipe = await api("pipeline_set", { changes: { [t.dataset.pipe]: +t.value } }); s.sched = await api("post_scheduled"); } catch (err) { alert(err.message); } C().render(); return true; }
     if (t.id === "trpreset") {   // шаблон сервиса подставляет адрес и модель, не перерисовывая страницу (набранный ключ не теряется)

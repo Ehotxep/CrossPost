@@ -6,6 +6,18 @@ from contextlib import contextmanager
 from app.paths import data_dir
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS saved_drafts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'working',
+    created TEXT NOT NULL, updated TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, draft TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS image_fingerprints (
+    key TEXT PRIMARY KEY, path TEXT, mtime INTEGER, size INTEGER, hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS publication_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, pub_id INTEGER NOT NULL,
+    at TEXT NOT NULL, dest TEXT, state TEXT, message TEXT
+);
+CREATE INDEX IF NOT EXISTS publication_events_pub ON publication_events(pub_id, id);
 CREATE TABLE IF NOT EXISTS channels (
     platform  TEXT NOT NULL,          -- telegram, vk, ...
     chat_id   TEXT NOT NULL,
@@ -78,15 +90,18 @@ def conn() -> sqlite3.Connection:
         if _conn is None:
             try:
                 _conn = _open()
-            except sqlite3.DatabaseError:   # файл базы повреждён (обрыв питания, диск): сохраняем его и начинаем с чистой, а не падаем при запуске
+            except sqlite3.DatabaseError as e:
+                # Блокировка, недоступный диск и ошибки миграции не означают повреждение.
+                # Закрываем неудачно открытое соединение перед повтором или восстановлением.
+                if _conn is not None:
+                    _conn.close()
+                _conn = None
+                code = getattr(e, "sqlite_errorcode", 0) & 0xff
+                if code not in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
+                    raise
                 import time
                 from app.applog import log
                 p = data_dir() / "posts.db"
-                try:
-                    _conn.close()
-                except Exception:  # noqa: BLE001
-                    pass
-                _conn = None
                 for ext in ("", "-wal", "-shm"):
                     try:
                         (data_dir() / f"posts.db{ext}").replace(data_dir() / f"posts.db{ext}.corrupt-{int(time.time())}")
@@ -101,6 +116,7 @@ def _open() -> sqlite3.Connection:
     global _conn
     _conn = sqlite3.connect(data_dir() / "posts.db", check_same_thread=False, timeout=30)
     _conn.row_factory = sqlite3.Row
+    _conn.create_function('casefold', 1, lambda s: str(s or '').casefold(), deterministic=True)
     try:   # окно приложения и фоновая отправка пишут в базу одновременно
         _conn.execute("PRAGMA journal_mode=WAL")
     except sqlite3.DatabaseError as e:

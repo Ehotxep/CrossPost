@@ -90,6 +90,15 @@ def make_server(api, port: int = 0):
             if not self._host_ok():
                 return
             path = self.path.split("?", 1)[0]
+            if path.startswith('/backup/'):
+                from urllib.parse import parse_qs, urlsplit
+                if parse_qs(urlsplit(self.path).query).get('t', [''])[0] != token:
+                    return self._send(403, b'{"ok":false,"error":"forbidden"}')
+                try:
+                    from app import backups
+                    return self._send_file(backups.archive_path(path[len('/backup/'):]), 'application/zip')
+                except (ValueError, OSError):
+                    return self._send(404, b'{"ok":false,"error":"not found"}')
             if path in ("/", "/index.html"):
                 from app import ui_state
                 html = ((WEB / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token)
@@ -206,11 +215,27 @@ def make_server(api, port: int = 0):
         def do_POST(self):
             if not self._host_ok():
                 return
+            if self.path == '/backup-upload':
+                if self.headers.get('X-Token') != token:
+                    return self._send(403, b'{"ok":false,"error":"forbidden"}')
+                try:
+                    from app import backups
+                    if backups.pending():
+                        raise ValueError('Перезапустите приложение для завершения восстановления')
+                    result = backups.receive(self.rfile, int(self.headers.get('Content-Length') or 0))
+                    body = {'ok': True, 'result': result}
+                except Exception as e:
+                    from app.jobs import mask_secrets
+                    body = {'ok': False, 'error': mask_secrets(str(e))}
+                return self._send(200, json.dumps(body, ensure_ascii=False).encode('utf-8'))
             if self.path.startswith("/upload"):   # файл для нового поста: тело запроса — сами байты
                 from urllib.parse import parse_qs, unquote, urlsplit
                 if self.headers.get("X-Token") != token:
                     return self._send(403, b'{"ok":false,"error":"forbidden"}')
                 try:
+                    from app import backups
+                    if backups.pending():
+                        raise ValueError('Перезапустите приложение для завершения восстановления')
                     from app.publish import uploads
                     name = unquote(parse_qs(urlsplit(self.path).query).get("name", ["file"])[0])
                     length = int(self.headers.get("Content-Length") or 0)

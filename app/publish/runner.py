@@ -23,7 +23,7 @@ from app.publish import settings as S
 from app.publish import e6ai as E6
 from app.publish import hashtags as HT
 from app.publish import prep, tg_bot, uploads
-from core.common import PlatformError
+from core.common import PlatformError, NotPublishedError
 from core.images import load_original
 from platforms import discord as D
 from platforms import telegram as T
@@ -179,11 +179,15 @@ LANGS = ("main", "en")
 def variant(cfg, draft, platform: str) -> tuple[str, str, str]:
     """(заголовок, текст, язык) для площадки: английский вариант, если площадка на него настроена и он заполнен, иначе основной."""
     lang = (cfg.get("text_lang") or {}).get(platform, "main")
+    title, text, used = (draft.get("title") or "").strip(), (draft.get("text") or "").strip(), "main"
     if lang in LANGS and lang != "main":
         v = (draft.get("variants") or {}).get(lang) or {}
         if (v.get("text") or "").strip() or (v.get("title") or "").strip():
-            return (v.get("title") or "").strip(), (v.get("text") or "").strip(), lang
-    return (draft.get("title") or "").strip(), (draft.get("text") or "").strip(), "main"
+            title, text, used = (v.get("title") or "").strip(), (v.get("text") or "").strip(), lang
+    custom = (draft.get('platform_texts') or {}).get(platform) or {}
+    if (cfg.get('platform_texts_enabled') or {}).get(platform) is True and custom.get('enabled'):
+        title, text = custom.get('title', title).strip(), custom.get('text', text).strip()
+    return title, text, used
 
 
 def title_for(cfg, draft, platform: str) -> str:
@@ -205,7 +209,8 @@ def signed_text(cfg, draft, platform: str) -> str:
 # --- план -------------------------------------------------------------------------
 
 def plan(draft: dict) -> dict:
-    cfg = S.load()
+    from app.publish.templates import effective
+    cfg = effective(S.load(), draft)
     errors, notes = [], []
     all_files = files = _files(draft)
     multi = bool(draft.get("multi")) and bool(cfg["modules"].get("targeting"))   # «Умное таргетирование»: у каждой площадки свой набор файлов
@@ -261,9 +266,13 @@ def plan(draft: dict) -> dict:
     mature = rating in ("erotic", "explicit")
     off = set(draft.get("exclude") or [])
     done = set()
+    uncertain = set()
     if draft.get("extend"):   # досылка к уже опубликованному посту: где он уже вышел — не трогаем
         done = done_keys(draft["extend"])
+        row = _pub_row(int(draft["extend"]))
+        uncertain = {d["key"] for d in json.loads(row["dests"] or "[]") if needs_verification(d)} if row else set()
         off |= done
+        off |= uncertain
     dests = []
 
     def add(key, platform, name, will, reason="", details=None, toggle=True, need=None):
@@ -477,6 +486,8 @@ def plan(draft: dict) -> dict:
         if d["will"] and d["platform"] in problems:
             d.update(will=False, reason=problems[d["platform"]], can_toggle=False, need=[])
     for d in dests:
+        if d["key"] in uncertain:
+            d.update(will=False, can_toggle=False, reason="возможно, опубликовано — проверьте площадку; повтор доступен на экране публикации после подтверждения")
         if d["key"] in done:
             d.update(will=False, off=False, can_toggle=False, need=[], done=True, reason="уже опубликовано")
     will = [d for d in dests if d["will"]]
@@ -489,6 +500,7 @@ def plan(draft: dict) -> dict:
             "texts": {p: signed_text(cfg, draft, p) for p in ("telegram", "discord", "vk", "bluesky", "deviantart")},
             # заголовок и язык текста каждой площадки: предпросмотр показывает ровно то, что уйдёт
             "titles": {p: title_for(cfg, draft, p) for p in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")},
+            "base_texts": {p: variant(cfg, draft, p)[1] for p in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")},
             "langs": {p: variant(cfg, draft, p)[2] for p in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")},
             "hashtags": HT.final(cfg, draft), "hashtags_suggested": HT.suggest(cfg, draft),
             "hashtags_on": bool(cfg["hashtags"].get("enabled", True))}
@@ -506,13 +518,24 @@ def state() -> dict | None:
 
 
 def _set(key=None, **kw):
+    event = None
     with _state_lock:
         if key is None:
             _state.update(kw)
         else:
             for d in _state["dests"]:
                 if d["key"] == key:
+                    if any(k in kw and kw[k] != d.get(k) for k in ("state", "message", "note")):
+                        event = (_state.get("pub_id"), key, kw.get("state", d.get("state")),
+                                 kw.get("message") or kw.get("note") or kw.get("state") or "")
                     d.update(kw)
+    if event:
+        try:
+            from app.publish import journal
+            journal.record(*event)
+        except Exception:
+            from app.applog import log
+            log("публикация: не удалось записать этап в журнал")
 
 
 def _save_pub():
@@ -530,6 +553,13 @@ def _save_pub():
                              json.dumps(st.get("draft") or {}, ensure_ascii=False)))
             with _state_lock:
                 _state["pub_id"] = cur.lastrowid
+            c.execute("INSERT INTO publication_events(pub_id,at,dest,state,message) VALUES (?,?,?,?,?)",
+                      (cur.lastrowid, st["created"], "", "created", "Публикация создана"))
+            sid = (st.get("draft") or {}).get("_schedule_id")
+            if sid is not None:
+                # Связь фиксируется до первой отправки: после падения процесса отсутствие
+                # результата нельзя принять за гарантированный отказ и повторить пост.
+                c.execute("UPDATE scheduled SET pub_id=? WHERE id=?", (cur.lastrowid, sid))
 
 
 UNATTENDED_WAIT = 45 * 60   # публикация по расписанию без человека: повторы загрузки PNG не дольше 45 минут
@@ -723,7 +753,24 @@ def resend_originals(pub_id: int, report) -> None:
     report(progress=1.0, message="PNG досланы")
 
 
-def retry(report) -> None:
+def needs_verification(dest: dict) -> bool:
+    # Старые записи не содержат outcome: отсутствие доказательства отказа не делает повтор безопасным.
+    return dest.get("state") == "error" and dest.get("outcome") != "not_sent"
+
+
+def retry(report, confirm_unknown: bool = False, pub_id: int | None = None) -> None:
+    if pub_id is not None:
+        row = _pub_row(int(pub_id))
+        if not row:
+            raise PlatformError("Публикация не найдена")
+        draft = json.loads(row.get("draft") or "null")
+        if not isinstance(draft, dict):
+            raise PlatformError("Черновик публикации не сохранён — автоматический повтор недоступен")
+        dests = json.loads(row["dests"] or "[]")
+        with _state_lock:
+            _state.clear()
+            _state.update(dict(row, pub_id=row["id"], draft=draft, dests=dests,
+                               files=json.loads(row["files"] or "[]"), running=False, skipped=[]))
     st = state()
     if not st:
         raise PlatformError("Нечего повторять")
@@ -731,19 +778,20 @@ def retry(report) -> None:
         if d["state"] == "error" and d.get("message_ids") and d["key"].startswith("telegram:") and d["key"] != "telegram:group":
             _set(d["key"], state="done", message="", originals_pending=True)
     st = state()
-    failed = [d["key"] for d in st["dests"] if d["state"] == "error"]
+    failed = [d["key"] for d in st["dests"] if d["state"] == "error" and (confirm_unknown or not needs_verification(d))]
     if not failed:
         if any(d.get("originals_pending") for d in st["dests"]):
             return resend_originals(st["pub_id"], report)
-        raise PlatformError("Неудачных мест нет")
+        raise PlatformError("Нет мест для безопасного повтора. Проверьте площадки: возможно, пост уже опубликован.")
     for k in failed:
-        _set(k, state="queued", message="", note="")
+        _set(k, state="queued", message="", note="", outcome=None)
     _set(running=True)
     _run(st["draft"], report, only=set(failed))
 
 
 def _run(draft, report, only):
-    cfg = S.load()
+    from app.publish.templates import effective
+    cfg = effective(S.load(), draft)
     st = state()
     mature = draft["rating"] != "sfw"
     all_files = _files(draft)
@@ -812,7 +860,7 @@ def _run(draft, report, only):
     def one(n, d):
             key = d["key"]
             files, kind = _sel(d.get("platform") or key.split(":")[0])
-            _set(key, state="running", message="готовлю файлы…", progress=0.0)
+            _set(key, state="running", message="готовлю файлы…", progress=0.0, outcome="unknown")
 
             def prog(frac, _key=key):
                 frac = max(0.0, min(1.0, float(frac)))
@@ -933,12 +981,13 @@ def _run(draft, report, only):
                     if kind == "images":
                         imgs = media_for("bluesky")
                         _set(key, message="загружаю картинки…"); prog(0.3)
-                        res = BS.post(bs, text, draft["rating"], images=imgs, alt=alt, langs=bs.get("langs"))
+                        alts = [(draft.get('alts') or {}).get(f['id']) or alt for f in files[:BS.MAX_IMAGES]]
+                        res = BS.post(bs, text, draft["rating"], images=imgs, alt=alt, alts=alts, langs=bs.get("langs"))
                     else:
                         path, _, info = anim_file("bluesky", BS.VIDEO_MAX_BYTES, lambda m: _set(key, message=m + "…"))
                         _set(key, message="загружаю видео…"); prog(0.4)
                         res = BS.post(bs, text, draft["rating"], video={"data": path.read_bytes(), "width": info.get("width"),
-                                                                       "height": info.get("height")}, alt=alt, langs=bs.get("langs"))
+                                                                       "height": info.get("height")}, alt=(draft.get('alts') or {}).get(files[0]['id']) or alt, langs=bs.get("langs"))
                     _set(key, state="done", message="", link=res["link"], uri=res["uri"],
                          note="Bluesky обрабатывает видео — в ленте оно появится через минуту" if kind != "images" else "")
                 elif key == "deviantart":
@@ -1006,6 +1055,12 @@ def _run(draft, report, only):
                         _set(key, state="done", message="", link=links[0] if links else "")
             except _Done:
                 _set(key, progress=1.0)
+            except NotPublishedError as e:
+                if not _posted_but_failed(key, e):
+                    # Эти адаптеры создают одну запись на место. Для многошаговых
+                    # площадок отказ последнего шага не исключает частичный успех.
+                    safe = key.startswith(("telegram:", "discord:")) or key == "bluesky"
+                    _set(key, state="error", outcome="not_sent" if safe else "unknown", message=mask_secrets(str(e)))
             except (Cancelled, _Stop):   # «Отмена»: если пост уже вышел — остаётся «дослать PNG», иначе место просто не отправлено
                 if not _posted_but_failed(key, "отменено"):
                     _set(key, state="error", message="Отменено — не отправлено")
@@ -1017,6 +1072,9 @@ def _run(draft, report, only):
                     _set(key, state="error", message=mask_secrets(f"{type(e).__name__}: {e}"))
             else:
                 _set(key, progress=1.0)
+            current = next(x for x in state()["dests"] if x["key"] == key)
+            if needs_verification(current):
+                _set(key, note="⚠ Возможно, опубликовано. Проверьте площадку перед повтором.")
             if key in posted:
                 posted[key].set()   # и при ошибке — чтобы пересылка в группу не ждала вечно
             _save_pub()
@@ -1106,3 +1164,53 @@ def history(limit: int = 50) -> list[dict]:
         r["dests"] = json.loads(r["dests"] or "[]")
         r.pop("draft", None)
     return rows
+
+
+def search_history(q='', platform='', state='', date_from='', date_to='', offset=0, limit=30):
+    from datetime import timedelta
+    limit, offset = max(1, min(int(limit), 100)), max(0, int(offset))
+    where, args = [], []
+    dests = "json_each(CASE WHEN json_valid(dests) THEN dests ELSE '[]' END)"
+    if q.strip():
+        where.append("instr(casefold(COALESCE(title,'') || ' ' || COALESCE(text,'') || ' ' || COALESCE(files,'') || ' ' || "
+                     "COALESCE(json_extract(CASE WHEN json_valid(draft) THEN draft ELSE '{}' END,'$.hashtags'),'') || ' ' || "
+                     "COALESCE(json_extract(CASE WHEN json_valid(draft) THEN draft ELSE '{}' END,'$.e6ai_tags'),'') || ' ' || "
+                     "COALESCE(json_extract(CASE WHEN json_valid(draft) THEN draft ELSE '{}' END,'$.platform_texts'),'')), ?) > 0")
+        args.append(q.strip().lstrip('#').casefold())
+    if platform:
+        if platform not in ('telegram', 'discord', 'vk', 'bluesky', 'deviantart', 'e6ai'):
+            raise ValueError('Неизвестная площадка')
+        where.append(f"EXISTS(SELECT 1 FROM {dests} d WHERE json_extract(d.value,'$.platform')=? OR json_extract(d.value,'$.key')=? OR json_extract(d.value,'$.key') LIKE ?)")
+        args.extend((platform, platform, platform + ':%'))
+    error = f"EXISTS(SELECT 1 FROM {dests} d WHERE json_extract(d.value,'$.state')='error')"
+    done = f"EXISTS(SELECT 1 FROM {dests} d WHERE json_extract(d.value,'$.state')='done')"
+    if state == 'error':
+        where.append(error)
+    elif state == 'unknown':
+        where.append(f"EXISTS(SELECT 1 FROM {dests} d WHERE json_extract(d.value,'$.state')='error' AND COALESCE(json_extract(d.value,'$.outcome'),'unknown')!='not_sent')")
+    elif state == 'partial':
+        where.extend((error, done))
+    elif state == 'done':
+        where.extend((done, f"NOT EXISTS(SELECT 1 FROM {dests} d WHERE COALESCE(json_extract(d.value,'$.state'),'')!='done')"))
+    elif state:
+        raise ValueError('Неизвестный результат отправки')
+    for value, op, upper in ((date_from, '>=', False), (date_to, '<', True)):
+        if value:
+            try:
+                dt = datetime.fromisoformat(value)
+                if upper:
+                    dt += timedelta(days=1)
+                value = dt.astimezone(timezone.utc).isoformat(timespec='seconds')
+            except (ValueError, TypeError):
+                raise ValueError('Неверная дата фильтра')
+            where.append('created ' + op + ' ?')
+            args.append(value)
+    clause = ' WHERE ' + ' AND '.join(where) if where else ''
+    total = db.query('SELECT COUNT(*) AS n FROM publications' + clause, args)[0]['n']
+    rows = db.query('SELECT * FROM publications' + clause + ' ORDER BY id DESC LIMIT ? OFFSET ?', (*args, limit, offset))
+    for row in rows:
+        row['files'] = json.loads(row['files'] or '[]')
+        row['dests'] = json.loads(row['dests'] or '[]')
+        row.pop('draft', None)
+    return dict(items=rows, total=total, offset=offset, limit=limit,
+                next_offset=offset + len(rows) if offset + len(rows) < total else None)

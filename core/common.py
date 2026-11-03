@@ -13,6 +13,14 @@ class PlatformError(Exception):
     """Понятная ошибка площадки, которую показываем пользователю."""
 
 
+class NotPublishedError(PlatformError):
+    """Площадка явно отказала: запись точно не создана."""
+
+
+class PublicationUnknown(PlatformError):
+    """Запрос создания мог дойти; без проверки повторять нельзя."""
+
+
 @dataclass
 class Post:
     text: str = ""

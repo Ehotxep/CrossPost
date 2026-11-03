@@ -1,8 +1,18 @@
 """Настройки публикации: куда и как постить. Хранятся в папке данных (publish.json), только на этом компьютере."""
 import copy
 import json
+from functools import wraps
 
 from app.paths import data_dir
+
+
+def _locked(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        from core.fsutil import file_lock
+        with file_lock(_path()):
+            return fn(*args, **kwargs)
+    return wrapped
 
 RATINGS = ("sfw", "erotic", "explicit")          # рейтинг поста
 DEST_RATINGS = ("sfw", "nsfw", "all")            # рейтинг места: только SFW / только 18+ / любой
@@ -44,6 +54,7 @@ DEFAULTS = {
     },
     # на какие площадки уходит английский вариант текста поста (остальные — основной текст)
     "text_lang": {"telegram": "main", "discord": "main", "vk": "main", "bluesky": "main", "deviantart": "main", "e6ai": "main"},
+    "platform_texts_enabled": {k: False for k in PLATFORM_MODULES},
     # какие версии файлов (комикс: ru / en / clean — без надписей) уходят на площадку; пусто — любые.
     # Работает только в постах, где включён переключатель «Умное таргетирование»
     "versions": {"telegram": [], "discord": [], "vk": [], "bluesky": [], "deviantart": [], "e6ai": []},
@@ -146,6 +157,7 @@ def _migrate(data: dict) -> dict:
     return data
 
 
+@_locked
 def load(raw: bool = False) -> dict:
     """Настройки. Без raw отключённые модули-площадки выглядят выключенными (enabled=False) — так их пропускают
     и публикация, и фоновая отправка, и цифры. Сохраняем всегда «сырые» (raw=True), чтобы ничего не потерять."""
@@ -199,6 +211,7 @@ def module_on(key: str) -> bool:
         return True
 
 
+@_locked
 def save(cfg: dict) -> dict:
     cfg = _merge(DEFAULTS, cfg)
     from core.fsutil import atomic_write
@@ -206,6 +219,7 @@ def save(cfg: dict) -> dict:
     return cfg
 
 
+@_locked
 def update(section: str, changes: dict) -> dict:
     cfg = load(raw=True)
     if section not in cfg:

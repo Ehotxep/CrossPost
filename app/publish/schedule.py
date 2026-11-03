@@ -7,6 +7,7 @@ Crosspost должен быть запущен в это время (можно 
 import json
 import threading
 import time
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from app import db
@@ -28,9 +29,11 @@ CREATE TABLE IF NOT EXISTS scheduled (
 );
 """)
 for _col in ("queue INTEGER DEFAULT 0",    # 1 — пост из конвейера (время выбирает сама программа)
+             "revision INTEGER DEFAULT 0", "edit_token TEXT", "edit_prev TEXT",
              "pinned INTEGER DEFAULT 0",   # 1 — время закреплено вручную, конвейер его не двигает
              "qpos REAL",                  # место в очереди конвейера
              "tries INTEGER DEFAULT 0",    # повторы после сбоя
+             "retry_safe INTEGER DEFAULT 0",  # подтверждённый сбой до начала отправки
              "why TEXT"):                  # почему выбрано это время
     try:
         db.conn().execute("ALTER TABLE scheduled ADD COLUMN " + _col)
@@ -80,7 +83,7 @@ def add(draft: dict, run_at: str) -> dict:
 
 
 def items(limit_done: int = 10) -> list[dict]:
-    rows = db.query("SELECT * FROM scheduled WHERE state IN ('pending','running','missed') ORDER BY run_at")
+    rows = db.query("SELECT * FROM scheduled WHERE state IN ('pending','running','missed','editing') ORDER BY run_at")
     rows += db.query("SELECT * FROM scheduled WHERE state IN ('done','partial','failed') ORDER BY done_at DESC LIMIT ?", (limit_done,))
     for r in rows:
         d = json.loads(r.pop("draft") or "{}")
@@ -90,6 +93,65 @@ def items(limit_done: int = 10) -> list[dict]:
     return rows
 
 
+def open_edit(sid):
+    from app.publish.drafts import hydrate
+    with db.tx() as c:
+        row = c.execute('SELECT * FROM scheduled WHERE id=?', (int(sid),)).fetchone()
+        if row is None or row['state'] not in ('pending', 'queued', 'missed', 'editing'):
+            raise ValueError('Можно редактировать только ожидающий или пропущенный пост')
+        row = dict(row)
+        if row['state'] != 'editing':
+            token = secrets.token_hex(16)
+            if c.execute("UPDATE scheduled SET state='editing',edit_prev=?,edit_token=?,revision=revision+1 WHERE id=? AND state=? AND revision=?",
+                         (row['state'], token, int(sid), row['state'], row['revision'])).rowcount != 1:
+                raise ValueError('Состояние поста изменилось — обновите очередь')
+            row.update(edit_prev=row['state'], state='editing', edit_token=token, revision=row['revision'] + 1)
+    draft, missing = hydrate(json.loads(row['draft']))
+    return dict(id=int(sid), token=row['edit_token'], revision=row['revision'], run_at=row['run_at'],
+                queue=bool(row['queue']), pinned=bool(row['pinned']), draft=draft, missing=missing)
+
+
+def save_edit(sid, token, revision, draft, run_at=None):
+    from app.publish import runner
+    from app.publish.drafts import content
+    draft = content(draft)
+    plan = runner.plan(draft)
+    if plan['errors'] or not any(d['will'] for d in plan['dests']):
+        raise ValueError((plan['errors'] or ['Выберите получателей поста'])[0])
+    dt = _parse(run_at) if run_at else None
+    if dt and dt < _now() + timedelta(minutes=1):
+        raise ValueError('Выберите новое время в будущем')
+    with db.tx() as c:
+        row = c.execute("SELECT * FROM scheduled WHERE id=? AND state='editing' AND edit_token=? AND revision=?",
+                        (int(sid), str(token), int(revision))).fetchone()
+        if row is None:
+            raise ValueError('Пост уже изменён или отправлен — обновите очередь')
+        at = dt.isoformat(timespec='seconds') if dt else row['run_at']
+        state = 'queued' if row['queue'] and not row['pinned'] and not dt else 'pending'
+        if state == 'pending' and _parse(at) < _now() + timedelta(minutes=1):
+            raise ValueError('Прежнее время прошло — выберите новое')
+        c.execute("""UPDATE scheduled SET draft=?,title=?,rating=?,dests=?,run_at=?,state=?,pinned=?,
+                     error=NULL,tries=0,edit_token=NULL,edit_prev=NULL,revision=revision+1 WHERE id=?""",
+                  (json.dumps(draft, ensure_ascii=False), (draft.get('title') or draft.get('text') or '')[:80],
+                   draft.get('rating'), sum(bool(d['will']) for d in plan['dests']), at, state,
+                   1 if row['queue'] and dt else row['pinned'], int(sid)))
+    return {'id': int(sid), 'state': state}
+
+
+def cancel_edit(sid, token, revision):
+    with db.tx() as c:
+        row = c.execute("SELECT * FROM scheduled WHERE id=? AND state='editing' AND edit_token=? AND revision=?",
+                        (int(sid), str(token), int(revision))).fetchone()
+        if row is None:
+            raise ValueError('Пост изменился — обновите очередь')
+        state = row['edit_prev'] or 'missed'
+        if state == 'pending' and _parse(row['run_at']) <= _now():
+            state = 'missed'
+        c.execute('UPDATE scheduled SET state=?,edit_token=NULL,edit_prev=NULL,revision=revision+1 WHERE id=?',
+                  (state, int(sid)))
+    return True
+
+
 def _set(sid: int, **kw):
     keys = ", ".join(f"{k}=?" for k in kw)
     with db.tx() as c:
@@ -97,21 +159,28 @@ def _set(sid: int, **kw):
 
 
 def cancel(sid: int):
-    _set(int(sid), state="cancelled")
+    with db.tx() as c:
+        if c.execute("UPDATE scheduled SET state='cancelled',edit_token=NULL,edit_prev=NULL WHERE id=? AND state NOT IN ('running','done','partial')", (int(sid),)).rowcount != 1:
+            raise ValueError('Пост уже отправляется или отправлен — отменить его в очереди нельзя')
 
 
 def reschedule(sid: int, run_at: str) -> dict:
     dt = _parse(run_at)
     if dt < _now() + timedelta(minutes=1):
         raise ValueError("Время уже прошло — выберите время в будущем")
-    _set(int(sid), run_at=dt.isoformat(timespec="seconds"), state="pending", error=None)
     with db.tx() as c:   # перенесённый вручную пост конвейера дальше не двигаем
+        if c.execute("UPDATE scheduled SET run_at=?,state='pending',error=NULL WHERE id=? AND state NOT IN ('editing','running')",
+                     (dt.isoformat(timespec='seconds'), int(sid))).rowcount != 1:
+            raise ValueError('Пост редактируется или уже отправляется')
         c.execute("UPDATE scheduled SET pinned=1, why='время задано вами' WHERE id=? AND queue=1", (int(sid),))
     return {"human": human(dt)}
 
 
 def publish_now(sid: int):
-    _set(int(sid), run_at=_now().isoformat(timespec="seconds"), state="pending", error=None)
+    with db.tx() as c:
+        if c.execute("UPDATE scheduled SET run_at=?,state='pending',error=NULL WHERE id=? AND state NOT IN ('editing','running')",
+                     (_now().isoformat(timespec='seconds'), int(sid))).rowcount != 1:
+            raise ValueError('Пост редактируется или уже отправляется')
 
 
 def best_times(n: int = 3) -> list[dict]:
@@ -177,6 +246,9 @@ STUCK_AFTER = timedelta(hours=3)
 def tick(api):
     """Один проход: опубликовать подошедшие посты (по одному, по порядку)."""
     from app.publish import pipeline, runner
+    from app import backups
+    if backups.pending():
+        return
     try:
         pipeline.maintain()   # конвейер: расставить очередь по лучшим окнам, повторить сорвавшееся
     except Exception:  # noqa: BLE001
@@ -193,6 +265,8 @@ def tick(api):
         at = _parse(r["run_at"])
         if at > now:
             break
+        if r["queue"] and not pipeline.cfg()["enabled"]:
+            continue   # также защищает закреплённые посты и другой процесс с редким maintain()
         if now - at > GRACE:
             _set(r["id"], state="missed", error="приложение было закрыто в назначенное время")
             continue
@@ -201,24 +275,34 @@ def tick(api):
             return   # дождёмся конца текущей публикации
         draft = json.loads(r["draft"])
         draft["_scheduled_run"] = True   # если теги e6ai вдруг перестали проходить проверку — e6ai пропускаем, остальное публикуем
+        draft["_schedule_id"] = r["id"]
         with db.tx() as c:   # забираем пост атомарно — второй процесс его уже не возьмёт
-            if c.execute("UPDATE scheduled SET state='running' WHERE id=? AND state='pending'", (r["id"],)).rowcount != 1:
+            if c.execute("UPDATE scheduled SET state='running', retry_safe=0 WHERE id=? AND state='pending'", (r["id"],)).rowcount != 1:
                 continue
         try:
             p = runner.plan(draft)
             if p["errors"]:
                 raise ValueError(p["errors"][0])
         except Exception as e:  # noqa: BLE001
-            _set(r["id"], state="failed", error=str(e), done_at=_now().isoformat(timespec="seconds"))
+            _set(r["id"], state="failed", error=str(e), retry_safe=1, done_at=_now().isoformat(timespec="seconds"))
             continue
+        if backups.pending():
+            return
         api._tg_ctx()
-        api.jobs.start("publish", lambda report, d=draft: runner.start(d, report))
+        from core.fsutil import file_lock
+        from app.paths import data_dir
+        with file_lock(data_dir() / 'publication-start'):
+            if backups.pending():
+                return
+            api.jobs.start("publish", lambda report, d=draft: runner.start(d, report))
         while True:   # ждём конца публикации, чтобы записать итог
             time.sleep(1)
             j = api.jobs.get("publish")
             if not j or j["state"] != "running":
                 break
         st = runner.state() or {}
+        if st.get("draft", {}).get("_schedule_id") != r["id"]:
+            st = {}   # start мог упасть до создания публикации: не привязываем предыдущий пост
         dests = st.get("dests") or []
         ok = sum(1 for d in dests if d.get("state") == "done")
         bad = sum(1 for d in dests if d.get("state") == "error")

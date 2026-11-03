@@ -11,7 +11,7 @@ import time
 
 import requests
 
-from core.common import PlatformError
+from core.common import PlatformError, PublicationUnknown
 
 _tl = threading.local()
 
@@ -57,7 +57,7 @@ def request(method: str, url: str, *, idempotent: bool, what: str = "запро�
             continue
         except requests.RequestException as e:
             if not idempotent:
-                raise PlatformError(f"{what}: связь оборвалась, неизвестно, дошёл ли запрос ({type(e).__name__}). "
+                raise PublicationUnknown(f"{what}: связь оборвалась, неизвестно, дошёл ли запрос ({type(e).__name__}). "
                                     "Проверьте площадку — возможно, запись уже появилась; повторять вслепую нельзя.")
             attempt += 1
             _wait(_pause(attempt), what, attempt, note)
@@ -70,6 +70,8 @@ def request(method: str, url: str, *, idempotent: bool, what: str = "запро�
                 ra = 0
             _wait(max(ra, _pause(attempt)) if ra else _pause(attempt), what, attempt, note)
             continue
+        if not idempotent and r.status_code >= 500:
+            raise PublicationUnknown(f"{what}: сервер ответил {r.status_code}; возможно, пост уже опубликован. Проверьте площадку перед повтором.")
         return r
 
 

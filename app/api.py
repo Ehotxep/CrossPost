@@ -18,6 +18,9 @@ class Api:
         self.tg = TgService()
 
     def call(self, name: str, args: dict):
+        from app import backups
+        if backups.pending() and name not in ('backup_status', 'backup_cancel_restore', 'pub_settings', 'post_templates', 'post_plan', 'info', 'worker_status', 'post_state', 'modules', 'perf_status'):
+            raise ValueError("Восстановление подготовлено. Перезапустите приложение для применения копии.")
         if name.startswith("_") or name == "call" or not callable(getattr(self, name, None)):
             raise ValueError(f"Неизвестный метод: {name}")
         return getattr(self, name)(**(args or {}))
@@ -1201,22 +1204,126 @@ class Api:
         from app.publish import runner
         return runner.plan(draft)
 
-    def post_publish(self, draft: dict):
+    def post_journal(self, pub_id: int):
+        from app.publish import journal, runner
+        row = runner._pub_row(int(pub_id))
+        if not row:
+            raise ValueError("Публикация не найдена")
+        return {'pub_id': int(pub_id), 'events': journal.read(pub_id), 'dests': json.loads(row['dests'] or '[]')}
+
+    def post_templates(self):
+        from app.publish import templates
+        return [{'id': r['id'], 'name': r['name']} for r in templates.items()]
+
+    def post_drafts(self, q: str = '', status: str = ''):
+        from app.publish import drafts
+        return drafts.items(q, status)
+
+    def post_draft_get(self, did: int):
+        from app.publish import drafts
+        return drafts.get(did)
+
+    def post_draft_save(self, name: str, draft: dict, status: str = 'working', did=None, revision=None):
+        from app.publish import drafts
+        return drafts.save(name, draft, status, did, revision)
+
+    def post_draft_delete(self, did: int, revision: int):
+        from app.publish import drafts
+        drafts.remove(did, revision)
+        return drafts.items()
+
+    def post_duplicates(self, draft: dict):
+        from app.publish import duplicates
+        return duplicates.find(draft)
+
+    def post_history_search(self, q: str = '', platform: str = '', state: str = '', date_from: str = '', date_to: str = '', offset: int = 0, limit: int = 30):
         from app.publish import runner
+        return runner.search_history(q, platform, state, date_from, date_to, offset, limit)
+
+    def post_template_save(self, name: str, draft: dict):
+        from app.publish import templates
+        templates.save(name, draft)
+        return self.post_templates()
+
+    def post_template_get(self, tid: str):
+        from app.publish import templates
+        return templates.get(tid)
+
+    def post_template_delete(self, tid: str):
+        from app.publish import templates
+        templates.remove(tid)
+        return self.post_templates()
+
+    def post_composition(self, draft: dict):
+        from app.publish import review
+        return review.composition(draft)
+
+    def post_readiness(self, draft: dict, remote: bool = False):
+        from app.publish import review
+        return review.readiness(draft, remote=remote is True)
+
+    def backup_status(self):
+        from app import backups
+        return {'items': backups.items(), 'pending': backups.pending(), 'error': backups.restore_error(), 'job': self.jobs.get('backup')}
+
+    def backup_cancel_restore(self):
+        from app import backups
+        backups.cancel_restore()
+        return self.backup_status()
+
+    def backup_create(self, include_originals: bool = False):
+        from app import backups
+        return self.jobs.start('backup', lambda report: backups.create(include_originals is True, report))
+
+    def backup_restore(self, bid: str):
+        from app import backups
+        if any(j['state'] == 'running' for j in self.jobs.all().values()):
+            raise ValueError("Дождитесь завершения фоновых задач перед восстановлением")
+        return backups.stage_restore(bid, idle_check=lambda: not any(j['state'] == 'running' for j in self.jobs.all().values()))
+
+    def post_publish(self, draft: dict, duplicate_ack: str = ''):
+        from app.publish import runner
+        from app.publish import drafts, duplicates
+        # Keep explicit extension metadata while validating all user-editable fields.
+        draft = dict(drafts.content(draft), **({'extend': draft['extend']} if draft.get('extend') else {}))
         st = self.jobs.get("publish")
         if st and st["state"] == "running":
             raise ValueError("Предыдущая публикация ещё идёт")
         p = runner.plan(draft)
         if p["errors"]:
             raise ValueError(p["errors"][0])
+        duplicates.require_confirmation(draft, duplicate_ack)
         self._tg_ctx()
-        return self.jobs.start("publish", lambda report: runner.start(draft, report))
+        from core.fsutil import file_lock
+        from app.paths import data_dir
+        from app import backups
+        with file_lock(data_dir() / 'publication-start'):
+            if backups.pending():
+                raise ValueError('Перезапустите приложение для завершения восстановления')
+            return self.jobs.start("publish", lambda report: runner.start(draft, report))
 
-    def post_schedule(self, draft: dict, run_at: str):
+    def post_schedule(self, draft: dict, run_at: str, duplicate_ack: str = ''):
         """Запланировать пост на дату (ISO, с часовым поясом или по времени этого компьютера)."""
         from app.publish import schedule
+        from app.publish import drafts, duplicates
+        draft = drafts.content(draft)
+        duplicates.require_confirmation(draft, duplicate_ack)
         self._tg_ctx()
         return schedule.add(draft, run_at)
+
+    def post_schedule_edit(self, sid: int):
+        from app.publish import schedule
+        return schedule.open_edit(sid)
+
+    def post_schedule_save(self, sid: int, token: str, revision: int, draft: dict, run_at=None, duplicate_ack: str = ''):
+        from app.publish import schedule
+        from app.publish import duplicates
+        duplicates.require_confirmation(draft, duplicate_ack)
+        return schedule.save_edit(sid, token, revision, draft, run_at)
+
+    def post_schedule_discard(self, sid: int, token: str, revision: int):
+        from app.publish import schedule
+        return schedule.cancel_edit(sid, token, revision)
 
     def post_scheduled(self):
         from app.publish import schedule
@@ -1246,9 +1353,12 @@ class Api:
         pipeline.maintain()
         return pipeline.state()
 
-    def pipeline_add(self, draft: dict):
+    def pipeline_add(self, draft: dict, duplicate_ack: str = ''):
         """Положить пост в конвейер (время выберет программа по статистике)."""
         from app.publish import pipeline
+        from app.publish import drafts, duplicates
+        draft = drafts.content(draft)
+        duplicates.require_confirmation(draft, duplicate_ack)
         self._tg_ctx()
         return pipeline.add(draft)
 
@@ -1277,6 +1387,9 @@ class Api:
     def worker_status(self):
         """Состояние фоновой отправки для окна. Заодно запускает её, если появилась работа (окно опрашивает раз в 20 секунд)."""
         from app import worker
+        from app import backups
+        if backups.pending():
+            return worker.describe()
         import time as _t
         from app.publish import schedule
         if worker.ensure_running():
@@ -1320,10 +1433,10 @@ class Api:
         from app.publish import runner
         return runner.extend_draft(int(pub_id))
 
-    def post_retry(self):
+    def post_retry(self, confirm_unknown: bool = False, pub_id: int | None = None):
         from app.publish import runner
         self._tg_ctx()
-        return self.jobs.start("publish", runner.retry)
+        return self.jobs.start("publish", lambda report: runner.retry(report, confirm_unknown=confirm_unknown is True, pub_id=pub_id))
 
     def post_resend_originals(self, pub_id: int):
         """Дослать PNG-оригиналы к уже вышедшему посту Telegram (нового поста не создаёт)."""

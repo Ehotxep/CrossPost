@@ -2,6 +2,8 @@
 import copy
 import json
 import threading
+from functools import wraps
+from core.fsutil import file_lock
 
 from app.paths import data_dir
 
@@ -24,7 +26,15 @@ DEFAULTS = {
     },
 }
 
-_lock = threading.Lock()
+_lock = threading.RLock()
+
+
+def _locked(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        with file_lock(_path()):
+            return fn(*args, **kwargs)
+    return wrapped
 
 
 def _path():
@@ -41,6 +51,7 @@ def _merge(base, extra):
     return out
 
 
+@_locked
 def load() -> dict:
     with _lock:
         p = _path()
@@ -49,6 +60,7 @@ def load() -> dict:
         return _merge(DEFAULTS, user)
 
 
+@_locked
 def save(changes: dict) -> dict:
     current = load()
     new = _merge(current, changes)

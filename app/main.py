@@ -11,8 +11,6 @@ import time
 import webbrowser
 
 from app import __version__
-from app.api import Api
-from app.server import serve_in_background
 
 
 def main():
@@ -31,6 +29,11 @@ def main():
                               "закройте Crosspost в диспетчере задач и запустите снова.")
             return
 
+    from app import backups
+    if backups.apply_pending() or backups.pending():
+        os.environ["CROSSPOST_NO_SCHEDULER"] = "1"
+    from app.api import Api
+    from app.server import serve_in_background
     api = Api()
     api.window_expected = not args.browser and not args.no_open   # окно ещё будет создано — второй запуск должен его дождаться
     server, url = serve_in_background(api, args.port)

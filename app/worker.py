@@ -415,6 +415,9 @@ class Worker:
 
 
 def main():
+    from app import backups
+    if backups.pending():
+        return
     os.environ["CROSSPOST_BOT_SESSION"] = "telegram_bot_worker"   # своя сессия бота: окно приложения может работать параллельно
     if os.environ.get("CROSSPOST_FAKE_NET"):   # только для проверок без сети
         from tests import fake_net

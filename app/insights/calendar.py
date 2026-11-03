@@ -34,11 +34,8 @@ def _ahash(preview: str | None) -> int | None:
         return _hashes[preview]
     h = None
     try:
-        from PIL import Image
-        with Image.open(sub("previews") / preview) as im:
-            g = np.asarray(im.convert("L").resize((9, 8)), dtype=np.int16)
-        bits = (g[:, 1:] > g[:, :-1]).flatten()   # dHash: устойчив к пережатию и смене размера
-        h = int("".join("1" if b else "0" for b in bits), 2)
+        from core.imagehash import difference_hash
+        h = difference_hash(sub("previews") / preview)
     except Exception:
         h = None
     _hashes[preview] = h

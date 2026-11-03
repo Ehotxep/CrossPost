@@ -16,7 +16,7 @@ import time
 
 import requests
 
-from core.common import PlatformError
+from core.common import PlatformError, NotPublishedError, PublicationUnknown
 
 NAME = "Telegram"
 MAX_IMAGES = 10
@@ -44,7 +44,7 @@ def _call(token, method, data=None, files=None, timeout=120):
     try:
         j = r.json()
     except ValueError:
-        raise PlatformError(f"Telegram: HTTP {r.status_code}: {r.text[:300]}")
+        raise PublicationUnknown(f"Telegram: HTTP {r.status_code}, результат запроса неизвестен")
     if not j.get("ok"):
         desc = j.get("description") or ""
         hint = ""
@@ -54,7 +54,8 @@ def _call(token, method, data=None, files=None, timeout=120):
             hint = " — у бота включён webhook; для режима comments он должен быть выключен (deleteWebhook)"
         elif "not enough rights" in desc or "not a member" in desc or "chat not found" in desc:
             hint = " — проверьте, что бот добавлен админом с правом публикации"
-        raise PlatformError(f"Telegram ({method}): {desc}{hint}")
+        error = PublicationUnknown if r.status_code >= 500 else NotPublishedError
+        raise error(f"Telegram ({method}): {desc}{hint}")
     return j["result"]
 
 

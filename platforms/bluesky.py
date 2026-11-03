@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from core.common import PlatformError, load_token, save_token
+from core.common import PlatformError, NotPublishedError, load_token, save_token
 
 NAME = "Bluesky"
 MAX_IMAGES = 4
@@ -204,7 +204,7 @@ def build_text(text: str, limit: int = TEXT_LIMIT) -> tuple[str, list]:
     return plain, facets
 
 
-def post(c: dict, text: str, rating: str, images=None, video=None, alt: str = "", langs=None) -> str:
+def post(c: dict, text: str, rating: str, images=None, video=None, alt: str = "", langs=None, alts=None) -> str:
     """images — список Prepared (name, data, mime, width, height); video — {"data", "width", "height", "mime"}.
     Возвращает ссылку на пост."""
     s = session(c)
@@ -225,9 +225,10 @@ def post(c: dict, text: str, rating: str, images=None, video=None, alt: str = ""
         record["embed"] = emb
     elif images:
         imgs = []
-        for im in images[:MAX_IMAGES]:
+        for i, im in enumerate(images[:MAX_IMAGES]):
             blob = upload_blob(c, s, im.data, im.mime)
-            imgs.append({"alt": alt[:1000], "image": blob, "aspectRatio": {"width": int(im.width), "height": int(im.height)}})
+            description = alts[i] if alts is not None and i < len(alts) else alt
+            imgs.append({"alt": str(description)[:1000], "image": blob, "aspectRatio": {"width": int(im.width), "height": int(im.height)}})
         record["embed"] = {"$type": "app.bsky.embed.images", "images": imgs}
     body = {"repo": s["did"], "collection": "app.bsky.feed.post", "record": record}
     hdr = {"Authorization": f"Bearer {s['accessJwt']}"}
@@ -238,6 +239,8 @@ def post(c: dict, text: str, rating: str, images=None, video=None, alt: str = ""
         # При сбое сервера (5xx) не повторяем: пост мог успеть создаться, повтор его бы задвоил.
         r = retry.post(f"{_pds(c)}/xrpc/com.atproto.repo.createRecord", idempotent=False, what="Bluesky (пост)", json=body, headers=hdr, timeout=60)
     if r.status_code != 200:
+        if r.status_code in (400, 401, 403, 404, 413, 415, 422) and not any(code in r.text for code in TRANSIENT):
+            raise NotPublishedError(str(_err(r, "пост")))
         raise _err(r, "пост")
     uri = r.json()["uri"]
     rkey = uri.rsplit("/", 1)[-1]
