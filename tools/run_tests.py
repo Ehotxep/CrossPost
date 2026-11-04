@@ -20,7 +20,10 @@ def main():
         from app.jobs import mask_secrets
         text = f'## Regression tests\n\nRun: {result.testsRun}; failures: {len(result.failures)}; errors: {len(result.errors)}; skipped: {len(result.skipped)}.\n'
         for case, detail in result.failures + result.errors:
-            text += f'\n### {case.id()}\n\n```text\n{mask_secrets(detail)[:16000]}\n```\n'
+            safe_detail=mask_secrets(detail)[:16000]
+            text += f'\n### {case.id()}\n\n```text\n{safe_detail}\n```\n'
+            annotation=safe_detail.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+            print(f'::error title={case.id()}::{annotation}', flush=True)
         with open(summary, 'a', encoding='utf-8') as output:
             output.write(text)
     return 0 if result.wasSuccessful() else 1
