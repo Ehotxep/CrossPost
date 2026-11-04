@@ -1,5 +1,6 @@
 """Run: python -m unittest discover -s tests -p 'test_*.py' -v"""
 import os
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -25,10 +26,12 @@ class CriticalRegressions(unittest.TestCase):
 
     def test_sqlite_lock_preserves_healthy_database_and_can_retry(self):
         path = Path(self.tmp.name) / 'posts.db'
-        with sqlite3.connect(path) as seed:
+        # sqlite3.Connection context commits/rolls back but does not close the file.
+        with closing(sqlite3.connect(path)) as seed:
             seed.executescript(self.db.SCHEMA)
             seed.execute('CREATE TABLE marker (value TEXT)')
             seed.execute("INSERT INTO marker VALUES ('keep me')")
+            seed.commit()
         # Old valid schema needs a migration, which competes with a second writer.
         holder = sqlite3.connect(path)
         holder.execute('PRAGMA journal_mode=WAL')
