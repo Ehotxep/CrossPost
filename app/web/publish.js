@@ -498,13 +498,12 @@
     if (!featOn("translation")) return titleField(titleFor) + descField();   // обычный пост: одно поле заголовка и одно — описания
     const s = S(), d = draft(), v = (d.variants && d.variants.en) || {}, tl = (s.pub && s.pub.text_lang) || {}, m = (s.pub && s.pub.modules) || {};
     const list = byOrder(LANGP.filter(([p]) => m[p] !== false));
-    const on = list.filter(([p]) => tl[p] === "en");
     const t = (s.pub && s.pub.translate) || {};
     const arrow = (dir, ch, tip) => `<button class="btn small biarrow" data-pa="translate" data-dir="${dir}" ${s.trBusy || !t.ready ? "disabled" : ""} data-tip="${tip}" aria-label="${tip}">${s.trBusy ? "…" : ch}</button>`;
     return `<div class="bilingual">
       <div class="bicol"><div class="bihead">Русский <span class="muted small">основной</span></div>${titleField(titleFor)}${descField()}</div>
       <div class="biarr">${arrow("en", "→", "Перевести на английский")}${arrow("main", "←", "Перевести на русский")}</div>
-      <div class="bicol"><div class="bihead">English <span class="muted small">${on.length ? "уходит на: " + esc(on.map(([, n]) => n).join(", ")) : "не используется"}</span></div>
+      <div class="bicol"><div class="bihead">English</div>
         <div class="field"><label for="ptitle_en">Title</label>
           <input id="ptitle_en" data-dvar="en.title" value="${esc(v.title || "")}" placeholder="Sunset over the desert"></div>
         <div class="field"><label for="ptext_en">Description</label>

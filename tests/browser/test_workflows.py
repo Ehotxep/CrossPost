@@ -218,6 +218,30 @@ main()
         finally:
             page.close()
 
+    def test_translation_columns_stay_aligned_with_many_platforms(self):
+        page = self.browser.new_page(viewport={'width':1100, 'height':900})
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("""() => {
+                CP.S.view = 'post'; CP.S.postMode = 'edit';
+                CP.S.pub.modules.translation = true;
+                for (const key of Object.keys(CP.S.pub.text_lang)) CP.S.pub.text_lang[key] = 'en';
+                CP.render();
+            }""")
+            page.wait_for_function("""() => {
+                const ids = ['ptitle', 'ptitle_en', 'ptext', 'ptext_en'];
+                const fields = ids.map(id => document.getElementById(id));
+                if (fields.some(el => !el || !el.getClientRects().length)) return false;
+                const y = fields.map(el => el.getBoundingClientRect().top);
+                return Math.abs(y[0] - y[1]) <= 1 && Math.abs(y[2] - y[3]) <= 1;
+            }""")
+            self.assertGreater(page.locator('[data-pa="tlang"]').count(), 4)
+            page.set_viewport_size({'width':390, 'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
+        finally:
+            page.close()
+
     def test_first_post_guide_can_be_dismissed(self):
         self.api('ui_set', changes={'lang': 'ru'})
         page = self.browser.new_page()
