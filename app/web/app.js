@@ -99,9 +99,9 @@
     document.body.classList.toggle("working", on);
   }
 
-  async function api(name, args = {}) {
+  async function api(name, args = {}, options = {}) {
     // вызов от действия человека: в течение полсекунды после клика или пока идут вызовы этого же действия
-    const user = name !== "activity" && FB.el && (performance.now() - FB.at < 600 || FB.pending > 0);
+    const user = !options.silent && name !== "activity" && FB.el && (performance.now() - FB.at < 600 || FB.pending > 0);
     const el = user ? FB.el : null;
     if (user) {
       FB.pending++; busy(true);
@@ -260,6 +260,7 @@
     const running = Object.values(S.info.trends).some((t) => t.job && t.job.state === "running") ||
       (S.info.tg_job && S.info.tg_job.state === "running") ||
       (S.info.pub_job && S.info.pub_job.state === "running") || (S.info.vk_job && S.info.vk_job.state === "running") ||
+      Object.values(S.info.browser_jobs||{}).some(j=>j?.state==="running") ||
       (S.info.ins_job && S.info.ins_job.state === "running") || (S.info.update && S.info.update.job && S.info.update.job.state === "running");
     if (running && !poll) poll = setInterval(tick, 1000);
     if (!running && poll) { clearInterval(poll); poll = null; }
@@ -786,11 +787,12 @@
     }
     for (let i = bc.length; i < ac.length; i++) $main.removeChild(ac[i]);
     for (let i = ac.length; i < bc.length; i++) $main.appendChild(bc[i].cloneNode(true));
-    drawCharts();
+    drawCharts();window.SettingsAutosave?.afterRender();
   }
   function render() {
     renderMain();
     if (S.view === "stats" && S.pstatOpen && window.Pub) $main.insertAdjacentHTML("beforeend", window.Pub.drawerHtml(S.pstatOpen));
+    window.SettingsAutosave?.afterRender();
   }
   function renderMain() {
     applyModules();
@@ -994,7 +996,7 @@
     </section>`;
   }
   function manualForm() {
-    const base = S.src === "e621" ? "https://e621.net/db_export/" : "https://e6ai.net/db_export/";
+    const base = S.src === "e621" ? "https://e621.net/db_export/" : "https://blep.art/db_export/";
     const pickBtn = S.info.can_pick_files ? `<button class="btn" data-action="pickfiles">Выбрать файлы…</button>` : "";
     return `<div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:720px;margin-top:6px">
       <p class="note">Скачайте с ${base} два файла с одной датой: <span class="tag">posts-ГГГГ-ММ-ДД.csv.gz</span> и <span class="tag">tags-ГГГГ-ММ-ДД.csv.gz</span>.</p>
@@ -1090,7 +1092,7 @@
 
   // меню настроек: группа, пункты, когда группа видна (по включённым функциям)
   const PSECS = [["Программа", [["app", "Общие"], ["features", "Функции"], ["worker", "Фоновая отправка"]], () => true],
-    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "e6ai / e621"]], () => true],
+    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "e6ai / e621"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]], () => true],
     ["Оформление поста", [["signatures", "Подписи"], ["hashtags", "Хэштеги"], ["translate", "Перевод", () => modOn("translation")]], () => modOn("crosspost")],
     ["Файлы", [["light", "JPEG-превью"], ["media", "Видео и GIF"], ["versions", "Умное таргетирование", () => modOn("targeting")], ["files", "Хранение файлов"]], () => modOn("crosspost")],
     ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || modOn("e6ai")],
@@ -1106,7 +1108,7 @@
     ["translation", "Языки и перевод", "Отдельный английский текст и подписи для англоязычных площадок. Автоперевод — через DeepSeek, по кнопке.", ["translation"]]];
   const featOn = (f) => f[3].some((k) => modOn(k));
   const statsOn = () => modOn("stats") || modOn("collect");
-  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "e6ai / e621", "загрузка, теги, теггер и база тегов"]],
+  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "e6ai / e621", "загрузка, теги, теггер и база тегов"]],
     extras: [["tagger", "Теггер", "предлагает теги по картинке для e6ai / e621 и хэштегов; без него теги вводятся вручную"],
       ["collect", "Сбор статистики", "регулярно сохраняет просмотры и реакции опубликованных постов, учитывает правки модераторов и догружает превью"],
       ["news", "Новости по свежим артам", "уведомления в колокольчике: популярные работы, всплески реакций, новые комментарии"],
@@ -1501,6 +1503,7 @@
   // ---------------- события ----------------
   document.getElementById("nav").addEventListener("click", async (e) => {
     const b = e.target.closest("button[data-view]"); if (!b) return;
+    await window.SettingsAutosave?.flush();
     S.pstatOpen = null;
     S.view = b.dataset.view; store.set("view", S.view); S.flash = ""; render();
     if (S.view === "post" || S.view === "history" || S.view === "settings") { await window.Pub.load(S.view); render(); }
@@ -1509,6 +1512,8 @@
     if (S.view === "trends" && !S.data && !S.loading) { await loadOverview(); render(); }   // данные трендов — при первом заходе
   });
   $main.addEventListener("click", async (e) => {
+    if(window.SettingsAutosave && await window.SettingsAutosave.beforeAction(e))return;
+    if (window.BrowserTargets && await window.BrowserTargets.onClick(e)) return;
     if (window.SetupGuide && await window.SetupGuide.onClick(e)) return;
     if (window.Pub && await window.Pub.onClick(e)) return;
     const wkb = e.target.closest("[data-wk]");
@@ -1736,6 +1741,8 @@
     if (e.target.id === "pvbox") S.pvOpen = e.target.open;
   }, true);
   $main.addEventListener("change", async (e) => {
+    if(window.SettingsAutosave?.capture(e.target))return;
+    await window.SettingsAutosave?.flush();
     if(window.SetupGuide && window.SetupGuide.onChange(e))return;
     if (e.target.id === "statch") { S.sc = e.target.value; store.set("sc", S.sc); await loadStats(); render(); return; }
     if (e.target.id === "themesel") { store.set("theme", e.target.value); if (e.target.value === "light") document.documentElement.dataset.theme = "light"; else delete document.documentElement.dataset.theme; render(); return; }

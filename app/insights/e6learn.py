@@ -80,8 +80,10 @@ def _fetch(post_id: int, site: str = "e6ai") -> dict | None:
     from app.publish import settings as PS
     from app.publish import e6ai as E6
     raw = PS.load(raw=True)["e6ai"]
-    acc = raw if site == "e6ai" else ((raw.get("accounts") or {}).get(site) or {})
-    cfg = dict(raw, username=acc.get("username", ""), api_key=acc.get("api_key", ""), site_name=site,
+    if site == "e6ai":  # Historical e6ai post IDs do not identify blep.art posts.
+        return None
+    acc = raw if site == "blep" else ((raw.get("accounts") or {}).get(site) or {})
+    cfg = dict(raw, username=acc.get("username", ""), api_key=acc.get("blep_api_key", "") if site == "blep" else acc.get("api_key", ""), site_name=site,
                base=os.environ.get("CROSSPOST_E6AI_BASE") or PS.BOORU.get(site, PS.BOORU["e6ai"]))
     auth = (cfg["username"], cfg["api_key"]) if cfg.get("username") and cfg.get("api_key") else None
     r = requests.get(f"{E6.base(cfg)}/posts/{post_id}.json", headers=E6._ua(cfg), auth=auth, timeout=20)

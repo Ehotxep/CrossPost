@@ -372,7 +372,7 @@ def sync(force: bool = False) -> dict:
         e6 = raw.get("e6ai") or {}
         if cfg["e6ai"].get("enabled"):
             if (e6.get("username") or "").strip():
-                run("e6ai", lambda d: fetch_booru("e6ai", "https://e6ai.net", e6["username"].strip(), e6.get("api_key") or "", d))
+                run("e6ai", lambda d: fetch_booru("e6ai", "https://blep.art", e6["username"].strip(), e6.get("blep_api_key") or "", d))
             acc = (e6.get("accounts") or {}).get("e621") or {}
             if (acc.get("username") or "").strip():
                 run("e621", lambda d: fetch_booru("e621", "https://e621.net", acc["username"].strip(), acc.get("api_key") or "", d))

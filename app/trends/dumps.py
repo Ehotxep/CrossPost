@@ -10,7 +10,7 @@ from app import __version__
 from app.paths import sub
 
 SOURCES = {
-    "e6ai": "https://e6ai.net",
+    "e6ai": "https://blep.art",
     "e621": "https://e621.net",
 }
 _NAME_RE = re.compile(r"\b(posts|tags)-(\d{4}-\d{2}-\d{2})\.csv\.gz\b")

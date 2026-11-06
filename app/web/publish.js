@@ -14,7 +14,7 @@
   let planTimer = null;
 
   const S = () => C().S;
-  const TEXTP = ["telegram", "discord", "vk", "bluesky", "deviantart"];   // площадки с текстом поста и подписью
+  const TEXTP = ["telegram", "discord", "vk", "bluesky", "deviantart", "reddit", "joyreactor"];   // площадки с текстом поста и подписью
   const esc = (s) => C().esc(s == null ? "" : s);
   const mod = (k) => { const st = window.CP && window.CP.S, m = st && st.info && st.info.modules; return !m || m[k] !== false; };   // модуль включён
   const BN = () => {   // куда загружаем: e6ai или e621 (безопасно и до загрузки настроек)
@@ -52,7 +52,7 @@
     const x = r.draft || {};
     s.draft = { files: r.files, variants: x.variants || {}, title: x.title || "", text: x.text || "", rating: x.rating, signature: x.signature !== false,
       exclude: x.exclude || [], hashtags: x.hashtags == null ? null : x.hashtags, e6tags: x.e6ai_tags || {}, e6meta: x.e6ai_meta || {}, multi: !!x.multi, marks: x.marks || {},
-      platform_texts:x.platform_texts||{},alts:x.alts||{},profile:x.profile||null,extend: { pub_id: r.pub_id, title: r.title, done: r.done, failed: r.failed, missing: r.missing } };
+      platform_texts:x.platform_texts||{},alts:x.alts||{},reddit_flairs:x.reddit_flairs||{},profile:x.profile||null,extend: { pub_id: r.pub_id, title: r.title, done: r.done, failed: r.failed, missing: r.missing } };
     saveDraft();
     s.pstatOpen = null; s.postMode = "edit"; s.when = "now"; s.tried = false; s.schedMsg = "";
     s.view = "post"; C().store.set("view", "post");
@@ -157,6 +157,7 @@
   }
   async function tick() {
     const s = S();
+    await window.BrowserTargets?.tick();
     const j = s.info && s.info.pub_job;
     if (j && (j.state === "running" || (s.pubJob && s.pubJob.state === "running"))) {
       const st = await C().api("post_state");
@@ -181,7 +182,7 @@
   // ---------------- Новый пост ----------------
   const RATING_TIP = { sfw: "Без обнажённости", erotic: "Обнажённость и откровенные позы без половых актов", explicit: "Всё, что дальше" };
   // порядок площадок — из «Настроек» (стрелки у площадок в меню): подписи, версии, язык, предпросмотр, значки
-  const porder = () => (S().pub && S().pub.platform_order) || ["telegram", "discord", "vk", "bluesky", "deviantart", "e6ai"];
+  const porder = () => (S().pub && S().pub.platform_order) || ["telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "reddit", "joyreactor"];
   const byOrder = (arr, key = (x) => x[0]) => { const o = porder(), ix = (x) => { const i = o.indexOf(key(x)); return i < 0 ? 99 : i; }; return arr.slice().sort((a, b) => ix(a) - ix(b)); };
   const pfor = (list) => {   // значки площадок; отключённые модули не показываем
     const m = (S().pub && S().pub.modules) || {};
@@ -435,7 +436,7 @@
       <div class="postgrid"><div class="postmain">
         <section class="card"><div class="cardhead"><h2>Файлы</h2>
             ${d.files.some((f) => f.kind !== "image") ? `<span class="optline">GIF и видео уходят как есть ${C().hint("Переделываются только там, где площадка иначе не примет: ужать под лимит Discord или Telegram, перекодировать в H.264 или в WebM для " + BN() + ". Подробности — «Настройки» → «Видео и GIF».")}</span>` :
-            `<span class="optline">JPEG-превью для соцсетей, PNG-оригинал в Telegram и на ${BN()} ${C().hint("Оригиналы не меняются. Для постов делается JPEG-превью по рецепту из «Настроек» → «JPEG-превью»; он готовится сразу, пока вы пишете текст. PNG-оригиналы уходят файлами в Telegram и на e6ai.")}</span>`}
+            `<span class="optline">JPEG-превью для соцсетей, PNG-оригинал в Telegram и на ${BN() === "e6ai" ? "blep.art" : BN()} ${C().hint("Оригиналы не меняются. Для постов делается JPEG-превью по рецепту из «Настроек» → «JPEG-превью»; он готовится сразу, пока вы пишете текст. PNG-оригиналы уходят файлами в Telegram и на e6ai.")}</span>`}
             ${featOn("targeting") ? `<label class="tgl multitgl"><input type="checkbox" data-dfield="multi" ${d.multi ? "checked" : ""}><span>Умное таргетирование ${C().hint("Для работ в нескольких вариантах: с русскими надписями, с английскими, без надписей. Отметьте версию у каждого файла — на каждую площадку уйдут только её версии. Какие версии куда — «Настройки» → «Файлы поста» → «Умное таргетирование». Обычные посты это не затрагивает.")}</span></label>` : ""}</div>
           ${d.files.length ? galleryHtml() : `<label class="drop" id="drop" tabindex="0">
             <input type="file" id="fileinp" multiple accept="${ACCEPT}" hidden>
@@ -452,7 +453,7 @@
           ${textColsHtml(titleFor)}
           <label class="tgl"><input type="checkbox" data-dfield="signature" ${d.signature ? "checked" : ""}>
             <span>Подпись со ссылками ${sigOn.length ? pfor(sigOn) : `<a href="#" data-view-link="platforms" data-tab="signatures">задать</a>`}</span></label>
-          ${platformTextsHtml()}
+          ${platformTextsHtml()}${window.BrowserTargets?.postHtml(d,s.plan)||''}
         </section>
         ${tagsOn ? `<section class="card" id="tagcard"><div class="cardhead"><h2>Теги</h2></div>
           <div id="htbox" class="tagsec">${htHtml()}</div>${e6Html()}</section>` : ""}
@@ -476,7 +477,7 @@
     if (s.view === "post") C().render();
   }
   // ----- второй язык: английский вариант заголовка и описания, на какие площадки он уходит -----
-  const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "e6ai / e621"]];
+  const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "e6ai / e621"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]];
   // шаблоны сервисов: [код, адрес, модель по умолчанию, название]
   const TRP = [["deepseek", "https://api.deepseek.com", "deepseek-flash", "DeepSeek"], ["openai", "https://api.openai.com/v1", "gpt-4o-mini", "OpenAI"],
     ["openrouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", "OpenRouter"], ["ollama", "http://localhost:11434/v1", "qwen2.5:7b", "Ollama (локально)"],
@@ -552,7 +553,7 @@
       o.rare != null && !o.on ? "rare" : "", o.mrem > o.madd && !o.on ? "mremd" : ""].join(" ");
     let tip = o.lock ? "Постоянный тег из «Настроек» → " + BN() : o.imp ? BN() + " добавит сам — отправлять не нужно" :
       (o.p != null ? `Теггер: ${Math.round(o.p * 100)}%` + (o.on ? "" : " — нажмите, чтобы добавить") : o.on ? "Нажмите, чтобы убрать" : "Нажмите, чтобы отметить");
-    if (o.rare != null) tip += `\nРедкий тег: ${o.rare} ${C().plural(o.rare, "пост", "поста", "постов")} на ${BN()} — сам не отмечается`;
+    if (o.rare != null) tip += `\nРедкий тег: ${o.rare} ${C().plural(o.rare, "пост", "поста", "постов")} на ${BN() === "e6ai" ? "blep.art" : BN()} — сам не отмечается`;
     if (o.mrem) tip += `\nМодераторы убирали этот тег: ${o.mrem} раз`;
     if (o.madd) tip += `\nМодераторы добавляли этот тег: ${o.madd} раз`;
     if (o.lock || o.imp) return `<span class="${cls}" data-tip="${esc(tip)}">${esc(tname(o.t))}</span>`;
@@ -599,15 +600,15 @@
     if (c.need.length) li.push(`<li class="bad">Не заполнено: <b>${esc(c.need.join(", "))}</b></li>`);
     c.errors.forEach((x) => li.push(`<li class="bad">${esc(x.text)}${tags(x.tags)}</li>`));
     c.warnings.forEach((x) => li.push(`<li class="warn">${esc(x.text)}${tags(x.tags)}</li>`));
-    if (Object.keys(c.renamed || {}).length) li.push(`<li class="info">Переименовано по правилам ${BN()}: ${Object.entries(c.renamed).map(([a, b]) => esc(a) + " → " + esc(b)).join(", ")}</li>`);
-    if ((c.trimmed || []).length) li.push(`<li class="info">Убрано лишнее — ${BN()} добавит само: ${c.trimmed.map(esc).join(", ")}</li>`);
+    if (Object.keys(c.renamed || {}).length) li.push(`<li class="info">Переименовано по правилам ${BN() === "e6ai" ? "blep.art" : BN()}: ${Object.entries(c.renamed).map(([a, b]) => esc(a) + " → " + esc(b)).join(", ")}</li>`);
+    if ((c.trimmed || []).length) li.push(`<li class="info">Убрано лишнее — ${BN() === "e6ai" ? "blep.art" : BN()} добавит само: ${c.trimmed.map(esc).join(", ")}</li>`);
     if (li.length) h += `<ul>${li.join("")}</ul>`;
     const blocked = c.need.length || c.errors.length;
     const imgs = draft().files;
     const copy = imgs.length > 1 && imgs[0].id === f.id ? `<button class="btn small ghost" data-pa="e6copy" data-id="${f.id}" data-tip="Персонаж, пол, вид и остальные теги этой картинки — на все остальные картинки поста. Подтвердить нужно будет каждую.">Теги → на остальные</button>` : "";
     h += `<div class="e6sum"><span>Итого <b>${c.total}</b> ${C().plural(c.total, "тег", "тега", "тегов")}${c.implied.length ? ` <span class="muted" data-tip="${esc(c.implied.join(", "))}">(${c.implied.length} добавит сайт)</span>` : ""}</span>
       <span class="e6act">${copy}${c.confirmed && !blocked ? `<button class="btn small okd" data-pa="e6ok" data-id="${f.id}" data-un="1" data-tip="Нажмите, чтобы снять отметку">✓ Проверено</button>` :
-        `<button class="btn small ${blocked ? "" : "primary"}" data-pa="e6ok" data-id="${f.id}" ${blocked ? `disabled data-tip="Сначала заполните отмеченное красным"` : `data-tip="Подтвердите, что теги верные — без этого ${BN()} не загрузим"`}>Всё верно</button>`}</span></div>`;
+        `<button class="btn small ${blocked ? "" : "primary"}" data-pa="e6ok" data-id="${f.id}" ${blocked ? `disabled data-tip="Сначала заполните отмеченное красным"` : `data-tip="Подтвердите, что теги верные — без этого ${BN() === "e6ai" ? "blep.art" : BN()} не загрузим"`}>Всё верно</button>`}</span></div>`;
     return h + `</div>`;
   }
   function e6DbHtml() {
@@ -616,7 +617,7 @@
     const j = st.job;
     if (j && j.state === "running") return `<div class="e6db"><span class="spin"></span><span class="small">${esc(j.message || "Скачиваю базу тегов " + BN() + "…")}</span></div>`;
     if (st.ready) return "";
-    return `<div class="e6db"><span class="small">База тегов ${BN()} не скачана: без неё нет подсказок при вводе, и не проверить, существует ли тег.${j && j.state === "error" ? ` <span class="err">${esc(j.error || "")}</span>` : ""}</span>
+    return `<div class="e6db"><span class="small">База тегов ${BN() === "e6ai" ? "blep.art" : BN()} не скачана: без неё нет подсказок при вводе, и не проверить, существует ли тег.${j && j.state === "error" ? ` <span class="err">${esc(j.error || "")}</span>` : ""}</span>
       <button class="btn small primary" data-pa="e6db-get">Скачать базу</button></div>`;
   }
   function e6on() {   // e6ai настроен и не выключен для этого поста (по умолчанию выключен)
@@ -629,13 +630,13 @@
     const imgs = d.files;
     const tg = s.tagger || {};
     const runJob = tg.run_job, running = runJob && runJob.state === "running";
-    let h = `<div class="tagsec" id="e6card"><div class="cardhead"><h3 style="display:flex;align-items:center;gap:8px">Теги ${BN()} ${C().pbadge("e6ai", { sm: true })}
+    let h = `<div class="tagsec" id="e6card"><div class="cardhead"><h3 style="display:flex;align-items:center;gap:8px">Теги ${BN() === "e6ai" ? "blep.art" : BN()} ${C().pbadge("e6ai", { sm: true })}
         ${C().hint("Как форма загрузки на e6ai. Сплошные — уйдут на " + BN() + ", пунктир — подсказка теггера (число — уверенность): нажмите, чтобы добавить. Бледные " + BN() + " добавит сам. Мелкие детали (пирсинг, украшения, татуировки) теггер путает — их отмечайте сами. Без заполненных строк и «Всё верно» " + BN() + " не загружаем.")}</h3>
         <span class="muted small">${!mod("tagger") ? `теггер выключен — теги вписываются вручную (<a href="#" data-view-link="settings" data-tab="features">Функции</a>)` : tg.ready ? "теггер JTP PILOT²" : `теггер не установлен — <a href="#" data-view-link="platforms" data-tab="tags">установить</a>`}</span></div>`;
     if (s.tagCpu) h += `<div class="callout warn"><p>Теггер не видит видеокарту и подбирал бы теги на процессоре — это медленно и тормозит компьютер, поэтому теги пока не подбираются. <a href="#" data-view-link="settings" data-tab="tags">Как исправить</a></p></div>`;
     h += e6DbHtml();
     if (running) h += `<p class="muted small">${esc(runJob.message || "Подбираю теги…")}</p>`;
-    if (!imgs.length) return h + `<p class="muted small">Добавьте картинки — теги для каждой свои: на ${BN()} каждая картинка — отдельный пост.</p></div>`;
+    if (!imgs.length) return h + `<p class="muted small">Добавьте картинки — теги для каждой свои: на ${BN() === "e6ai" ? "blep.art" : BN()} каждая картинка — отдельный пост.</p></div>`;
     h += imgs.map((f) => {
       const preds = ((s.e6preds || {})[f.id]);
       return `<div class="e6row" data-fid="${f.id}"><img src="/uthumb/${f.id}?t=${tok()}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'vid sm',textContent:'${f.kind === "video" ? "видео" : "GIF"}'}))">
@@ -647,7 +648,7 @@
   function e6dbCard() {
     const st = S().e6db || {}, j = st.job, run = j && j.state === "running";
     const when = st.updated ? new Date(st.updated * 1000).toLocaleDateString(LOC, { day: "numeric", month: "long" }) : "";
-    return `<section class="card setc"><div class="head"><h2>База тегов ${BN()} ${C().hint("Все теги " + BN() + " с категориями, переименования и связи (персонаж → франшиза). По ней: подсказки при вводе, перевод тегов теггера в теги " + BN() + ", проверка, что тег существует. Около 10 МБ, скачивается с e6ai.net. Обновляется сама вместе с трендами e6ai.")}</h2>
+    return `<section class="card setc"><div class="head"><h2>База тегов ${BN() === "e6ai" ? "blep.art" : BN()} ${C().hint("Все теги " + BN() + " с категориями, переименования и связи (персонаж → франшиза). По ней: подсказки при вводе, перевод тегов теггера в теги " + BN() + ", проверка, что тег существует. Около 10 МБ, скачивается с blep.art. Обновляется сама вместе с трендами e6ai.")}</h2>
         ${st.ready ? `<span class="badge ok">✓ ${C().num(st.tags)} тегов</span>` : `<span class="badge off">не скачана</span>`}</div>
       ${st.ready ? `<p class="muted small">Обновлена ${esc(when)}${st.day ? " · выгрузка за " + esc(st.day) : ""} · ${C().num(st.aliases)} переименований · ${C().num(st.implications)} связей</p>` : ""}
       ${run ? `<div class="callout"><p>${esc(j.message || "Скачиваю…")}</p><div class="progress thin" style="flex:1 1 100%"><div style="width:${Math.round((j.progress || 0) * 100)}%"></div></div></div>` : ""}
@@ -863,7 +864,7 @@
         <button class="btn primary big" data-set="when" data-val="later" data-tip="Запланировать на время" aria-label="Запланировать" ${d.rating ? "" : "disabled"}>${C().ICON.clock}</button></div>
         <button class="btn big" style="width:100%;margin-top:8px" data-pa="pipe-add" ${can && will.length && d.rating ? "" : "disabled"} data-tip="Положить пост в очередь: Crosspost сам выберет лучшее свободное время по вашей статистике и опубликует">В конвейер</button>`;
     }
-    if (hard.some(e6wait) && hard.length === (p.errors || []).filter(e6wait).length) h += `<p class="small warnline">${BN()} ждёт теги: заполните форму «Теги ${BN()}» или выключите ${BN()} для этого поста.</p>`;
+    if (hard.some(e6wait) && hard.length === (p.errors || []).filter(e6wait).length) h += `<p class="small warnline">${BN() === "e6ai" ? "blep.art" : BN()} ждёт теги: заполните форму «Теги ${BN() === "e6ai" ? "blep.art" : BN()}» или выключите ${BN() === "e6ai" ? "blep.art" : BN()} для этого поста.</p>`;
     if (s.schedMsg) h += `<p class="ok small">${esc(s.schedMsg)}. <a href="#" data-view-link="history">Открыть публикации</a></p>`;
     return h + `</div>`;
   }
@@ -1546,6 +1547,7 @@
         const logged = br ? v.browser_ok : p.vk_connected;
         if (!logged) return ["", "не подключено"];
         return [v.group_id ? "ok" : "warn", (v.group_name || (v.group_id ? "группа " + v.group_id : "группа не указана")) + (br ? ", через браузер" : ", через API")]; }
+      case "reddit": case "joyreactor": return p[sec].browser_ok ? [p[sec].enabled?"ok":"warn",p[sec].enabled?"через браузер · экспериментально":"отправка выключена"] : ["", "не подключено"];
       case "bluesky": { const b = p.bluesky_session || {}; return b.ok && p.bluesky.enabled ? ["ok", "@" + b.handle] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
       case "deviantart": { const b = p.deviantart_session || {}; return b.ok && p.deviantart.enabled ? ["ok", b.username || "подключено"] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
       case "e6ai": { const pre = p.e6ai.site_name === "e621" ? "e621 · " : ""; return p.e6ai.enabled && p.e6ai.has_key ? ["ok", pre + (p.e6ai.username || "подключено")] : ["", pre + "не подключено"]; }
@@ -1576,6 +1578,7 @@
     const known = (s.pubKnown && s.pubKnown.chats) || [];
     const tg = p.telegram, dc = p.discord, vk = p.vk, sg = p.signatures, li = p.light;
     let h = "";
+    if(sec==="reddit"||sec==="joyreactor")h+=window.BrowserTargets.settingsHtml(sec);
 
     if (sec === "telegram") {
       h += `<section class="card setc"><div class="head"><h2>${C().pbadge("telegram")} Telegram</h2></div>${err("tg")}${ok("tg")}`;
@@ -1710,17 +1713,18 @@
 
     if (sec === "e6ai") {
       const e6 = p.e6ai;
-      h += `<section class="card setc"><div class="head"><h2>${C().pbadge("e6ai")} ${BN()} ${hint("Оригиналы без сжатия; теги — постоянные плюс подобранные теггером; рейтинг s / q / e по рейтингу поста; в источники — ссылки на этот пост в других местах. Публикуется последним.")}</h2>
+      h += `<section class="card setc"><div class="head"><h2>${C().pbadge("e6ai")} ${BN() === "e6ai" ? "blep.art" : BN()} ${hint("Оригиналы без сжатия; теги — постоянные плюс подобранные теггером; рейтинг s / q / e по рейтингу поста; в источники — ссылки на этот пост в других местах. Публикуется последним.")}</h2>
           ${e6.enabled && e6.has_key ? badge("ok", "✓ " + esc(e6.username)) : badge("off", "не подключено")}</div>${err("e6")}${ok("e6")}
+        ${BN() === "e6ai" && !e6.has_key ? `<div class="callout warn">e6ai закрылся. Перед отправкой на blep.art укажите новый API-ключ blep.art и нажмите «Проверить и сохранить». Старый ключ не используется.</div>` : ""}
         <div class="row" style="align-items:center;gap:12px"><span class="small">Куда загружать ${hint("Движок у e6ai и e621 один, поэтому форма тегов, теггер, проверка, правки модераторов и цифры работают одинаково. Аккаунт, API-ключ, постоянные теги и база тегов у каждого сайта свои — при переключении подставляются сами.")}</span>
-          ${segP(`data-pa="e6-site"`, [["e6ai", "e6ai"], ["e621", "e621"]], BN())}</div>
+          ${segP(`data-pa="e6-site"`, [["e6ai", "blep.art"], ["e621", "e621"]], BN())}</div>
         ${BN() === "e621" ? `<div class="callout warn"><p><b>На e621 ИИ-арт запрещён правилами сайта</b> (кроме узких исключений вроде фонов) — для ИИ-работ есть e6ai. Такие загрузки удалят, а аккаунт могут заблокировать. Загружайте на e621 только работы, которые подходят под его правила. Проверьте и постоянные теги: <code>ai_generated</code> на e621 сразу пометит работу как ИИ.</p></div>` : ""}
-        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 200px"><label for="e6user">Имя пользователя на ${BN()}</label><input id="e6user" value="${esc(e6.username)}" placeholder="AnotherNeko"></div>
+        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 200px"><label for="e6user">Имя пользователя на ${BN() === "e6ai" ? "blep.art" : BN()}</label><input id="e6user" value="${esc(e6.username)}" placeholder="AnotherNeko"></div>
           <div class="field" style="flex:2 1 260px"><label for="e6key">API-ключ ${hint("На " + BN() + ": Account → Manage API Access.")}</label><input id="e6key" type="password" placeholder="${e6.has_key ? "сохранён" : ""}"></div>
           <button class="btn" data-pa="e6-save" ${busy("e6")}>Проверить и сохранить</button></div>
 </section>
         <section class="card setc"><div class="head"><h2>Теги и описание</h2></div>
-          <div class="field"><label for="e6const">Постоянные теги для ${BN()} ${hint(BN() === "e621" ? "Добавляются к каждой загрузке на e621: тег художника (artist), инструмент и т.п. У e6ai свои постоянные теги." : "Добавляются к каждой загрузке: ваш director-тег, инструмент и т.п. У e621 свои постоянные теги.")}</label>
+          <div class="field"><label for="e6const">Постоянные теги для ${BN() === "e6ai" ? "blep.art" : BN()} ${hint(BN() === "e621" ? "Добавляются к каждой загрузке на e621: тег художника (artist), инструмент и т.п. У e6ai свои постоянные теги." : "Добавляются к каждой загрузке: ваш director-тег, инструмент и т.п. У e621 свои постоянные теги.")}</label>
             <input id="e6const" value="${esc((e6.constant_tags || []).join(" "))}" placeholder="director_name stable_diffusion"></div>
           <div class="row" style="align-items:center"><div class="field" style="flex:0 1 220px"><label for="e6pre">Отмечать теги теггера от, % ${hint("Сразу отмечаются теги не ниже 50% уверенности, даже если здесь меньше. Мелкие детали — пирсинг, украшения, татуировки — не отмечаются никогда: теггер их часто путает.")}</label><input id="e6pre" type="number" min="20" max="95" value="${Math.round(e6.preselect * 100)}"></div>
             <div class="tgls" style="flex:1 1 360px"><label class="tgl"><input type="checkbox" id="e6src" ${e6.with_sources ? "checked" : ""}><span>Ссылки на пост — в источники</span></label>
@@ -1801,7 +1805,7 @@
           <div class="field" style="flex:1 1 110px"><label for="htN">Видов, не больше</label><input id="htN" type="number" min="0" max="10" value="${ht.max_species}"></div></div>
         <div class="field"><label for="htC">Постоянные хэштеги</label><input id="htC" value="${esc((ht.constant || []).join(" "))}" placeholder="aiart furryart"></div>
         <div class="row" style="align-items:center"><div class="field"><span class="lbl">Где в посте</span>${segP(`data-pa="ht-pos"`, [["start", "Первой строкой"], ["end", "В конце"]], ht.position)}</div>
-          <div class="tgls" style="flex:1 1 300px">${byOrder([["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt (в описании)"]]).map(([k, l]) => `<label class="tgl"><input type="checkbox" id="htU-${k}" ${ht.use[k] !== false ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
+          <div class="tgls" style="flex:1 1 300px">${byOrder([["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt (в описании)"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]]).map(([k, l]) => `<label class="tgl"><input type="checkbox" id="htU-${k}" ${ht.use[k] !== false ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
         <div class="cardfoot"><button class="btn primary" data-pa="ht-save">Сохранить</button></div></section>`;
     }
 
@@ -1809,7 +1813,7 @@
       const sp = sg.platforms || {};
       const SIGP = [["telegram", "Telegram", "Ссылка становится кликабельным словом."], ["discord", "Discord", "Ссылка становится кликабельным словом, без карточек-превью."], ["vk", "ВКонтакте", "ВК не прячет ссылку под слово — получится «Текст: https://…»."],
         ["bluesky", "Bluesky", "Ссылка становится кликабельным словом. Весь пост Bluesky — до 300 символов, подпись лучше короткая."],
-        ["deviantart", "DeviantArt", "Уходит в описание работы как «Текст: https://…»."]];
+        ["deviantart", "DeviantArt", "Уходит в описание работы как «Текст: https://…»."], ["reddit", "Reddit", "Подпись добавляется в текст поста."], ["joyreactor", "JoyReactor", "Подпись добавляется в текст поста."]];
       h += `<section class="card setc"><div class="head"><h2>Подписи ${hint("Дописываются в конец поста. Ссылка под словом: [Больше артов](https://t.me/канал). Обычная ссылка тоже работает.")}</h2>${ok("sig")}</div>
         ${byOrder(SIGP).map(([k, l, how]) => { const v = sp[k] || {}, en = v.en || {}, enFilled = !!((en.sfw || "").trim() || (en.nsfw || "").trim()); return `<div class="sigblk">
           <div class="sighead">${C().pbadge(k)}<label class="tgl"><input type="checkbox" id="siguse-${k}" ${sg.use[k] !== false ? "checked" : ""}><span><b>${l}</b> ${hint(how)}</span></label>
@@ -1854,7 +1858,7 @@
             <input id="trkey" type="password" autocomplete="off" placeholder="${t.has_key ? "сохранён — введите новый, чтобы заменить" : "sk-…"}"></div>
           <div class="field" style="flex:1 1 200px"><label for="trmodel">Модель ${hint("Название модели в том виде, как его ждёт сервис: например deepseek-chat, gpt-4o-mini, qwen2.5:7b. Для перевода короткого текста хватает недорогой модели.")}</label><input id="trmodel" value="${esc(t.model || "")}" placeholder="deepseek-flash" autocomplete="off" spellcheck="false"></div></div>
         <div class="field"><label for="trstyle">Пожелания к стилю (необязательно)</label><input id="trstyle" value="${esc(t.style || "")}" placeholder="например: неформально, без канцелярита"></div>
-        <div class="cardfoot"><button class="btn primary" data-pa="tr-save" ${busy("tr")}>Сохранить</button>
+        <div class="cardfoot"><button class="btn primary" data-pa="tr-save" ${busy("tr")}>Сохранить ключ</button> <span class="muted small">Адрес, модель и стиль сохраняются автоматически. API-ключ — отдельной кнопкой.</span>
           <button class="btn" data-pa="tr-test" ${busy("tr")} ${t.ready ? "" : "disabled"}>Проверить подключение</button>
           ${t.has_key ? `<button class="btn ghost" data-pa="tr-clear">Удалить ключ</button>` : ""}</div></section>`;
     }
@@ -1941,7 +1945,7 @@
       <div class="tgls">${kind("jpeg", "JPEG-превью")}${kind("gif", "GIF")}${kind("video", "Видео")}
         ${tgl(`id="fdate"`, o.by_date, "Раскладывать по датам", "Внутри каждой папки — подпапка с датой сохранения (2026-10-22).")}
         ${tgl(`id="fmove"`, true, "При смене папки перенести уже сохранённые файлы")}</div>
-      <div class="cardfoot"><button class="btn primary" data-pa="files-save" ${busy("files")}>Сохранить</button>
+      <div class="cardfoot"><button class="btn primary" data-pa="files-save" ${busy("files")}>Применить папку</button><span class="muted small">Папка и перенос файлов применяются кнопкой; переключатели сохраняются автоматически.</span>
         ${o.custom ? `<button class="btn ghost" data-pa="files-default" data-tip="Вернуть папку по умолчанию — Files в каталоге программы">По умолчанию</button>` : ""}
         <span class="muted small">${u.files ? `Всего ${u.files} ${pl(u.files, "файл", "файла", "файлов")}, ${mb(u.bytes)}` : "Файлов пока нет"}</span></div></section>`;
   }
@@ -2573,7 +2577,7 @@
       case "e6-save": await guard("e6", async () => {
         s.pub = await api("pub_e6ai", { username: val("e6user"), api_key: val("e6key") });
         const c = s.pub.e6ai_check || {};
-        s.pubOk.e6 = `Вход на ${BN()} работает: ${c.name || ""}` + (c.upload_limit != null ? ` · лимит загрузок: ${c.upload_limit}` : "");
+        s.pubOk.e6 = `Вход на ${BN() === "e6ai" ? "blep.art" : BN()} работает: ${c.name || ""}` + (c.upload_limit != null ? ` · лимит загрузок: ${c.upload_limit}` : "");
       }); return true;
       case "e6-opts": await guard("e6", async () => {
         const pre = Math.min(95, Math.max(20, +val("e6pre") || 35)) / 100;
@@ -2623,7 +2627,7 @@
       }
       case "sig-copy": {   // без перерисовки — несохранённые правки в других полях не теряются
         const k = a.dataset.k;
-        ["sfw", "nsfw", "en-sfw", "en-nsfw"].forEach((r) => { const src = document.getElementById(`sig-telegram-${r}`), dst = document.getElementById(`sig-${k}-${r}`); if (src && dst) dst.value = src.value; });
+        ["sfw", "nsfw", "en-sfw", "en-nsfw"].forEach((r) => { const src = document.getElementById(`sig-telegram-${r}`), dst = document.getElementById(`sig-${k}-${r}`); if (src && dst) {dst.value = src.value;window.SettingsAutosave?.capture(dst);} });
         return true;
       }
       case "files-pick": {
@@ -2638,8 +2642,8 @@
         s.pubOk.files = r.moved ? `Сохранено. Перенесено файлов: ${r.moved}` : "Сохранено";
       }); return true;
       case "tr-save": {
-        const ch = { base: val("trbase"), model: val("trmodel"), style: val("trstyle") };
-        if (val("trkey")) ch.api_key = val("trkey");
+        const key=val("trkey");if(!key){s.pubErr={...s.pubErr,tr:"Введите API-ключ"};C().render();return true;}
+        const ch = { api_key: key };
         await guard("tr", async () => { await saveSec("translate", ch); s.pubOk.tr = "Сохранено"; }); return true;
       }
       case "tr-test": await guard("tr", async () => {
@@ -2665,6 +2669,11 @@
 
   async function onChange(e) {
     const t = e.target, s = S(), api = C().api;
+    if(t.dataset.redditFlair){
+      const d=draft();d.reddit_flairs=d.reddit_flairs||{};
+      if(t.value==='__auto')delete d.reddit_flairs[t.dataset.redditFlair];else d.reddit_flairs[t.dataset.redditFlair]=t.value;
+      saveDraft();await refreshPlan();C().render();return true;
+    }
     if(t.dataset.platformTextsSetting){
       try { s.pub=await api('pub_save',{section:'platform_texts_enabled',changes:{[t.dataset.platformTextsSetting]:t.checked}});s.reviewKey=null;await refreshPlan(); }
       catch(err){alert(err.message);}
@@ -2684,6 +2693,7 @@
       const pr = TRP.find((x) => x[0] === t.value), b = document.getElementById("trbase"), m = document.getElementById("trmodel");
       if (pr && b && m) { b.value = pr[1]; m.value = pr[2]; m.placeholder = pr[2] || "название модели"; }
       else if (b) { b.value = ""; b.focus(); }
+      window.SettingsAutosave?.capture(b);window.SettingsAutosave?.capture(m);
       return true;
     }
     if (t.id === "hsort") { s.hsort = t.value; C().render(); return true; }

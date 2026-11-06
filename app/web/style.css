@@ -1186,3 +1186,10 @@ main > div:empty, .platbody > div:empty, .postmain > div:empty, .postside > div:
 
 .guide-choice { display: flex; align-items: center; gap: 10px; min-height: 32px; cursor: pointer; }
 .guide-choice input { width: 18px; height: 18px; accent-color: var(--accent-fill); }
+
+/* Автосохранение обычных настроек, без перерисовки редактируемых полей. */
+.settings-save-error { padding: 14px; border: 1px solid var(--bad); border-radius: var(--r-md); margin-bottom: 12px; overflow-wrap: anywhere; }
+[data-settings-save-state] { margin-top: 12px; }
+input[aria-invalid="true"] { border-color: var(--bad); }
+
+.autosave-legacy[hidden], .autosave-footer[hidden] { display: none; }

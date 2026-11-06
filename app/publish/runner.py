@@ -280,7 +280,7 @@ def plan(draft: dict) -> dict:
         if not files:
             details = []   # без файлов «0 фото» только путает
         want = (cfg.get("text_lang") or {}).get("telegram" if platform == "telegram" else platform, "main")
-        if will and multi and all_files and platform in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai"):
+        if will and multi and all_files and platform in S.PLATFORM_MODULES:
             vs = [VERSION_NAMES[v] for v in ((cfg.get("versions") or {}).get(platform) or []) if v in VERSION_NAMES]
             details = list(details or []) + [f"{len(files)} из {len(all_files)} файлов" + (f" · версии: {', '.join(vs)}" if vs else "")]
         if will and want != "main":   # площадка настроена на английский текст
@@ -388,6 +388,42 @@ def plan(draft: dict) -> dict:
         else:
             add("vk", "vk", name, True, details=[f"{n_img} JPEG-превью" + (" · через браузер" if via_browser else "")])
 
+    # Experimental browser destinations: each subreddit has its own result/retry key.
+    from app.publish import browser_targets as BT
+    for platform in ('reddit', 'joyreactor'):
+        use(platform)
+        options = cfg[platform]
+        if not options['enabled']:
+            continue
+        configured.append(platform)
+        communities = [n for n in BT.SUBREDDITS if options['communities'].get(n)] if platform == 'reddit' else ['']
+        for community in communities:
+            key = f'reddit:{community}' if community else platform
+            name = f'Reddit · r/{community}' if community else 'JoyReactor'
+            details, reason, flair, tags = [], '', '', []
+            try:
+                if not options.get('browser_ok'):
+                    raise ValueError('не выполнен вход через браузер — откройте настройки площадки')
+                if kind != 'images':
+                    raise ValueError('пока поддерживаются только изображения')
+                if n_img > (10 if platform == 'reddit' else 1):
+                    raise ValueError('Reddit: до 10 изображений; JoyReactor: пока одно изображение')
+                ids = [f['id'] for f in files]
+                if platform == 'reddit':
+                    title = title_for(cfg, draft, platform)
+                    if not title.strip() or len(title) > 300:
+                        raise ValueError('заголовок Reddit должен содержать от 1 до 300 символов')
+                    flair = BT.reddit_flair(cfg, draft, community, ids)
+                    details = [f'flair: {flair or "без flair"}', 'NSFW' if mature else 'SFW']
+                else:
+                    tags = BT.joy_tags(cfg, draft, ids)
+                    details = ['теги: ' + ', '.join(tags)]
+                details.append('через браузер · экспериментально')
+            except (ValueError, core_common.PlatformError) as error:
+                reason = str(error)
+            add(key, platform, name, not reason, reason, details, toggle=not reason)
+            dests[-1].update(flair=flair, tags=tags)
+
     # Bluesky
     use("bluesky")
     from platforms import bluesky as BS, deviantart as DA
@@ -476,7 +512,7 @@ def plan(draft: dict) -> dict:
             add("e6ai", "e6ai", name, True)
 
     missing = [n for k, n in (("telegram", "Telegram"), ("discord", "Discord"), ("vk", "ВКонтакте"), ("bluesky", "Bluesky"),
-                              ("deviantart", "DeviantArt"), ("e6ai", E6.name(cfg["e6ai"])))
+                              ("deviantart", "DeviantArt"), ("e6ai", ("e621" if cfg["e6ai"].get("site_name") == "e621" else "blep")), ("reddit", "Reddit"), ("joyreactor", "JoyReactor"))
                if k not in configured and cfg["modules"].get(k, True)]
     if not configured:
         errors.append("Ни одна площадка не настроена — откройте «Настройки» → «Публикация»")
@@ -497,11 +533,11 @@ def plan(draft: dict) -> dict:
         errors.append("С этим рейтингом пост никуда не уйдёт")
     return {"kind": _kind(all_files) if all_files else "images", "mature": mature, "rating": rating, "dests": dests, "errors": errors,
             "not_configured": missing, "configured": configured, "notes": notes,
-            "texts": {p: signed_text(cfg, draft, p) for p in ("telegram", "discord", "vk", "bluesky", "deviantart")},
+            "texts": {p: signed_text(cfg, draft, p) for p in tuple(p for p in S.PLATFORM_MODULES if p != "e6ai")},
             # заголовок и язык текста каждой площадки: предпросмотр показывает ровно то, что уйдёт
-            "titles": {p: title_for(cfg, draft, p) for p in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")},
-            "base_texts": {p: variant(cfg, draft, p)[1] for p in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")},
-            "langs": {p: variant(cfg, draft, p)[2] for p in ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")},
+            "titles": {p: title_for(cfg, draft, p) for p in S.PLATFORM_MODULES},
+            "base_texts": {p: variant(cfg, draft, p)[1] for p in S.PLATFORM_MODULES},
+            "langs": {p: variant(cfg, draft, p)[2] for p in S.PLATFORM_MODULES},
             "hashtags": HT.final(cfg, draft), "hashtags_suggested": HT.suggest(cfg, draft),
             "hashtags_on": bool(cfg["hashtags"].get("enabled", True))}
 
@@ -1009,6 +1045,23 @@ def _run(draft, report, only):
                                       draft["rating"], progress=prog)
                     _set(key, state="done", message="", link=next((u["url"] for u in urls if u["url"]), ""),
                          deviation_ids=[u["id"] for u in urls if u["id"]], note=f"{len(urls)} работ{'ы' if 1 < len(urls) < 5 else ''}" if len(urls) > 1 else "")
+                elif key.startswith('reddit:') or key == 'joyreactor':
+                    from app.publish import social_web
+                    from app.paths import sub
+                    import tempfile
+                    platform = d['platform']
+                    with tempfile.TemporaryDirectory(prefix=platform + '-', dir=sub('tmp')) as folder:
+                        from pathlib import Path
+                        paths = []
+                        for i, image in enumerate(media_for(platform)):
+                            path = Path(folder) / f'{i}.jpg'
+                            path.write_bytes(image.data)
+                            paths.append(str(path))
+                        result = social_web.post(platform, paths, title_for(cfg, draft, platform), signed_text(cfg, draft, platform),
+                                                 community=key.split(':', 1)[1] if platform == 'reddit' else 'FurAI',
+                                                 flair=d.get('flair', ''), nsfw=draft['rating'] != 'sfw', tags=d.get('tags', []),
+                                                 headless=not cfg[platform].get('show_window', True), progress=prog, log=log)
+                    _set(key, state='done', outcome='sent', message='', link=result['link'], note=result.get('note', ''))
                 elif key == "vk":
                     vk = cfg["vk"]
                     post = core_common.Post(text=signed_text(cfg, draft, "vk"), title=title_for(cfg, draft, "vk"), mature=False)
@@ -1059,7 +1112,7 @@ def _run(draft, report, only):
                 if not _posted_but_failed(key, e):
                     # Эти адаптеры создают одну запись на место. Для многошаговых
                     # площадок отказ последнего шага не исключает частичный успех.
-                    safe = key.startswith(("telegram:", "discord:")) or key == "bluesky"
+                    safe = key.startswith(("telegram:", "discord:", "reddit:")) or key in ("bluesky", "joyreactor")
                     _set(key, state="error", outcome="not_sent" if safe else "unknown", message=mask_secrets(str(e)))
             except (Cancelled, _Stop):   # «Отмена»: если пост уже вышел — остаётся «дослать PNG», иначе место просто не отправлено
                 if not _posted_but_failed(key, "отменено"):
@@ -1178,7 +1231,7 @@ def search_history(q='', platform='', state='', date_from='', date_to='', offset
                      "COALESCE(json_extract(CASE WHEN json_valid(draft) THEN draft ELSE '{}' END,'$.platform_texts'),'')), ?) > 0")
         args.append(q.strip().lstrip('#').casefold())
     if platform:
-        if platform not in ('telegram', 'discord', 'vk', 'bluesky', 'deviantart', 'e6ai'):
+        if platform not in S.PLATFORM_MODULES:
             raise ValueError('Неизвестная площадка')
         where.append(f"EXISTS(SELECT 1 FROM {dests} d WHERE json_extract(d.value,'$.platform')=? OR json_extract(d.value,'$.key')=? OR json_extract(d.value,'$.key') LIKE ?)")
         args.extend((platform, platform, platform + ':%'))

@@ -32,6 +32,7 @@ class Api:
                 "trends": {src: self._trends_state(src) for src in dumps.SOURCES},
                 "tg_job": self.jobs.get("tg:sync"), "pub_job": self.jobs.get("publish"),
                 "ins_job": self.jobs.get("insights:tag"),
+                "browser_jobs": {p: self.jobs.get(p + ":auth") for p in ('reddit', 'joyreactor')},
                 "vk_job": self.jobs.get("vk:auth"), "vk_stats_job": self.jobs.get("vk:stats"), "modules": self.modules(), "tagger_paused": __import__("app.tagger.remote", fromlist=["x"]).paused, "levels": self._levels(),
                 "update": self._update_info()}
 
@@ -540,6 +541,9 @@ class Api:
 
     def pub_save(self, section: str, changes: dict):
         from app.publish import settings as PS
+        if section in ('reddit', 'joyreactor'):
+            from app.publish.browser_targets import validate_changes
+            changes = validate_changes(section, changes)
         if section == "telegram" and not changes.get("bot_token"):
             changes.pop("bot_token", None)   # пустое поле = оставить сохранённый токен
         if section == "e6ai" and not changes.get("api_key"):
@@ -690,6 +694,54 @@ class Api:
         from app.publish import settings as PS
         PS.update("vk", {"method": "browser" if method == "browser" else "api"})
         return self.pub_settings()
+
+    def pub_browser_login(self, platform: str):
+        from app.publish import social_web, settings as PS
+        if platform not in social_web.SITES:
+            raise ValueError('Неизвестная браузерная площадка')
+
+        def run(report):
+            social_web.login(platform, report)
+            PS.update(platform, {'browser_ok': True})
+        return self.jobs.start(platform + ':auth', run)
+
+    def pub_browser_dry(self, platform: str, draft: dict, community: str = 'FurAI'):
+        """Fill the actual draft in a browser; never click the publish button."""
+        from app.publish import social_web, browser_targets as BT, settings as PS, runner, templates, drafts, prep
+        from app.paths import sub
+        if platform not in social_web.SITES:
+            raise ValueError('Неизвестная браузерная площадка')
+        draft = drafts.content(draft)
+        cfg = templates.effective(PS.load(), draft)
+        if not cfg[platform].get('browser_ok'):
+            raise ValueError('Сначала войдите на сайт через браузер')
+        if draft.get('rating') not in PS.RATINGS:
+            raise ValueError('Выберите рейтинг поста')
+        files = runner._files(draft)
+        ids = runner.select_ids(cfg, draft, [f['id'] for f in files], platform)
+        files = [f for f in files if f['id'] in ids]
+        if not files or any(f['kind'] != 'image' for f in files):
+            raise ValueError('Добавьте изображения; GIF и видео пока не поддерживаются')
+        flair = BT.reddit_flair(cfg, draft, community, ids) if platform == 'reddit' else ''
+        tags = BT.joy_tags(cfg, draft, ids) if platform == 'joyreactor' else []
+        title, text = runner.title_for(cfg, draft, platform), runner.signed_text(cfg, draft, platform)
+
+        def run(report):
+            import tempfile
+            from pathlib import Path
+            with tempfile.TemporaryDirectory(prefix=platform + '-dry-', dir=sub('tmp')) as folder:
+                paths = []
+                for i, file in enumerate(files):
+                    image = prep.get_light(file['id'], file['path'], cfg['light'], max_bytes=50 * 1024 * 1024, max_sum=14000)
+                    path = Path(folder) / f'{i}.jpg'
+                    path.write_bytes(image.data)
+                    paths.append(str(path))
+                result = social_web.post(platform, paths, title, text, community=community, flair=flair,
+                                         nsfw=draft['rating'] != 'sfw', tags=tags, dry_run=True,
+                                         headless=False, progress=lambda p: report(progress=p),
+                                         log=lambda message: report(message=message))
+            report(progress=1, message='Пробный прогон без публикации. Снимок: ' + str(result['shot']))
+        return self.jobs.start(platform + ':auth', run)
 
     def pub_vk_browser_login(self):
         """Окно браузера: войти во ВК один раз (вход сохраняется в отдельном профиле приложения)."""

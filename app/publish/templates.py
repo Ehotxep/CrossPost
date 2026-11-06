@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from app.paths import data_dir
 from core.fsutil import file_lock, read_json, atomic_write
 
-FIELDS = ('title', 'text', 'rating', 'signature', 'hashtags', 'variants', 'multi', 'exclude', 'platform_texts')
+FIELDS = ('title', 'text', 'rating', 'signature', 'hashtags', 'variants', 'multi', 'exclude', 'platform_texts', 'reddit_flairs')
 PROFILE = ('light', 'signatures', 'hashtags', 'versions', 'text_lang', 'platform_order')
 OPTIONS = {
     'telegram': ('include_title', 'spoiler_nsfw'),
     'discord': ('include_title', 'no_previews', 'blur_nsfw', 'max_file_mb', 'short_links'),
+    'reddit': (), 'joyreactor': (),
     'vk': ('include_title',), 'bluesky': ('include_title', 'alt_from_title', 'langs'),
     'deviantart': ('is_ai_generated', 'noai', 'originals', 'tags_from'),
     'e6ai': ('constant_tags', 'with_description', 'with_sources'),
@@ -47,12 +48,13 @@ def _path():
 
 
 def _targets(cfg):
-    out = {k: k for k in ('vk', 'bluesky', 'deviantart', 'e6ai')}
+    out = {k: k for k in ('vk', 'bluesky', 'deviantart', 'e6ai', 'joyreactor')}
     for i, ch in enumerate(cfg['telegram']['channels']):
         out[f'telegram:{i}'] = 'telegram:' + str(ch['id'])
     out['telegram:group'] = 'telegram:group:' + str(cfg['telegram']['group'].get('id', ''))
     for i, hook in enumerate(cfg['discord']['webhooks']):
         out[f'discord:{i}'] = 'discord:' + hashlib.sha256(hook['url'].encode()).hexdigest()
+    out.update({f'reddit:{name}': f'reddit:{name}' for name in ('FurAI', 'aiyiff')})
     return out
 
 

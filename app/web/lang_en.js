@@ -1,5 +1,19 @@
 // Английские тексты интерфейса: ключ — русский текст (как в коде), значение — перевод. Собрано tools/ — правьте через extra_*.txt
 window.EN_DICT = {
+"Адрес, модель и стиль сохраняются автоматически. API-ключ — отдельной кнопкой.": "The address, model and style are saved automatically. Save the API key separately.",
+"Папка и перенос файлов применяются кнопкой; переключатели сохраняются автоматически.": "Apply the folder and file move using the button; switches are saved automatically.",
+
+"Настройки не сохранены": "Settings not saved",
+"Сохраняю настройки…": "Saving settings…",
+"Настройки сохранены": "Settings saved",
+"Настройки сохраняются автоматически": "Settings are saved automatically",
+"Проверьте заполнение выделенных полей.": "Check the highlighted fields.",
+"Открыть настройки с ошибкой": "Open affected settings",
+"Повторить сохранение": "Retry saving",
+"Убрать несохранённые правки": "Discard unsaved changes",
+"Сохранить ключ": "Save key",
+"Применить папку": "Apply folder",
+
 "Подключение сохранено, отправка выключена": "Connection saved, sending disabled",
 "Свернуть очередь": "Collapse queue",
 "Вид публикаций": "Publication view",

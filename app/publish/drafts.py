@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from app import db
 
 FIELDS = ('title', 'text', 'rating', 'signature', 'exclude', 'variants', 'hashtags',
-          'e6ai_tags', 'e6ai_meta', 'multi', 'marks', 'tagger', 'profile', 'platform_texts', 'alts')
+          'e6ai_tags', 'e6ai_meta', 'multi', 'marks', 'tagger', 'profile', 'platform_texts', 'alts', 'reddit_flairs')
 
 
 def content(draft):
@@ -27,6 +27,11 @@ def content(draft):
     if not isinstance(alts, dict) or any(not isinstance(v, str) or len(v) > 1000 for v in alts.values()):
         raise ValueError('Описание картинки: до 1000 символов')
     result['alts'] = {uid: alts[uid] for uid in ids if uid in alts}
+    from app.publish.browser_targets import FLAIRS
+    flairs = result.get('reddit_flairs') or {}
+    if not isinstance(flairs, dict) or any(k not in FLAIRS or (v not in FLAIRS[k] and not (k == 'aiyiff' and v == '')) for k, v in flairs.items()):
+        raise ValueError('Неизвестный flair Reddit')
+    result['reddit_flairs'] = flairs
     overrides = result.get('platform_texts') or {}
     if not isinstance(overrides, dict):
         raise ValueError('Неверный формат текстов площадок')

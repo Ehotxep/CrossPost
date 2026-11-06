@@ -15,12 +15,12 @@ MIN_TAGS = 4
 
 
 def base(cfg) -> str:
-    return os.environ.get("CROSSPOST_E6AI_BASE") or (cfg.get("base") or "https://e6ai.net").rstrip("/")
+    return os.environ.get("CROSSPOST_E6AI_BASE") or (cfg.get("base") or "https://blep.art").rstrip("/")
 
 
 def name(cfg) -> str:
     """e6ai или e621 — куда сейчас загружаем (движок у них один)."""
-    return cfg.get("site_name") or ("e621" if "e621.net" in base(cfg) else "e6ai")
+    return "e621" if cfg.get("site_name") == "e621" or "e621.net" in base(cfg) else "blep.art"
 
 
 def _ua(cfg) -> dict:

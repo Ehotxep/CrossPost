@@ -4,6 +4,7 @@ import json
 from functools import wraps
 
 from app.paths import data_dir
+from app.publish.browser_targets import DEFAULT_RULES
 
 
 def _locked(fn):
@@ -18,7 +19,7 @@ RATINGS = ("sfw", "erotic", "explicit")          # рейтинг поста
 DEST_RATINGS = ("sfw", "nsfw", "all")            # рейтинг места: только SFW / только 18+ / любой
 ORIGINALS = ("reply", "comments", "none")
 
-PLATFORM_MODULES = ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai")
+PLATFORM_MODULES = ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "reddit", "joyreactor")
 
 
 def platform_order(cfg: dict | None = None) -> list:
@@ -37,6 +38,7 @@ DEFAULTS = {
     "platform_order": list(PLATFORM_MODULES),   # в каком порядке показывать площадки: настройки, подписи, окно поста
     # отключаемые модули: площадки (не участвуют в публикации, не показываются) и экраны
     "modules": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": True, "e6ai": True,
+                "reddit": True, "joyreactor": True,
                 "history": True, "stats": True, "trends": True,
                 # теггер; сбор цифр (замеры, цифры с сайтов, сверка правок модераторов); новости; прогноз и лучшее время
                 "tagger": True, "collect": True, "news": True, "forecast": True, "crosspost": True,
@@ -53,18 +55,18 @@ DEFAULTS = {
         "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": True},
     },
     # на какие площадки уходит английский вариант текста поста (остальные — основной текст)
-    "text_lang": {"telegram": "main", "discord": "main", "vk": "main", "bluesky": "main", "deviantart": "main", "e6ai": "main"},
+    "text_lang": {"telegram": "main", "discord": "main", "vk": "main", "bluesky": "main", "deviantart": "main", "e6ai": "main", "reddit": "main", "joyreactor": "main"},
     "platform_texts_enabled": {k: False for k in PLATFORM_MODULES},
     # какие версии файлов (комикс: ru / en / clean — без надписей) уходят на площадку; пусто — любые.
     # Работает только в постах, где включён переключатель «Умное таргетирование»
-    "versions": {"telegram": [], "discord": [], "vk": [], "bluesky": [], "deviantart": [], "e6ai": []},
+    "versions": {"telegram": [], "discord": [], "vk": [], "bluesky": [], "deviantart": [], "e6ai": [], "reddit": [], "joyreactor": []},
     # автоперевод описания (DeepSeek, OpenAI и любой сервис с интерфейсом OpenAI): текст уходит на их сервер, поэтому только по кнопке
     "translate": {"api_key": "", "model": "deepseek-flash", "base": "https://api.deepseek.com", "style": ""},
     "hashtags": {
         "enabled": True, "position": "start",         # start — первой строкой, как в ваших постах; end — в конце
         "rating_tags": {"sfw": "sfw", "erotic": "nsfw", "explicit": "nsfw"},
         "constant": [], "max_species": 3, "min_prob": 0.5,
-        "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": False},
+        "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": False, "reddit": False, "joyreactor": False},
     },
     "telegram": {
         "enabled": False, "bot_token": "", "bot_name": "",
@@ -82,7 +84,7 @@ DEFAULTS = {
         "webhooks": [],          # [{"url", "name", "rating"}]
     },
     "e6ai": {
-        "enabled": False, "username": "", "api_key": "", "base": "https://e6ai.net",
+        "enabled": False, "username": "", "api_key": "", "blep_api_key": "", "base": "https://blep.art",
         "constant_tags": [],      # всегда добавляются: ваш director-тег, инструмент и т.п.
         "preselect": 0.5,         # теги теггера с уверенностью выше — отмечены сразу
         "show_min": 0.2,          # ниже — не показываем
@@ -110,6 +112,16 @@ DEFAULTS = {
         "min_gap_h": 6,          # и не чаще, чем раз в столько часов
         "explore": 0.25,         # охота за новыми окнами: 0 — только лучшие известные, 0,5 — часто пробовать неизученные
         "horizon_days": 30,      # на сколько дней вперёд расставлять очередь
+    },
+    "reddit": {
+        "enabled": False, "browser_ok": False, "show_window": True,
+        "communities": {"FurAI": True, "aiyiff": True},
+        "flair_rules": copy.deepcopy(DEFAULT_RULES),
+    },
+    "joyreactor": {
+        "enabled": False, "browser_ok": False, "show_window": True,
+        "ai_tags": [], "constant_tags": [], "tag_aliases": {},
+        "rating_tags": {"sfw": [], "erotic": [], "explicit": []},
     },
     "vk": {
         "enabled": False, "group_id": "", "group_name": "", "app_id": "",
@@ -170,6 +182,9 @@ def load(raw: bool = False) -> dict:
     if not raw:
         e6 = cfg["e6ai"]
         site = booru_site(cfg)
+        if site == "e6ai":
+            e6["api_key"] = e6.get("blep_api_key", "")
+            e6["base"] = BOORU[site]
         if site != "e6ai":   # выбранный сайт — в те же поля, весь остальной код работает как с e6ai
             acc = (e6.get("accounts") or {}).get(site) or {}
             for k in PER_SITE:
@@ -184,7 +199,7 @@ def load(raw: bool = False) -> dict:
     return cfg
 
 
-BOORU = {"e6ai": "https://e6ai.net", "e621": "https://e621.net"}
+BOORU = {"e6ai": "https://blep.art", "e621": "https://e621.net"}
 PER_SITE = ("username", "api_key", "constant_tags")   # своё у каждого сайта
 
 
@@ -197,6 +212,9 @@ def site_changes(changes: dict) -> dict:
     """Правки раздела e6ai: аккаунт и постоянные теги — в ячейку выбранного сайта (e6ai — как раньше, сверху)."""
     site = booru_site()
     if site == "e6ai":
+        changes = dict(changes)
+        if "api_key" in changes:
+            changes["blep_api_key"] = changes.pop("api_key")
         return changes
     out = {k: v for k, v in changes.items() if k not in PER_SITE}
     mine = {k: v for k, v in changes.items() if k in PER_SITE}
@@ -246,10 +264,13 @@ def public(cfg: dict) -> dict:
     out["vk"]["has_manual_token"] = bool(out["vk"].get("access_token"))
     out["e6ai"]["has_key"] = bool(out["e6ai"].get("api_key"))
     out["e6ai"]["api_key"] = ""
+    out["e6ai"]["blep_api_key"] = ""
     for acc in (out["e6ai"].get("accounts") or {}).values():   # ключи второго сайта тоже не отдаём
         acc["has_key"] = bool(acc.get("api_key"))
         acc["api_key"] = ""
     out["vk"]["access_token"] = ""
+    from app.publish.browser_targets import FLAIRS
+    out["reddit"]["flairs"] = copy.deepcopy(FLAIRS)
     out["platform_order"] = platform_order(out)
     out["translate"]["has_key"] = bool(out["translate"].get("api_key"))
     from app import translate as _tr

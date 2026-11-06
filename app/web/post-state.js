@@ -18,6 +18,7 @@
       tagger,
       platform_texts: draft.platform_texts || {},
       alts: draft.alts || {},
+      reddit_flairs: draft.reddit_flairs || {},
       profile: draft.profile || null,
       extend: draft.extend?.pub_id,
     };

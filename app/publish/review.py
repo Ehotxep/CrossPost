@@ -51,13 +51,16 @@ def composition(draft):
             text = bluesky.build_text(text)[0]
             if text != full:
                 warnings.append('Текст Bluesky будет сокращён до лимита площадки')
-        elif platform == 'vk':
+        elif platform in ('vk', 'joyreactor'):
             text = (f'{title}\n\n{text}' if include else text).strip()
         elif platform == 'e6ai':
             text = ((f'[b]{title}[/b]\n' if title else '') + runner.variant(cfg, draft, platform)[1]).strip() if cfg['e6ai'].get('with_description', True) else ''
             fmt = 'DText'
             if cfg['e6ai'].get('with_sources', True):
                 warnings.append('Ссылки на опубликованные копии добавятся после отправки на другие площадки')
+        if platform in ('reddit', 'joyreactor'):
+            warnings += ['Браузерная интеграция экспериментальная; выполните пробный прогон в настройках']
+            warnings += [d['name'] + ': ' + '; '.join(d['details']) for d in dests]
         previews = []
         for f in selected:
             tags = runner.e6_tags(cfg, draft, f['id']) if platform == 'e6ai' else []

@@ -21,8 +21,9 @@
   api.html = (s) => s;
 
   // выбор языка: кнопки с data-lang — в настройках и в окне первого запуска; сохраняем в ui.json и перезагружаем окно
-  function chooseLang(code) {
+  async function chooseLang(code) {
     if (code !== "ru" && code !== "en") return;
+    if(window.SettingsAutosave && !await window.SettingsAutosave.flush())return;
     if (code === lang && UI.lang === code) return;
     fetch("/api/ui_set", { method: "POST", headers: { "Content-Type": "application/json", "X-Token": window.API_TOKEN },
       body: JSON.stringify({ changes: { lang: code } }) }).catch(() => {}).finally(() => location.reload());

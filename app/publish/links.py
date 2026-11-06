@@ -31,6 +31,6 @@ def plain(text: str) -> str:
 def for_platform(text: str, platform: str) -> str:
     if platform == "discord":
         return discord(text)
-    if platform in ("vk", "deviantart"):
+    if platform in ("vk", "deviantart", "reddit", "joyreactor"):
         return plain(text)
     return text   # Telegram превращает в HTML при отправке (там же экранируется остальной текст)

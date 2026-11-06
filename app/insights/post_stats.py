@@ -63,7 +63,7 @@ def e6ai_stats(link: str) -> dict | None:
         return hit[1]
     raw = PS.load(raw=True)["e6ai"]
     acc = raw if site == "e6ai" else ((raw.get("accounts") or {}).get(site) or {})
-    cfg = {"username": acc.get("username", ""), "api_key": acc.get("api_key", "")}
+    cfg = {"username": acc.get("username", ""), "api_key": acc.get("blep_api_key", "") if "blep.art" in (link or "") else acc.get("api_key", "")}
     hm = re.match(r"(https?://[^/]+)", link or "")
     base = hm.group(1) if hm else PS.BOORU[site]
     auth = (cfg["username"], cfg["api_key"]) if cfg.get("username") and cfg.get("api_key") else None
