@@ -2747,3 +2747,8 @@ window.EN_DICT = {
 "Завершить без проверки": "Finish without checking",
 "Путеводитель завершён. Вернуться к нему можно в настройках.": "Setup guide finished. You can reopen it in settings."
 };
+
+// Preserve existing translations for interface labels renamed to blep.art.
+for (const [key, value] of Object.entries(window.EN_DICT)) {
+  if (key.includes("e6ai")) window.EN_DICT[key.replaceAll("e6ai", "blep.art")] = value.replaceAll("e6ai", "blep.art");
+}

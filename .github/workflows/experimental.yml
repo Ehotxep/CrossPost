@@ -1,0 +1,49 @@
+name: Experimental build
+
+on:
+  push:
+    branches: [experimental]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Mark the packaged build as experimental
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          p = pathlib.Path('app/__init__.py')
+          text = p.read_text(encoding='utf-8')
+          text, count = re.subn(r'(__version__\s*=\s*"[0-9.]+)(")', lambda m: m[1] + '-experimental.' + os.environ['BUILD_NUMBER'] + m[2], text, count=1)
+          if count != 1:
+              raise SystemExit('Version not found')
+          p.write_text(text, encoding='utf-8')
+          PY
+      - run: python tools/make_release.py
+      - name: Publish separate prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.sha }}
+          BUILD_ID: ${{ github.run_id }}
+          BUILD_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          tag="experimental-${BUILD_ID}-${BUILD_ATTEMPT}"
+          printf '%s\n' 'Экспериментальная сборка для проверки. Возможны ошибки; перед установкой сохраните резервную копию данных. Стабильная версия обновляется отдельно.' > notes.md
+          gh release create "$tag" dist/*.zip dist/*.zip.sha256 --target "$COMMIT_SHA" --prerelease --title "Экспериментальная сборка ${GITHUB_RUN_NUMBER}" --notes-file notes.md

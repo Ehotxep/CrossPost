@@ -75,7 +75,7 @@ def has_work() -> str:
                 return "замеры свежих публикаций"
             try:
                 since = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
-                if PS.module_on("e6ai") and db.query("SELECT 1 FROM e6_sent WHERE checks < 2 AND at >= ? LIMIT 1", (since,)):
+                if PS.module_on("e6ai") and db.query("SELECT 1 FROM e6_sent WHERE checks < 2 AND site != 'e6ai' AND at >= ? LIMIT 1", (since,)):
                     return "сверка тегов e6ai"
             except Exception:  # noqa: BLE001 — таблицы ещё нет
                 pass

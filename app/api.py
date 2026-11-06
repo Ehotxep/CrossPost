@@ -100,8 +100,8 @@ class Api:
         return PS.module_on(key)
 
     # --- панель процессов: всё, что сейчас идёт в фоне ---
-    JOB_LABELS = {"tg:pool": ("Запас прокси Telegram", "settings:net"), "ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды e6ai", "trends"), "trends:e621": ("Тренды e621", "trends"),
-                  "e6db": ("База тегов e6ai", "settings:tags"), "tagger:install": ("Установка теггера", "settings:tags"),
+    JOB_LABELS = {"tg:pool": ("Запас прокси Telegram", "settings:net"), "ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды blep.art", "trends"), "trends:e621": ("Тренды e621", "trends"),
+                  "e6db": ("База тегов blep.art", "settings:tags"), "tagger:install": ("Установка теггера", "settings:tags"),
                   "tagger:run": ("Подбор тегов", "post"), "publish": ("Публикация", "post"),
                   "tg:sync": ("Загрузка из Telegram", "settings:import"), "insights:tag": ("Разметка истории теггером", "stats"),
                   "media:install": ("Установка ffmpeg", "settings:media"), "media:edit": ("Правка видео", "post"), "media:editprev": ("Просмотр петли", "post"), "vk:auth": ("ВКонтакте", "settings:vk"),

@@ -113,7 +113,7 @@ def check_due(limit: int = 10) -> int:
     if not PS.module_on("e6ai"):   # e6ai выключен — сайт не опрашиваем
         return 0
     now = _now()
-    rows = db.query("SELECT * FROM e6_sent WHERE checks < ? ORDER BY at LIMIT 200", (len(CHECKS),))
+    rows = db.query("SELECT * FROM e6_sent WHERE checks < ? AND site != 'e6ai' ORDER BY at LIMIT 200", (len(CHECKS),))
     n = 0
     for r in rows:
         age_h = (now - datetime.fromisoformat(r["at"])).total_seconds() / 3600

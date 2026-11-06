@@ -32,7 +32,7 @@ def status() -> dict:
 def run(report):
     from app.tagger import jtp
     if not jtp.status()["ready"]:
-        raise RuntimeError("Сначала установите теггер: «Настройки» → e6ai → «Установить теггер»")
+        raise RuntimeError("Сначала установите теггер: «Настройки» → blep.art → «Установить теггер»")
     todo = _todo()
     if not todo:
         report(progress=1.0, message="Все посты уже размечены")

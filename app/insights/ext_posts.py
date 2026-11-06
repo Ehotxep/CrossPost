@@ -21,7 +21,7 @@ EVERY_H = 3
 MIN_AGE_D = 3        # индекс (как оценка) — у постов старше 3 суток
 MATURE_D = 7         # «зрелый» пост (по нему считается норма): цифры устоялись — старше 7 суток, как у Telegram
 MIN_POSTS = 5        # и только если на площадке есть из чего считать норму
-LABEL = {"vk": "ВКонтакте", "bsky": "Bluesky", "e6ai": "e6ai", "e621": "e621", "da": "DeviantArt"}
+LABEL = {"vk": "ВКонтакте", "bsky": "Bluesky", "e6ai": "blep.art", "e621": "e621", "da": "DeviantArt"}
 VIEWS = ("vk", "da")   # где есть просмотры — индекс по ним, иначе по реакциям
 
 db.conn().executescript("""
@@ -508,9 +508,10 @@ def pub_links() -> dict:
             m = re.search(r"wall(-?\d+_\d+)", link)
             if m:
                 out["vk:" + m[1]] = r["id"]
-            m = re.search(r"(e6ai|e621)\.net/posts/(\d+)", link)
+            m = re.search(r"(blep\.art|e621\.net)/posts/(\d+)", link)
             if m:
-                out[f"{m[1]}:{m[2]}"] = r["id"]
+                site = "e6ai" if m[1] == "blep.art" else "e621"
+                out[f"{site}:{m[2]}"] = r["id"]
             for did in d.get("deviation_ids") or []:
                 out["da:" + str(did)] = r["id"]
             uri = str(d.get("uri") or "")

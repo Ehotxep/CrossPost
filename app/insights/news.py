@@ -254,7 +254,7 @@ def _moderators():
         pub = (db.query("SELECT * FROM publications WHERE id=?", (r["pub_id"],)) or [{"id": r["pub_id"], "title": "", "text": ""}])[0]
         parts = ([f"убрали {', '.join(rem[:4])}"] if rem else []) + ([f"добавили {', '.join(add[:4])}"] if add else [])
         _add(f"mod:{r.get('site') or 'e6ai'}:{r['post_id']}:{len(rem)}:{len(add)}", pub["id"], "e6ai", "mod",
-             f"{_title(pub)}: модераторы {r.get('site') or 'e6ai'} поправили теги — {'; '.join(parts)}")
+             f"{_title(pub)}: модераторы {'blep.art' if r.get('site') == 'blep' else r.get('site') or 'e6ai'} поправили теги — {'; '.join(parts)}")
 
 
 def items(limit: int = 40) -> dict:

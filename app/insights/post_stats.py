@@ -57,15 +57,17 @@ def e6ai_stats(link: str) -> dict | None:
     if not m:
         return None
     pid = m.group(1)
-    site = "e621" if "e621.net" in (link or "") else "e6ai"   # цифры — с того сайта, где лежит пост
+    site = "e621" if "e621.net" in (link or "") else "blep" if "blep.art" in (link or "") else "e6ai"   # цифры — с того сайта, где лежит пост
+    if site == "e6ai":  # The retired domain must not receive saved credentials.
+        return None
     hit = _e6_cache.get((site, pid))
     if hit and time.time() - hit[0] < 600:
         return hit[1]
     raw = PS.load(raw=True)["e6ai"]
-    acc = raw if site == "e6ai" else ((raw.get("accounts") or {}).get(site) or {})
+    acc = raw if site in ("e6ai", "blep") else ((raw.get("accounts") or {}).get(site) or {})
     cfg = {"username": acc.get("username", ""), "api_key": acc.get("blep_api_key", "") if "blep.art" in (link or "") else acc.get("api_key", "")}
     hm = re.match(r"(https?://[^/]+)", link or "")
-    base = hm.group(1) if hm else PS.BOORU[site]
+    base = hm.group(1) if hm else PS.BOORU["e6ai" if site == "blep" else site]
     auth = (cfg["username"], cfg["api_key"]) if cfg.get("username") and cfg.get("api_key") else None
     try:
         r = requests.get(f"{base}/posts/{pid}.json", headers={"User-Agent": user_agent(cfg.get("username"))},
@@ -79,7 +81,7 @@ def e6ai_stats(link: str) -> dict | None:
         out = {"error": str(e)}
     except Exception as e:  # noqa: BLE001
         out = {"error": f"{site} не ответил: {e.__class__.__name__}"}
-    out["site"] = site
+    out["site"] = "blep.art" if site == "blep" else site
     _prune()
     _e6_cache[(site, pid)] = (time.time(), out)
     return out

@@ -5,6 +5,25 @@ from unittest.mock import patch
 
 
 class BlepMigration(unittest.TestCase):
+    def test_post_statistics_do_not_mix_old_and_new_site_ids(self):
+        from app.insights import post_stats
+        from app.publish import settings
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, CROSSPOST_DATA=folder):
+            settings.update('e6ai', {'username': 'artist', 'api_key': 'old-key', 'blep_api_key': 'new-key'})
+            post_stats._e6_cache.clear()
+            def response(url, **kwargs):
+                score = 10 if 'blep.art' in url else 20
+                return Mock(status_code=200, json=lambda: {'post': {'score': {'total': score}}})
+            with patch('requests.get', side_effect=response) as get:
+                old = post_stats.e6ai_stats('https://e6ai.net/posts/42')
+                new = post_stats.e6ai_stats('https://blep.art/posts/42')
+            self.assertIsNone(old)
+            self.assertEqual(new['score'], 10)
+            self.assertEqual(get.call_count, 1)
+            self.assertEqual(get.call_args.kwargs['auth'], ('artist', 'new-key'))
+            post_stats._e6_cache.clear()
+
     def test_old_key_never_used_for_blep_and_new_key_is_isolated(self):
         from app.publish import settings
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, CROSSPOST_DATA=folder):

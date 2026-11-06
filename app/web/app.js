@@ -211,7 +211,7 @@
   };
   // площадки: буквы на цветном квадрате (свои значки, без чужих логотипов)
   const PLAT = { telegram: ["TG", "#2A9FD8", "Telegram"], discord: ["DS", "#5865F2", "Discord"], vk: ["VK", "#2D7BE5", "ВКонтакте"],
-    e6ai: ["e6", "#24508F", "e6ai"], reddit: ["R", "#F0541E", "Reddit"], deviantart: ["DA", "#14A85A", "DeviantArt"], bluesky: ["BS", "#1185FE", "Bluesky"], joyreactor: ["JR", "#C2410C", "Joyreactor"], x: ["X", "#3A3F4B", "X"] };
+    e6ai: ["BA", "#24508F", "blep.art"], reddit: ["R", "#F0541E", "Reddit"], deviantart: ["DA", "#14A85A", "DeviantArt"], bluesky: ["BS", "#1185FE", "Bluesky"], joyreactor: ["JR", "#C2410C", "Joyreactor"], x: ["X", "#3A3F4B", "X"] };
   const pbadge = (platform, { cls = "", tip = "", link = "", sm = false } = {}) => {
     const [t, c, name] = PLAT[platform] || [String(platform || "?").slice(0, 2).toUpperCase(), "#555", platform];
     const attrs = `class="pb ${sm ? "sm" : ""} ${cls}" style="--pc:${c}" data-tip="${esc(tip || name)}" aria-label="${esc(tip || name)}"`;
@@ -827,7 +827,7 @@
     const running = job && job.state === "running";
     const about = S.src === "e621"
       ? "e621 — крупнейший фурри-архив. ИИ-работы туда загружать нельзя, но это лучший индикатор вкусов фандома: тренды часто приходят оттуда."
-      : "Ваша площадка для ИИ-работ. Популярность — избранное на пост: просмотров e6ai не отдаёт.";
+      : "Ваша площадка для ИИ-работ. Популярность — избранное на пост: просмотров blep.art не отдаёт.";
     const dump = st.meta ? `выгрузка от ${st.meta.dump_date.split("-").reverse().join(".")} · ${num(st.meta.posts)} ${plural(st.meta.posts, "пост", "поста", "постов")} за 2 года` : "данных пока нет";
     let h = `
     <div class="head" style="align-items:flex-end">
@@ -836,7 +836,7 @@
         <p class="muted">${about}</p>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
-        ${seg("src", [["e6ai", "e6ai"], ["e621", "e621"]], S.src)}
+        ${seg("src", [["e6ai", "blep.art"], ["e621", "e621"]], S.src)}
         <div style="display:flex;align-items:center;gap:10px">
           <span class="muted small">${dump}</span>
           <button class="btn" data-action="update" ${running ? "disabled" : ""}>${st.ready ? "Обновить" : "Скачать"}</button>
@@ -869,19 +869,19 @@
 
     // опережающие сигналы
     if (d.leads === null) {
-      const other = S.src === "e621" ? "e6ai" : "e621";
-      h += `<div class="card"><h2>Опережающие сигналы</h2><p class="muted">Скачайте выгрузку ${other}, чтобы сравнивать, что растёт на e621 и ещё не дошло до e6ai.</p></div>`;
+      const other = S.src === "e621" ? "blep.art" : "e621";
+      h += `<div class="card"><h2>Опережающие сигналы</h2><p class="muted">Скачайте выгрузку ${other}, чтобы сравнивать, что растёт на e621 и ещё не дошло до blep.art.</p></div>`;
     } else {
       const card = (l) => `<div class="wrap">
-        <button class="lead" data-pick="${esc(l.tag)}" data-src="e6ai" title="Открыть прогноз на e6ai">
+        <button class="lead" data-pick="${esc(l.tag)}" data-src="e6ai" title="Открыть прогноз на blep.art">
           <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-right:22px"><span class="tag" style="font-weight:600">${esc(l.tag)}</span>${l.mine ? `<span class="pill mine">ваш стиль</span>` : ""}</span>
           <span class="kv"><span>e621</span><b style="color:var(--good)">${num(l.e621_before)} → ${num(l.e621_now)}</b></span>
-          <span class="kv"><span>e6ai</span><b>${num(l.e6ai_before)} → ${num(l.e6ai_now)}</b></span>
+          <span class="kv"><span>blep.art</span><b>${num(l.e6ai_before)} → ${num(l.e6ai_now)}</b></span>
         </button>${hideBtn(l.tag)}</div>`;
       const grp = (title, note, list) => `<div style="display:flex;flex-direction:column;gap:8px">
         <div class="head"><h3>${title}</h3><span class="muted small">${note}</span></div>
         ${list.length ? `<div class="leads">${list.map(card).join("")}</div>` : `<p class="muted small">Сейчас ничего заметного.</p>`}</div>`;
-      h += `<section class="card"><div class="head"><h2>Опережающие сигналы: растёт на e621, на e6ai ещё нет</h2>
+      h += `<section class="card"><div class="head"><h2>Опережающие сигналы: растёт на e621, на blep.art ещё нет</h2>
         <span class="muted small">работ в месяц: 3 месяца назад → сейчас</span></div>
         ${grp("Растёт на e621", "теги, которые давно есть, но набирают обороты", d.leads.growing)}
         ${grp("Новое на e621", "полгода назад тега почти не было: новый персонаж, игра или мем", d.leads.new)}`;
@@ -1016,10 +1016,10 @@
         <div class="field"><label for="hidden">Скрытые теги ${hint("Не показываются в трендах. Добавляются кнопкой × в списках трендов; удалите тег отсюда, чтобы вернуть его.")}</label>
           <textarea id="hidden" rows="2" class="code" placeholder="collarbone nails">${esc((s.hidden_tags || []).join(" "))}</textarea></div>
         <div class="row">
-          <div class="field" style="flex:1 1 200px"><label for="r6">Обновлять e6ai, раз в … дней</label><input id="r6" type="number" min="1" value="${s.trends.e6ai.refresh_days}"></div>
+          <div class="field" style="flex:1 1 200px"><label for="r6">Обновлять blep.art, раз в … дней</label><input id="r6" type="number" min="1" value="${s.trends.e6ai.refresh_days}"></div>
           <div class="field" style="flex:1 1 200px"><label for="r621">Обновлять e621, раз в … дней</label><input id="r621" type="number" min="1" value="${s.trends.e621.refresh_days}"></div>
         </div>
-        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 260px"><label for="nick">Ник для запросов к e621 и e6ai ${hint("Сайты просят указывать ник в запросах программ — так они понимают, кто к ним обращается. Пароль не нужен.")}</label>
+        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 260px"><label for="nick">Ник для запросов к e621 и blep.art ${hint("Сайты просят указывать ник в запросах программ — так они понимают, кто к ним обращается. Пароль не нужен.")}</label>
             <input id="nick" value="${esc(s.nickname || "")}" placeholder="например, fennec_artist"></div>
           <button class="btn" data-pa="nick-save">Сохранить ник</button></div>
         <div class="cardfoot"><button class="btn primary" data-action="save-settings">Сохранить</button><span class="ok small">${esc(S.flash)}</span></div></section>`;
@@ -1092,7 +1092,7 @@
 
   // меню настроек: группа, пункты, когда группа видна (по включённым функциям)
   const PSECS = [["Программа", [["app", "Общие"], ["features", "Функции"], ["worker", "Фоновая отправка"]], () => true],
-    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "e6ai / e621"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]], () => true],
+    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art / e621"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]], () => true],
     ["Оформление поста", [["signatures", "Подписи"], ["hashtags", "Хэштеги"], ["translate", "Перевод", () => modOn("translation")]], () => modOn("crosspost")],
     ["Файлы", [["light", "JPEG-превью"], ["media", "Видео и GIF"], ["versions", "Умное таргетирование", () => modOn("targeting")], ["files", "Хранение файлов"]], () => modOn("crosspost")],
     ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || modOn("e6ai")],
@@ -1101,19 +1101,19 @@
   // четыре функции приложения; у каждой — модули, которые она включает и выключает разом
   const FEATURES = [
     ["crosspost", "Кросспостинг", "Публикация одного поста сразу на несколько площадок, отложенная отправка по расписанию и история публикаций.", ["crosspost", "history"]],
-    ["tags", "Подбор тегов", "Автоматически предлагает теги по картинке — для хэштегов и для e6ai / e621. Без неё теги вводятся вручную.", ["tagger"]],
+    ["tags", "Подбор тегов", "Автоматически предлагает теги по картинке — для хэштегов и для blep.art / e621. Без неё теги вводятся вручную.", ["tagger"]],
     ["stats", "Статистика", "Просмотры и реакции по площадкам, лучшие работы и время публикации, уведомления о всплесках и прогноз.", ["stats", "collect", "news", "forecast"]],
-    ["trends", "Тренды", "Что сейчас популярно на e6ai и e621: растущие теги, ниши и сравнение с вашим стилем.", ["trends"]],
+    ["trends", "Тренды", "Что сейчас популярно на blep.art и e621: растущие теги, ниши и сравнение с вашим стилем.", ["trends"]],
     ["targeting", "Умное таргетирование", "Для постов в нескольких версиях (например, комикс с русскими и английскими надписями): отметьте версию у каждого файла, и на каждую площадку уйдут подходящие.", ["targeting"]],
     ["translation", "Языки и перевод", "Отдельный английский текст и подписи для англоязычных площадок. Автоперевод — через DeepSeek, по кнопке.", ["translation"]]];
   const featOn = (f) => f[3].some((k) => modOn(k));
   const statsOn = () => modOn("stats") || modOn("collect");
-  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "e6ai / e621", "загрузка, теги, теггер и база тегов"]],
-    extras: [["tagger", "Теггер", "предлагает теги по картинке для e6ai / e621 и хэштегов; без него теги вводятся вручную"],
+  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "blep.art / e621", "загрузка, теги, теггер и база тегов"]],
+    extras: [["tagger", "Теггер", "предлагает теги по картинке для blep.art / e621 и хэштегов; без него теги вводятся вручную"],
       ["collect", "Сбор статистики", "регулярно сохраняет просмотры и реакции опубликованных постов, учитывает правки модераторов и догружает превью"],
       ["news", "Новости по свежим артам", "уведомления в колокольчике: популярные работы, всплески реакций, новые комментарии"],
       ["forecast", "Прогноз", "ожидаемые просмотры и подсказка лучшего времени публикации"]],
-    screens: [["history", "История", "календарь и список публикаций"], ["stats", "Статистика", "просмотры и индекс успеха каналов"], ["trends", "Тренды", "e6ai и e621, обновление выгрузок"]] };
+    screens: [["history", "История", "календарь и список публикаций"], ["stats", "Статистика", "просмотры и индекс успеха каналов"], ["trends", "Тренды", "blep.art и e621, обновление выгрузок"]] };
   const modOn = (k) => !(S.info && S.info.modules) || S.info.modules[k] !== false;
   // какие экраны видны: «Новый пост» и «История» — кросспостинг, «Статистика» и «Тренды» — свои функции, «Настройки» — всегда
   const viewOn = (v) => v === "settings" ? true : v === "post" ? modOn("crosspost") : v === "history" ? modOn("crosspost") && modOn("history") : modOn(v);
@@ -1497,7 +1497,7 @@
   const SOON = {};
   function renderSoon() {
     const [t, d] = SOON[S.view] || ["Скоро", ""];
-    $main.innerHTML = `<h1>${t}</h1><section class="card soon"><p>${d}</p><p class="muted small">Раздел в работе. Сейчас готовы <a href="#" data-view-link="trends">тренды e6ai и e621</a>.</p></section>`;
+    $main.innerHTML = `<h1>${t}</h1><section class="card soon"><p>${d}</p><p class="muted small">Раздел в работе. Сейчас готовы <a href="#" data-view-link="trends">тренды blep.art и e621</a>.</p></section>`;
   }
 
   // ---------------- события ----------------
