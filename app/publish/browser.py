@@ -54,12 +54,12 @@ def session(headless: bool = False, downloads: bool = False, wait: float = 600):
     from playwright.sync_api import sync_playwright
     from app.paths import data_dir
     from app.telegram.backend import SessionLock
+    deadline = time.monotonic() + wait
     if not _lock.acquire(timeout=wait):
         raise PlatformError("Браузер занят другой задачей")
     plock = SessionLock(data_dir() / "browser.lock")
-    deadline = time.time() + wait
     while not plock.try_acquire():   # профилем пользуется другая часть Crosspost (окно или фоновая отправка)
-        if time.time() >= deadline:
+        if time.monotonic() >= deadline:
             _lock.release()
             raise PlatformError("Браузер занят другой задачей (публикацией или сбором статистики) — попробуйте через минуту")
         time.sleep(1)

@@ -160,6 +160,21 @@ class SocialBrowser(unittest.TestCase):
             self.assertEqual(page.locator('[data-testid="tweetTextarea_0"]').inner_text(), 'Existing draft')
             self.assertEqual(page.evaluate('window.submits'), 0)
 
+    def test_unconfirmed_upload_stops_each_dry_run_without_posting(self):
+        for platform, source in [('reddit', REDDIT), ('joyreactor', JOY), ('x', X_FORM)]:
+            source = source.replace('preview.append(img);', 'void img;')
+            messages = []
+            with self.subTest(platform=platform), self.fixture(platform, source) as page, \
+                    patch.object(W, 'DRY_UPLOAD_WAIT_SECONDS', 1):
+                with self.assertRaisesRegex(NotPublishedError, 'загрузк.*подтвердить'):
+                    if platform == 'x':
+                        W.x_dry([self.image], log=messages.append)
+                    else:
+                        W.post(platform, [self.image], 'Title', 'Body', flair='SFW',
+                               tags=['AI Art'], dry_run=True, log=messages.append)
+                self.assertEqual(page.evaluate('window.submits'), 0)
+                self.assertTrue(any('ожидаю подтверждение загрузки' in m for m in messages))
+
     def test_x_modal_ignores_background_composer(self):
         background = '''<div id="background"><div data-testid="tweetTextarea_0" contenteditable="true">Background draft</div>
           <input type="file" data-testid="fileInput"><button data-testid="tweetButtonInline">Post</button></div>'''

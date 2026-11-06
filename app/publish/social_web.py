@@ -12,6 +12,9 @@ from app.publish.browser_targets import valid_community
 from core.common import NotPublishedError, PublicationUnknown
 
 SITES = {'reddit': 'https://www.reddit.com', 'joyreactor': 'https://joyreactor.cc', 'x': 'https://x.com'}
+DRY_BROWSER_WAIT_SECONDS = 20
+DRY_UPLOAD_WAIT_SECONDS = 45
+UPLOAD_WAIT_SECONDS = 180
 
 
 def _site_host_ok(platform, url):
@@ -115,7 +118,7 @@ def _reddit_labels(page, flair, nsfw):
     dialog.wait_for(state='hidden')
 
 
-def _reddit_inline_attach(page, files):
+def _reddit_inline_attach(page, files, timeout=UPLOAD_WAIT_SECONDS, log=lambda message: None):
     """Insert images through the text composer's image picker, one at a time."""
     previews = page.locator('[contenteditable="true"][role="textbox"] img, [contenteditable="true"].ProseMirror img')
     if previews.count():
@@ -125,16 +128,17 @@ def _reddit_inline_attach(page, files):
         with page.expect_file_chooser(timeout=10000) as pending:
             button.click()
         pending.value.set_files(path)
-        deadline = time.monotonic() + 180
+        log(f'ожидаю подтверждение загрузки изображения {i + 1} из {len(files)} (до {timeout} с)')
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if previews.count() == i + 1 and previews.evaluate_all('imgs=>imgs.every(i=>i.complete && i.naturalWidth>0)'):
                 break
             page.wait_for_timeout(250)
         else:
-            raise NotPublishedError('Не удалось подтвердить загрузку изображения в текст поста')
+            raise NotPublishedError(f'За {timeout} с не удалось подтвердить загрузку изображения в текст поста')
 
 
-def _attach(page, scope, files, platform):
+def _attach(page, scope, files, platform, timeout=UPLOAD_WAIT_SECONDS, log=lambda message: None):
     preview = (scope.locator('[data-testid="media-preview"] img, [data-testid="image-preview"], shreddit-media-editor img')
                if platform == 'reddit' else scope.locator('.uploaded_image img, .post_content img, [contenteditable="true"] img'))
     if preview.count():
@@ -148,12 +152,13 @@ def _attach(page, scope, files, platform):
         preview = scope.locator('.uploaded_image img, .post_content img, [contenteditable="true"] img')
         if scope.locator('iframe.tox-edit-area__iframe').count() == 1:
             preview = scope.frame_locator('iframe.tox-edit-area__iframe').locator('body img')
-    deadline = time.monotonic() + 180
+    log(f'ожидаю подтверждение загрузки изображений (до {timeout} с)')
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if preview.count() == len(files) and preview.evaluate_all('imgs=>imgs.every(i=>i.complete && i.naturalWidth>0)'):
             return
         page.wait_for_timeout(250)
-    raise NotPublishedError('Не удалось подтвердить завершение загрузки изображений')
+    raise NotPublishedError(f'За {timeout} с не удалось подтвердить завершение загрузки изображений')
 
 
 def _post_link(url, platform, community):
@@ -171,7 +176,8 @@ def x_dry(files, headless=False, progress=lambda n: None, log=lambda s: None):
     if len(files) != 1:
         raise NotPublishedError('Для пробы X нужно одно тестовое изображение')
     stage = 'открытие редактора X'
-    with B.session(headless=headless) as (ctx, page):
+    log(f'ожидаю свободный браузер (до {DRY_BROWSER_WAIT_SECONDS} с)')
+    with B.session(headless=headless, wait=DRY_BROWSER_WAIT_SECONDS) as (ctx, page):
         try:
             log('открываю редактор X')
             page.goto(_url('x'), wait_until='domcontentloaded')
@@ -190,13 +196,14 @@ def x_dry(files, headless=False, progress=lambda n: None, log=lambda s: None):
             if picker.count() != 1:
                 raise NotPublishedError('Не найдено единственное поле загрузки изображений')
             picker.set_input_files(files)
-            deadline = time.monotonic() + 180
+            log(f'ожидаю подтверждение загрузки изображения (до {DRY_UPLOAD_WAIT_SECONDS} с)')
+            deadline = time.monotonic() + DRY_UPLOAD_WAIT_SECONDS
             while time.monotonic() < deadline:
                 if existing.count() == 1 and existing.evaluate_all('imgs=>imgs.every(i=>i.complete && i.naturalWidth>0)'):
                     break
                 page.wait_for_timeout(250)
             else:
-                raise NotPublishedError('Не удалось подтвердить загрузку изображения')
+                raise NotPublishedError(f'За {DRY_UPLOAD_WAIT_SECONDS} с не удалось подтвердить загрузку изображения')
             progress(.8)
             stage = 'проверка кнопки публикации'
             button = _find([scope.locator('[data-testid="tweetButton"]'), scope.locator('[data-testid="tweetButtonInline"]')])
@@ -228,7 +235,9 @@ def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=Fals
         raise NotPublishedError('Для JoyReactor нужны теги')
     submitted = False
     stage = 'открытие формы'
-    with B.session(headless=headless) as (ctx, page):
+    if dry_run:
+        log(f'ожидаю свободный браузер (до {DRY_BROWSER_WAIT_SECONDS} с)')
+    with B.session(headless=headless, wait=DRY_BROWSER_WAIT_SECONDS if dry_run else 600) as (ctx, page):
         try:
             log('открываю форму публикации')
             page.goto(target, wait_until='domcontentloaded')
@@ -262,9 +271,9 @@ def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=Fals
             log('загружаю изображения')
             stage = 'загрузка изображений'
             if platform == 'reddit' and inline:
-                _reddit_inline_attach(page, files)
+                _reddit_inline_attach(page, files, timeout=DRY_UPLOAD_WAIT_SECONDS if dry_run else UPLOAD_WAIT_SECONDS, log=log)
             else:
-                _attach(page, scope, files, platform)
+                _attach(page, scope, files, platform, timeout=DRY_UPLOAD_WAIT_SECONDS if dry_run else UPLOAD_WAIT_SECONDS, log=log)
             progress(.75)
             stage = 'поиск кнопки публикации'
             button = _find([scope.get_by_role('button', name=re.compile(r'^(Post|Publish|Опубликовать|Отправить)$', re.I))])
