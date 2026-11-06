@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from app.publish import social_web as W
-from core.common import PublicationUnknown
+from core.common import NotPublishedError, PublicationUnknown
 
 
 UPLOAD = '''<script>
@@ -36,6 +36,9 @@ REDDIT = '''<button role="tab" onclick="this.dataset.selected=1">Images</button>
 JOY = '''<form onsubmit="return false"><textarea name=text></textarea><input name=tags>
 <input type=file accept="image/*"><div class=post_content id=previews></div>
 <button id=send type=button onclick="window.submits++;location.href='/post/12345'">Опубликовать</button></form>'''+UPLOAD
+X_FORM = '''<div data-testid="tweetTextarea_0" contenteditable="true" role="textbox"></div>
+<input type="file" data-testid="fileInput" accept="image/*"><div data-testid="attachments" id="previews"></div>
+<button data-testid="tweetButton" onclick="window.submits++">Post</button>'''+UPLOAD
 
 
 class SocialBrowser(unittest.TestCase):
@@ -57,9 +60,9 @@ class SocialBrowser(unittest.TestCase):
     def fixture(self, platform, html=None):
         context = self.browser.new_context()
         page = context.new_page()
-        source = html or (REDDIT if platform == 'reddit' else JOY)
+        source = html or (REDDIT if platform == 'reddit' else X_FORM if platform == 'x' else JOY)
         # All requests are fulfilled locally, including the pretend confirmation page.
-        context.route('**/*', lambda route: route.fulfill(content_type='text/html; charset=utf-8', body=source if route.request.url.endswith(('submit', 'add')) else '<p>Published fixture</p>'))
+        context.route('**/*', lambda route: route.fulfill(content_type='text/html; charset=utf-8', body=source if route.request.url.rstrip('/').endswith(('submit', 'add', '/compose/post')) else '<p>Published fixture</p>'))
         @contextmanager
         def session(**kwargs):
             yield context, page
@@ -70,7 +73,7 @@ class SocialBrowser(unittest.TestCase):
             context.close()
 
     def test_dry_run_fills_rating_flair_tags_and_files_without_submitting(self):
-        for platform in W.SITES:
+        for platform in ('reddit', 'joyreactor'):
             with self.subTest(platform=platform), self.fixture(platform) as page:
                 result = W.post(platform, [self.image], 'Title', 'Body', flair='Gay', nsfw=True,
                                 tags=['AI Art', 'тег с пробелом'], dry_run=True)
@@ -86,13 +89,13 @@ class SocialBrowser(unittest.TestCase):
                     self.assertEqual(page.locator('[name=text]').input_value(), 'Title\n\nBody')
 
     def test_confirmed_navigation_produces_platform_link(self):
-        for platform in W.SITES:
+        for platform in ('reddit', 'joyreactor'):
             with self.subTest(platform=platform), self.fixture(platform):
                 result = W.post(platform, [self.image], 'Title', 'Body', flair='SFW', tags=['AI Art'])
                 self.assertIn('/comments/abc123/' if platform == 'reddit' else '/post/12345', result['link'])
 
     def test_click_exception_is_unknown_and_never_retried(self):
-        for platform in W.SITES:
+        for platform in ('reddit', 'joyreactor'):
             source = (REDDIT if platform == 'reddit' else JOY).replace("location.href='/r/FurAI/comments/abc123/art/'", "window.sent=true").replace("location.href='/post/12345'", "window.sent=true")
             with self.subTest(platform=platform), self.fixture(platform, source) as page:
                 find = W._find
@@ -113,6 +116,59 @@ class SocialBrowser(unittest.TestCase):
     def test_a_feed_link_or_other_subreddit_is_not_a_confirmation(self):
         self.assertFalse(W._post_link('https://evil.invalid/post/123', 'joyreactor', 'FurAI'))
         self.assertFalse(W._post_link('https://www.reddit.com/r/aiyiff/comments/abc/', 'reddit', 'FurAI'))
+
+    def test_pre_submit_error_identifies_stage_and_screenshot(self):
+        with self.fixture('reddit'), patch.object(W, '_find', side_effect=NotPublishedError('Элемент не найден')):
+            with self.assertRaisesRegex(NotPublishedError, 'заполнение заголовка.*fixture.png'):
+                W.post('reddit', [self.image], 'Title', 'Body', dry_run=True)
+
+    def test_reddit_text_editor_inserts_image_without_submitting(self):
+        source = '''<textarea name="title"></textarea>
+          <div class="ProseMirror" contenteditable="true" role="textbox"></div>
+          <button aria-label="Insert image" onclick="document.getElementById('inline-file').click()">Image</button>
+          <input id="inline-file" type="file" accept="image/*" hidden>
+          <button id="send" onclick="window.submits++">Post</button>
+          <script>window.submits=0; document.getElementById('inline-file').onchange=e=>{
+            const img=new Image();img.src=URL.createObjectURL(e.target.files[0]);
+            document.querySelector('.ProseMirror').append(img);
+          };</script>'''
+        with self.fixture('reddit', source) as page:
+            result = W.post('reddit', [self.image], 'Title', 'Body', community='aiyiff', dry_run=True)
+            self.assertEqual(page.locator('[name=title]').input_value(), 'Title')
+            self.assertEqual(page.locator('.ProseMirror img').count(), 1)
+            self.assertEqual(page.evaluate('window.submits'), 0)
+            self.assertEqual(result['shot'], 'fixture.png')
+
+    def test_reddit_accepts_canonical_host_and_rejects_other_community(self):
+        self.assertEqual(W._url('reddit', 'aiyiff'), 'https://www.reddit.com/r/aiyiff/submit/')
+        self.assertTrue(W._site_host_ok('reddit', 'https://reddit.com/r/aiyiff/submit/'))
+        self.assertFalse(W._site_host_ok('reddit', 'https://reddit.com.example.invalid/r/aiyiff/submit/'))
+
+    def test_x_dry_run_attaches_test_image_and_never_submits(self):
+        with self.fixture('x') as page:
+            result = W.x_dry([self.image])
+            self.assertEqual(page.evaluate('window.submits'), 0)
+            self.assertEqual(page.locator('[data-testid="tweetTextarea_0"]').inner_text(), 'Crosspost test — not published')
+            self.assertEqual(page.locator('#previews img').count(), 1)
+            self.assertEqual(result['shot'], 'fixture.png')
+
+    def test_x_test_preserves_existing_draft(self):
+        source = X_FORM.replace('role="textbox"></div>', 'role="textbox">Existing draft</div>')
+        with self.fixture('x', source) as page:
+            with self.assertRaisesRegex(NotPublishedError, 'уже есть черновик'):
+                W.x_dry([self.image])
+            self.assertEqual(page.locator('[data-testid="tweetTextarea_0"]').inner_text(), 'Existing draft')
+            self.assertEqual(page.evaluate('window.submits'), 0)
+
+    def test_x_modal_ignores_background_composer(self):
+        background = '''<div id="background"><div data-testid="tweetTextarea_0" contenteditable="true">Background draft</div>
+          <input type="file" data-testid="fileInput"><button data-testid="tweetButtonInline">Post</button></div>'''
+        source = background + '<div role="dialog">' + X_FORM.replace(UPLOAD, '') + '</div>' + UPLOAD.replace("document.querySelector('input[type=file]')", "document.querySelector('[role=dialog] input[type=file]')")
+        with self.fixture('x', source) as page:
+            W.x_dry([self.image])
+            self.assertEqual(page.locator('#background [contenteditable]').inner_text(), 'Background draft')
+            self.assertEqual(page.locator('[role=dialog] [contenteditable]').inner_text(), 'Crosspost test — not published')
+            self.assertEqual(page.evaluate('window.submits'), 0)
 
 
 if __name__ == '__main__':

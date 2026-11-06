@@ -203,6 +203,21 @@ main()
         finally:
             page.close()
 
+    def test_add_and_disable_reddit_community_from_settings(self):
+        page = self.browser.new_page()
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='reddit';await Pub.load('settings');CP.render()}")
+            page.locator('#reddit-community-add').fill('https://www.reddit.com/r/ArtCommunity/submit/')
+            page.locator('[data-social-action="add-community"]').click()
+            page.wait_for_function("CP.S.pub.reddit.communities.ArtCommunity === true")
+            page.locator('#bt-reddit-ArtCommunity').uncheck()
+            page.wait_for_function("CP.S.pub.reddit.communities.ArtCommunity === false")
+            self.assertFalse(self.api('pub_settings')['reddit']['communities']['ArtCommunity'])
+        finally:
+            page.close()
+
     def test_first_post_guide_can_be_dismissed(self):
         self.api('ui_set', changes={'lang': 'ru'})
         page = self.browser.new_page()

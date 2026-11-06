@@ -27,9 +27,9 @@ def content(draft):
     if not isinstance(alts, dict) or any(not isinstance(v, str) or len(v) > 1000 for v in alts.values()):
         raise ValueError('Описание картинки: до 1000 символов')
     result['alts'] = {uid: alts[uid] for uid in ids if uid in alts}
-    from app.publish.browser_targets import FLAIRS
+    from app.publish.browser_targets import valid_community
     flairs = result.get('reddit_flairs') or {}
-    if not isinstance(flairs, dict) or any(k not in FLAIRS or (v not in FLAIRS[k] and not (k == 'aiyiff' and v == '')) for k, v in flairs.items()):
+    if not isinstance(flairs, dict) or any(not valid_community(k) or not isinstance(v, str) or len(v) > 100 or '\n' in v or '\r' in v for k, v in flairs.items()):
         raise ValueError('Неизвестный flair Reddit')
     result['reddit_flairs'] = flairs
     overrides = result.get('platform_texts') or {}

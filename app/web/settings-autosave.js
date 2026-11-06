@@ -69,10 +69,10 @@
     if(!el)return null;
     const id=el.id,v=el.value?.trim()||'',on=!!el.checked;
     if(!id)return null;
-    const social=/^bt-(reddit|joyreactor)-(enabled|window|FurAI|aiyiff|ai|constant)$/.exec(id);
+    const social=/^bt-(reddit|joyreactor)-(enabled|window|[A-Za-z0-9_]{3,21}|ai|constant)$/.exec(id);
     if(social){const [,key,field]=social;
       if(field==='enabled'||field==='window')return {key,patch:{[field==='enabled'?'enabled':'show_window']:on}};
-      if(key==='reddit'&&['FurAI','aiyiff'].includes(field))return {key,patch:{communities:{[field]:on}}};
+      if(key==='reddit'&&!['ai','constant'].includes(field))return {key,patch:{communities:{[field]:on}}};
       if(key==='joyreactor'&&['ai','constant'].includes(field))return {key,patch:{[field==='ai'?'ai_tags':'constant_tags']:el.value.split(',').map(t=>t.trim()).filter(Boolean)}};
     }
     const common={nick:{nickname:v},style:{style_tags:words(v)},hidden:{hidden_tags:words(v)}};

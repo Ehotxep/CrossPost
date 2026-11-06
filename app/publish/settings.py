@@ -113,6 +113,7 @@ DEFAULTS = {
         "explore": 0.25,         # охота за новыми окнами: 0 — только лучшие известные, 0,5 — часто пробовать неизученные
         "horizon_days": 30,      # на сколько дней вперёд расставлять очередь
     },
+    "x": {"browser_ok": False},  # connection test only; publication is not enabled
     "reddit": {
         "enabled": False, "browser_ok": False, "show_window": True,
         "communities": {"FurAI": True, "aiyiff": True},

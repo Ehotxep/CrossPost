@@ -396,7 +396,7 @@ def plan(draft: dict) -> dict:
         if not options['enabled']:
             continue
         configured.append(platform)
-        communities = [n for n in BT.SUBREDDITS if options['communities'].get(n)] if platform == 'reddit' else ['']
+        communities = [n for n, enabled in options['communities'].items() if enabled and BT.valid_community(n)] if platform == 'reddit' else ['']
         for community in communities:
             key = f'reddit:{community}' if community else platform
             name = f'Reddit · r/{community}' if community else 'JoyReactor'

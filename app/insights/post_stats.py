@@ -203,6 +203,17 @@ def verdict(st: dict, fc: dict | None) -> str | None:
     return head + (f", {rel}" if rel else "") + (" (оценка по первым часам)" if fresh and st["age_h"] < 24 else "")
 
 
+def reddit_stats_url(link: str) -> str:
+    """A post URL identifies one statistics page, independent of its subreddit."""
+    import re
+    from urllib.parse import urlparse
+    url = urlparse(link or '')
+    if url.scheme != 'https' or url.hostname not in ('reddit.com', 'www.reddit.com'):
+        return ''
+    match = re.fullmatch(r'/r/[A-Za-z0-9_]{3,21}/comments/([A-Za-z0-9]{1,12})(?:/[^/?#]*)?/?', url.path, re.I)
+    return f'https://www.reddit.com/poststats/{match.group(1)}/' if match else ''
+
+
 def for_publication(pub_id: int) -> dict:
     rows = _pubs(pub_id=pub_id)
     if not rows:
@@ -214,9 +225,13 @@ def for_publication(pub_id: int) -> dict:
     for d in json.loads(pub["dests"] or "[]"):
         item = {"key": d.get("key"), "name": d.get("name"), "platform": d.get("platform"), "state": d.get("state"),
                 "link": d.get("link") or ""}
+        if d.get("platform") == "reddit" and d.get("state") == "done":
+            item["stats_url"] = reddit_stats_url(d.get("link"))
         from app.publish import settings as _PS
         if d.get("state") != "done":
             item["why"] = "не опубликовано"
+        elif d.get("platform") == "reddit":
+            item["why"] = "Статистика доступна на Reddit; автоматический сбор пока не подключён"
         elif d.get("platform") not in ("telegram", "discord", "vk") and not _PS.module_on("collect"):
             item["why"] = "Сбор статистики выключен в «Настройки» → «Сбор статистики» — цифры с сайтов не запрашиваем"
         elif d.get("platform") != "telegram" and not _PS.module_on(d.get("platform") or ""):

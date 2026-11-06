@@ -1,21 +1,29 @@
 /* Experimental browser connections; publication itself always uses the backend queue. */
 (function(){
   const C=()=>window.CP, esc=v=>C().esc(v==null?'':v);
-  const names={reddit:'Reddit',joyreactor:'JoyReactor'};
+  const names={reddit:'Reddit',joyreactor:'JoyReactor',x:'X'};
   function settingsHtml(platform){
     const s=C().S,p=s.pub[platform],job=s.info?.browser_jobs?.[platform],running=job?.state==='running';
+    if(platform==='x')return `<section class="card setc"><div class="head"><h2>${C().pbadge('x')} X</h2><span class="badge warn">В разработке</span></div>
+      <p class="muted small">Проверка входа и формы через отдельный браузер Crosspost. Настоящая публикация в X пока не подключена.</p>
+      <p class="${p.browser_ok?'ok':'muted'}">${p.browser_ok?'Вход сохранён':'Нужно войти через браузер'}</p>
+      <div class="row"><button class="btn" data-social-action="login" data-platform="x" ${running?'disabled':''}>Войти в браузере</button>
+      <button class="btn" data-social-action="dry" data-platform="x" ${!p.browser_ok||running?'disabled':''}>Пробный прогон</button></div>
+      <p class="muted small">Тест использует временную картинку и текст. Кнопка публикации не нажимается. Очистите старый черновик X перед запуском.</p>
+      ${job?`<p class="${job.state==='error'?'err':'muted'} small" translate="no">${esc(job.message||job.error||job.state)}</p>`:''}
+      ${s.socialError?.x?`<p class="err" translate="no">${esc(s.socialError.x)}</p>`:''}</section>`;
     const toggle=(id,on,label)=>`<label class="tgl"><input id="${id}" type="checkbox" ${on?'checked':''}><span>${label}</span></label>`;
     let h=`<section class="card setc"><div class="head"><h2>${C().pbadge(platform)} ${names[platform]}</h2><span class="badge warn">В разработке</span></div>
       <p class="muted small">Публикация через отдельный профиль браузера Crosspost, как во ВКонтакте. Пока только изображения. Работа с реальным сайтом ещё не проверена.</p>
       <p class="${p.browser_ok?'ok':'muted'}">${p.browser_ok?'Вход сохранён; доступность формы проверяется при отправке':'Нужно войти через браузер'}</p>
       ${toggle(`bt-${platform}-enabled`,p.enabled,'Включить публикацию')}${toggle(`bt-${platform}-window`,p.show_window,'Показывать окно браузера')}
       <div class="row"><button class="btn" data-social-action="login" data-platform="${platform}" ${running?'disabled':''}>Войти в браузере</button>
-      ${(platform==='reddit'?['FurAI','aiyiff']:['']).map(community=>`<button class="btn" data-social-action="dry" data-platform="${platform}" data-community="${community}" ${!p.browser_ok||running?'disabled':''}>Пробный прогон${community?' r/'+community:''}</button>`).join('')}</div>
+      ${(platform==='reddit'?Object.keys(p.communities):['']).map(community=>`<button class="btn" data-social-action="dry" data-platform="${platform}" data-community="${community}" ${!p.browser_ok||running?'disabled':''}>Пробный прогон${community?' r/'+community:''}</button>`).join('')}</div>
       <p class="muted small">Пробный прогон использует тестовое изображение и рейтинг SFW. ${platform==='joyreactor'?'Используются настроенные теги ИИ или тестовый тег; правильность тегов не проверяется. ':''}Кнопка публикации не нажимается. Очистите старые вложения в черновике сайта перед запуском.</p>
       ${job?`<p class="${job.state==='error'?'err':'muted'} small" translate="no">${esc(job.message||job.error||job.state)}</p>`:''}
       ${s.socialError?.[platform]?`<p class="err" translate="no">${esc(s.socialError[platform])}</p>`:''}`;
     if(platform==='reddit'){
-      h+=`<div class="tgls">${['FurAI','aiyiff'].map(n=>toggle(`bt-reddit-${n}`,p.communities[n],`r/${n}`)).join('')}</div>
+      h+=`<div class="tgls">${Object.keys(p.communities).map(n=>toggle(`bt-reddit-${n}`,p.communities[n],`r/${esc(n)}`)).join('')}<div class="row"><input id="reddit-community-add" placeholder="Название сообщества, например art" aria-label="Название сообщества Reddit"><button class="btn" data-social-action="add-community" data-platform="reddit">Добавить</button></div></div>
         <p class="muted small">r/FurAI: SFW/NSFW по рейтингу. r/aiyiff: flair по итоговым тегам, с возможностью ручной замены в редакторе. При одинаковом приоритете разных flair потребуется ручной выбор.</p>
         <details class="more"><summary>Соответствия тегов и flair</summary><p class="muted small">JSON: all — обязательные теги; none — исключающие; flair — название; priority — приоритет (большее выше).</p>
         <textarea id="social-rules-reddit" rows="12" class="code" spellcheck="false">${esc(JSON.stringify(p.flair_rules,null,2))}</textarea>
@@ -33,9 +41,10 @@
   function postHtml(draft,plan){
     const p=C().S.pub;if(!p?.reddit?.enabled||p.modules.reddit===false)return '';
     const choices=p.reddit.flairs||{}, overrides=draft.reddit_flairs||{};
-    return `<details class="more"><summary>Reddit · flair</summary>${['FurAI','aiyiff'].filter(n=>p.reddit.communities[n]).map(n=>{
+    return `<details class="more"><summary>Reddit · flair</summary>${Object.keys(p.reddit.communities).filter(n=>p.reddit.communities[n]).map(n=>{
       const found=plan?.dests.find(d=>d.key===`reddit:${n}`),manual=Object.hasOwn(overrides,n);
-      return `<label class="field">r/${n}<select data-reddit-flair="${n}"><option value="__auto" ${!manual?'selected':''}>Автоматически${found?' · '+esc(found.flair||'без flair'):''}</option>
+      if(!choices[n])return `<label class="field">r/${esc(n)} · flair (если обязателен)<input data-reddit-custom-flair="${esc(n)}" maxlength="100" value="${esc(overrides[n]||'')}" placeholder="Название flair сообщества"></label>`;
+      return `<label class="field">r/${esc(n)}<select data-reddit-flair="${n}"><option value="__auto" ${!manual?'selected':''}>Автоматически${found?' · '+esc(found.flair||'без flair'):''}</option>
         ${n==='aiyiff'?`<option value="" ${manual&&overrides[n]===''?'selected':''}>Без flair</option>`:''}
         ${(choices[n]||[]).map(f=>`<option value="${esc(f)}" ${manual&&overrides[n]===f?'selected':''}>${esc(f)}</option>`).join('')}</select></label>`;
     }).join('')}</details>`;
@@ -44,9 +53,15 @@
     const button=event.target.closest('[data-social-action]');if(!button)return false;
     event.preventDefault();const c=C(),s=c.S,platform=button.dataset.platform,action=button.dataset.socialAction;
     const rules=action==='rules'?document.getElementById('social-rules-'+platform).value:null;
+    const communityInput=action==='add-community'?document.getElementById('reddit-community-add').value.trim():'';
     s.socialError={...s.socialError,[platform]:''};button.disabled=true;
     try{
-      if(action==='rules'){
+      if(action==='add-community'){
+        const match=communityInput.match(/^(?:https?:\/\/(?:www\.)?reddit\.com\/r\/|r\/)?([A-Za-z0-9_]{3,21})(?:\/submit\/?)?\/?$/i);
+        if(!match||['__proto__','constructor','prototype'].includes(match[1].toLowerCase()))throw Error('Укажите корректное название сообщества или ссылку Reddit');
+        const name=Object.keys(s.pub.reddit.communities).find(n=>n.toLowerCase()===match[1].toLowerCase())||match[1];
+        s.pub=await c.api('pub_save',{section:'reddit',changes:{communities:{[name]:true}}});s.reviewKey=null;
+      }else if(action==='rules'){
         const parsed=JSON.parse(rules),changes=platform==='reddit'?{flair_rules:parsed}:parsed;
         s.pub=await c.api('pub_save',{section:platform,changes});
         s.reviewKey=null;

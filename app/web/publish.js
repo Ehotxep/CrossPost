@@ -1466,11 +1466,11 @@
       if (v >= L.hit || (pc != null && pc >= 0.9)) h += `<div class="banner-hit ${v >= L.super ? "super" : ""}">${C().ICON.trophy}<span><b>${v >= L.super ? "Супер-хит" : v >= L.hit ? "Хит канала" : "Сильный пост"}</b>${pc != null ? ` — входит в топ-${Math.max(1, Math.round((1 - pc) * 100))}% публикаций канала` : ""}${top.index ? "" : ", пока по оценке первых часов"}</span>${mk(v, !top.index, "big")}</div>`;
       else if (v < 0.77) h += `<div class="banner-hit low"><span>Пост идёт слабее обычного для канала${pc != null ? ` — лучше ${Math.round(pc * 100)}% публикаций` : ""}</span>${mk(v, !top.index, "big")}</div>`;
     }
-    const shown = d.dests.filter((x) => x.stats || x.e6ai || x.nums || !x.why);   // площадки без цифр по своей природе (группа Telegram, Discord) не показываем
+    const shown = d.dests.filter((x) => x.stats || x.e6ai || x.nums || x.stats_url || !x.why);   // ссылка на статистику доступна и без автоматического сбора
     if (!shown.length) h += `<p class="muted small">Площадки этого поста не отдают цифр — смотреть их можно только на самой площадке.</p>`;
     for (const x of shown) {
       const plat = x.platform || (x.key || "").split(":")[0];
-      h += `<div class="pdest"><div class="pdhead">${C().pbadge(plat)}<b translate="no">${esc(x.name)}</b>${x.link && /^https?:/.test(x.link) ? `<a href="#" data-open="${esc(x.link)}" class="small">открыть</a>` : ""}</div>`;
+      h += `<div class="pdest"><div class="pdhead">${C().pbadge(plat)}<b translate="no">${esc(x.name)}</b>${x.link && /^https?:/.test(x.link) ? `<a href="#" data-open="${esc(x.link)}" class="small">открыть</a>` : ""}${x.stats_url ? `<a href="#" data-open="${esc(x.stats_url)}" class="small">Статистика Reddit</a>` : ""}</div>`;
       if (x.stats && x.stats.ok) {
         const st = x.stats, fc = x.forecast;
         if (x.verdict) h += `<p class="verdict">${esc(x.verdict)}</p>`;
@@ -1547,6 +1547,7 @@
         const logged = br ? v.browser_ok : p.vk_connected;
         if (!logged) return ["", "не подключено"];
         return [v.group_id ? "ok" : "warn", (v.group_name || (v.group_id ? "группа " + v.group_id : "группа не указана")) + (br ? ", через браузер" : ", через API")]; }
+      case "x": return p.x.browser_ok ? ["ok", "вход сохранён · только проверка"] : ["", "не подключено"];
       case "reddit": case "joyreactor": return p[sec].browser_ok ? [p[sec].enabled?"ok":"warn",p[sec].enabled?"через браузер · экспериментально":"отправка выключена"] : ["", "не подключено"];
       case "bluesky": { const b = p.bluesky_session || {}; return b.ok && p.bluesky.enabled ? ["ok", "@" + b.handle] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
       case "deviantart": { const b = p.deviantart_session || {}; return b.ok && p.deviantart.enabled ? ["ok", b.username || "подключено"] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
@@ -1578,7 +1579,7 @@
     const known = (s.pubKnown && s.pubKnown.chats) || [];
     const tg = p.telegram, dc = p.discord, vk = p.vk, sg = p.signatures, li = p.light;
     let h = "";
-    if(sec==="reddit"||sec==="joyreactor")h+=window.BrowserTargets.settingsHtml(sec);
+    if(sec==="reddit"||sec==="joyreactor"||sec==="x")h+=window.BrowserTargets.settingsHtml(sec);
 
     if (sec === "telegram") {
       h += `<section class="card setc"><div class="head"><h2>${C().pbadge("telegram")} Telegram</h2></div>${err("tg")}${ok("tg")}`;
@@ -2669,6 +2670,11 @@
 
   async function onChange(e) {
     const t = e.target, s = S(), api = C().api;
+    if(t.dataset.redditCustomFlair){
+      const d=draft();d.reddit_flairs=d.reddit_flairs||{};const value=t.value.trim();
+      if(value)d.reddit_flairs[t.dataset.redditCustomFlair]=value;else delete d.reddit_flairs[t.dataset.redditCustomFlair];
+      saveDraft();await refreshPlan();C().render();return true;
+    }
     if(t.dataset.redditFlair){
       const d=draft();d.reddit_flairs=d.reddit_flairs||{};
       if(t.value==='__auto')delete d.reddit_flairs[t.dataset.redditFlair];else d.reddit_flairs[t.dataset.redditFlair]=t.value;

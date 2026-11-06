@@ -54,7 +54,7 @@ def _targets(cfg):
     out['telegram:group'] = 'telegram:group:' + str(cfg['telegram']['group'].get('id', ''))
     for i, hook in enumerate(cfg['discord']['webhooks']):
         out[f'discord:{i}'] = 'discord:' + hashlib.sha256(hook['url'].encode()).hexdigest()
-    out.update({f'reddit:{name}': f'reddit:{name}' for name in ('FurAI', 'aiyiff')})
+    out.update({f'reddit:{name}': f'reddit:{name}' for name in cfg['reddit'].get('communities', {})})
     return out
 
 

@@ -32,7 +32,7 @@ class Api:
                 "trends": {src: self._trends_state(src) for src in dumps.SOURCES},
                 "tg_job": self.jobs.get("tg:sync"), "pub_job": self.jobs.get("publish"),
                 "ins_job": self.jobs.get("insights:tag"),
-                "browser_jobs": {p: self.jobs.get(p + ":auth") for p in ('reddit', 'joyreactor')},
+                "browser_jobs": {p: self.jobs.get(p + ":auth") for p in ('reddit', 'joyreactor', 'x')},
                 "vk_job": self.jobs.get("vk:auth"), "vk_stats_job": self.jobs.get("vk:stats"), "modules": self.modules(), "tagger_paused": __import__("app.tagger.remote", fromlist=["x"]).paused, "levels": self._levels(),
                 "update": self._update_info()}
 
@@ -723,7 +723,7 @@ class Api:
         cfg = PS.load()
         if not cfg[platform].get('browser_ok'):
             raise ValueError('Сначала войдите на сайт через браузер')
-        if platform == 'reddit' and community not in BT.SUBREDDITS:
+        if platform == 'reddit' and (not BT.valid_community(community) or community not in cfg['reddit'].get('communities', {})):
             raise ValueError('Неизвестное сообщество Reddit')
         flair = 'SFW' if platform == 'reddit' and community == 'FurAI' else ''
         # The placeholder is only used in the unsubmitted test form; real posts
@@ -740,10 +740,14 @@ class Api:
                 image = Image.new('RGB', (800, 600), (235, 238, 245))
                 ImageDraw.Draw(image).text((40, 280), 'Crosspost test - not published', fill=(40, 60, 120))
                 image.save(path, 'JPEG')
-                result = social_web.post(platform, [str(path)], title, text, community=community, flair=flair,
-                                         nsfw=False, tags=tags, dry_run=True,
-                                         headless=False, progress=lambda p: report(progress=p),
-                                         log=lambda message: report(message=message))
+                if platform == 'x':
+                    result = social_web.x_dry([str(path)], headless=False, progress=lambda p: report(progress=p),
+                                              log=lambda message: report(message=message))
+                else:
+                    result = social_web.post(platform, [str(path)], title, text, community=community, flair=flair,
+                                             nsfw=False, tags=tags, dry_run=True,
+                                             headless=False, progress=lambda p: report(progress=p),
+                                             log=lambda message: report(message=message))
             report(progress=1, message='Пробный прогон без публикации. Снимок: ' + str(result['shot']))
         return self.jobs.start(platform + ':auth', run)
 
