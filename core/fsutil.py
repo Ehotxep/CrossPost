@@ -35,10 +35,8 @@ def file_lock(path):
         with open(lock_path, "a+b") as f:
             if os.name == "nt":
                 import msvcrt
-                # Lock a real byte; retry contention without a fixed 10-second limit.
-                if f.seek(0, os.SEEK_END) == 0:
-                    f.write(b"\0")
-                    f.flush()
+                # Windows can lock beyond EOF. Do not initialize the file here:
+                # another process may already hold the byte-range lock.
                 while True:
                     f.seek(0)
                     try:
