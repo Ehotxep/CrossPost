@@ -705,39 +705,34 @@ class Api:
             PS.update(platform, {'browser_ok': True})
         return self.jobs.start(platform + ':auth', run)
 
-    def pub_browser_dry(self, platform: str, draft: dict, community: str = 'FurAI'):
-        """Fill the actual draft in a browser; never click the publish button."""
-        from app.publish import social_web, browser_targets as BT, settings as PS, runner, templates, drafts, prep
+    def pub_browser_dry(self, platform: str, draft: dict | None = None, community: str = 'FurAI'):
+        """Fill a generated test post; never use the current draft or submit it."""
+        from app.publish import social_web, browser_targets as BT, settings as PS
         from app.paths import sub
         if platform not in social_web.SITES:
             raise ValueError('Неизвестная браузерная площадка')
-        draft = drafts.content(draft)
-        cfg = templates.effective(PS.load(), draft)
+        cfg = PS.load()
         if not cfg[platform].get('browser_ok'):
             raise ValueError('Сначала войдите на сайт через браузер')
-        if draft.get('rating') not in PS.RATINGS:
-            raise ValueError('Выберите рейтинг поста')
-        files = runner._files(draft)
-        ids = runner.select_ids(cfg, draft, [f['id'] for f in files], platform)
-        files = [f for f in files if f['id'] in ids]
-        if not files or any(f['kind'] != 'image' for f in files):
-            raise ValueError('Добавьте изображения; GIF и видео пока не поддерживаются')
-        flair = BT.reddit_flair(cfg, draft, community, ids) if platform == 'reddit' else ''
-        tags = BT.joy_tags(cfg, draft, ids) if platform == 'joyreactor' else []
-        title, text = runner.title_for(cfg, draft, platform), runner.signed_text(cfg, draft, platform)
+        if platform == 'reddit' and community not in BT.SUBREDDITS:
+            raise ValueError('Неизвестное сообщество Reddit')
+        flair = 'SFW' if platform == 'reddit' and community == 'FurAI' else ''
+        # The placeholder is only used in the unsubmitted test form; real posts
+        # still require explicitly configured AI tags in browser_targets.joy_tags.
+        tags = list(cfg['joyreactor'].get('ai_tags') or ['crosspost_test']) if platform == 'joyreactor' else []
+        title, text = 'Crosspost test', 'Test post — not published'
 
         def run(report):
             import tempfile
             from pathlib import Path
             with tempfile.TemporaryDirectory(prefix=platform + '-dry-', dir=sub('tmp')) as folder:
-                paths = []
-                for i, file in enumerate(files):
-                    image = prep.get_light(file['id'], file['path'], cfg['light'], max_bytes=50 * 1024 * 1024, max_sum=14000)
-                    path = Path(folder) / f'{i}.jpg'
-                    path.write_bytes(image.data)
-                    paths.append(str(path))
-                result = social_web.post(platform, paths, title, text, community=community, flair=flair,
-                                         nsfw=draft['rating'] != 'sfw', tags=tags, dry_run=True,
+                from PIL import Image, ImageDraw
+                path = Path(folder) / 'crosspost-test.jpg'
+                image = Image.new('RGB', (800, 600), (235, 238, 245))
+                ImageDraw.Draw(image).text((40, 280), 'Crosspost test - not published', fill=(40, 60, 120))
+                image.save(path, 'JPEG')
+                result = social_web.post(platform, [str(path)], title, text, community=community, flair=flair,
+                                         nsfw=False, tags=tags, dry_run=True,
                                          headless=False, progress=lambda p: report(progress=p),
                                          log=lambda message: report(message=message))
             report(progress=1, message='Пробный прогон без публикации. Снимок: ' + str(result['shot']))

@@ -11,7 +11,7 @@
       ${toggle(`bt-${platform}-enabled`,p.enabled,'Включить публикацию')}${toggle(`bt-${platform}-window`,p.show_window,'Показывать окно браузера')}
       <div class="row"><button class="btn" data-social-action="login" data-platform="${platform}" ${running?'disabled':''}>Войти в браузере</button>
       ${(platform==='reddit'?['FurAI','aiyiff']:['']).map(community=>`<button class="btn" data-social-action="dry" data-platform="${platform}" data-community="${community}" ${!p.browser_ok||running?'disabled':''}>Пробный прогон${community?' r/'+community:''}</button>`).join('')}</div>
-      <p class="muted small">Пробный прогон заполняет текущий пост и загружает изображения, но не нажимает кнопку публикации. Очистите старые вложения в черновике сайта перед запуском.</p>
+      <p class="muted small">Пробный прогон использует тестовое изображение и рейтинг SFW. ${platform==='joyreactor'?'Используются настроенные теги ИИ или тестовый тег; правильность тегов не проверяется. ':''}Кнопка публикации не нажимается. Очистите старые вложения в черновике сайта перед запуском.</p>
       ${job?`<p class="${job.state==='error'?'err':'muted'} small" translate="no">${esc(job.message||job.error||job.state)}</p>`:''}
       ${s.socialError?.[platform]?`<p class="err" translate="no">${esc(s.socialError[platform])}</p>`:''}`;
     if(platform==='reddit'){
@@ -51,7 +51,7 @@
         s.pub=await c.api('pub_save',{section:platform,changes});
         s.reviewKey=null;
       }else{
-        const args=action==='login'?{platform}:{platform,draft:window.PostState.capture(s.draft||c.store.get('draft',{}),s.taggerOn!==false),community:button.dataset.community||'FurAI'};
+        const args=action==='login'?{platform}:{platform,community:button.dataset.community||'FurAI'};
         await c.api(action==='login'?'pub_browser_login':'pub_browser_dry',args);
         s.socialWaiting={...s.socialWaiting,[platform]:true};await c.loadInfo();c.startPoll();
       }
