@@ -189,6 +189,15 @@ class Api:
         from app import updates
         return updates.set_check(check)
 
+    def update_channel(self, channel: str):
+        from app import updates
+        job = self.jobs.get("app:update")
+        if job and job.get("state") == "running":
+            raise ValueError("Дождитесь окончания загрузки обновления")
+        updates.set_channel(channel)
+        updates.check(force=True)
+        return self._update_info()
+
     def update_skip(self, version: str = ""):
         from app import updates
         return updates.skip(version)

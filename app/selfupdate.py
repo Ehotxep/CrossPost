@@ -53,7 +53,7 @@ def ready() -> dict | None:
         d = json.loads((_upd() / "ready.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not Path(d.get("root", "")).joinpath("app", "__init__.py").exists() or not updates.newer(d.get("version", "")):
+    if not Path(d.get("root", "")).joinpath("app", "__init__.py").exists() or d.get("channel", "stable") != updates.status()["channel"] or not updates.eligible(d.get("version", ""), d.get("channel", "stable")):
         return None
     return d
 
@@ -73,13 +73,8 @@ def result(ack: bool = False) -> dict | None:
 # ---------------------------------------------------------------- скачивание и проверка
 
 def _release() -> dict:
-    """Описание последнего выпуска вместе с файлами (для проверки уведомлений нужна только версия)."""
-    import requests
-    r = requests.get(updates.API, timeout=15, headers={"Accept": "application/vnd.github+json", "User-Agent": f"Crosspost/{__version__}"})
-    if r.status_code == 404:
-        raise ValueError("выпусков пока нет или репозиторий закрыт")
-    r.raise_for_status()
-    return r.json()
+    """Fetch the selected channel using the same policy as update checks."""
+    return updates.fetch_release(updates.status()["channel"])
 
 
 def _download(url: str, dest: Path, report, label: str, limit: int):
@@ -156,8 +151,8 @@ def _check_tree(root: Path, want: str) -> str:
     ver = m.group(1) if m else ""
     if want and ver != want:
         raise ValueError(f"версия внутри архива ({ver or '?'}) не совпадает с выпуском ({want})")
-    if not updates.newer(ver):
-        raise ValueError(f"в архиве версия {ver or '?'}, она не новее установленной ({__version__})")
+    if not updates.eligible(ver, updates.status()["channel"]):
+        raise ValueError(f"Версия {ver or '?'} не подходит для выбранного канала")
     for need in ("app/main.py", "app/api.py", "app/apply_update.py", "app/selfupdate.py", "Crosspost.bat", "requirements-app.txt"):
         if not (root / need).exists():
             raise ValueError(f"в архиве нет файла {need}")
@@ -179,11 +174,12 @@ def prepare(report, release: dict | None = None):
         raise ValueError(why[:1].upper() + why[1:])
     report(0.02, "Запрашиваю выпуск…")
     rel = release or _release()
-    ver = str(rel.get("tag_name") or "").lstrip("vV")
-    if not updates.newer(ver):
+    channel = updates.status()["channel"]
+    ver = updates.release_version(rel, channel)
+    if not updates.eligible(ver, channel):
         raise ValueError("У вас уже последняя версия")
     assets = {a.get("name"): a.get("browser_download_url") for a in rel.get("assets") or []}
-    zname = next((n for n in assets if n and n.lower().endswith(".zip")), None)
+    zname = f"Crosspost-{ver}.zip" if f"Crosspost-{ver}.zip" in assets else None
     if not zname or f"{zname}.sha256" not in assets:
         raise ValueError("в выпуске нет архива с контрольной суммой (.zip и .zip.sha256) — обновите вручную со страницы выпуска")
     d = _upd()
@@ -204,8 +200,10 @@ def prepare(report, release: dict | None = None):
     _unpack(zpath, d / "new")
     root = _find_root(d / "new")
     report(0.9, "Проверяю файлы…")
+    if updates.status()["channel"] != channel:
+        raise ValueError("Канал изменился во время скачивания — повторите проверку")
     _check_tree(root, ver)
-    (d / "ready.json").write_text(json.dumps({"version": ver, "root": str(root), "at": time.time()}, ensure_ascii=False), encoding="utf-8")
+    (d / "ready.json").write_text(json.dumps({"version": ver, "channel": channel, "root": str(root), "at": time.time()}, ensure_ascii=False), encoding="utf-8")
     zpath.unlink(missing_ok=True)
     report(1.0, f"Версия {ver} скачана и проверена")
 

@@ -182,6 +182,27 @@ main()
         finally:
             page.close()
 
+    def test_update_channel_selector_changes_channel_without_installing(self):
+        page = self.browser.new_page()
+        calls = []
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='app';await Pub.load('settings');CP.render()}")
+            state = page.evaluate('CP.S.info.update')
+            state.update(channel='experimental', current_channel='stable', latest=None, newer=False, show=False)
+            def respond(route):
+                calls.append(route.request.post_data_json)
+                route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok':True,'result':state}))
+            page.route('**/api/update_channel', respond)
+            page.locator('#update-channel').select_option('experimental')
+            page.wait_for_function("CP.S.info.update.channel === 'experimental'")
+            self.assertEqual(calls, [{'channel':'experimental'}])
+            self.assertEqual(page.locator('#update-channel').input_value(), 'experimental')
+            self.assertIn('резервную копию', page.locator('#update-channel').locator('..').inner_text())
+        finally:
+            page.close()
+
     def test_first_post_guide_can_be_dismissed(self):
         self.api('ui_set', changes={'lang': 'ru'})
         page = self.browser.new_page()

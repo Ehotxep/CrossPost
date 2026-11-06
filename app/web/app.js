@@ -417,6 +417,10 @@
     else if (u.error && !lt) st = `<p class="muted">Не удалось проверить: ${esc(u.error)}.</p>`;
     else st = `<p class="muted">У вас последняя версия (${esc(u.current)}).${u.error ? ` Последняя проверка не удалась: ${esc(u.error)}.` : ""}</p>`;
     return `<section class="card setc"><div class="head"><h2>Обновления ${hint("Программа один раз при запуске спрашивает GitHub, вышла ли новая версия, и только сообщает об этом — сама ничего не скачивает и не ставит. Проверку можно отключить. Передаётся только запрос на страницу выпусков, без ваших данных.")}</h2></div>
+      <div class="field"><label for="update-channel">Канал обновлений</label><select id="update-channel" ${u.checking || u.job?.state === "running" ? "disabled" : ""}>
+        <option value="stable" ${u.channel !== "experimental" ? "selected" : ""}>Стабильный</option>
+        <option value="experimental" ${u.channel === "experimental" ? "selected" : ""}>Экспериментальный</option></select>
+        <p class="muted small">Экспериментальные сборки могут содержать ошибки. При возврате на стабильный канал может установиться более старая версия; заранее сохраните резервную копию данных. Выбор канала сам по себе ничего не устанавливает.</p></div>
       ${st}
       <div class="cardfoot"><button class="btn" data-action="upd-check" ${S.updBusy || u.checking ? "disabled" : ""}>${S.updBusy ? "Проверяю…" : "Проверить сейчас"}</button>
         <label class="tgl"><input type="checkbox" data-action="upd-auto" ${u.check ? "checked" : ""}><span>Проверять при запуске</span></label>
@@ -1674,7 +1678,7 @@
         else if (act === "upd-open") await api("update_open");
         else if (act === "upd-get") { await api("update_prepare"); await loadInfo(); }
         else if (act === "upd-apply") {
-          if (!confirm("Установить обновление? Crosspost закроется и сам откроется заново. Несохранённый черновик поста может пропасть.")) return;
+          if (!confirm((S.info.update?.channel === "stable" && S.info.update?.current_channel === "experimental" ? "Вы возвращаетесь на стабильную версию, которая может быть старее. Сначала сохраните резервную копию данных.\n\n" : "") + "Установить обновление? Crosspost закроется и сам откроется заново. Несохранённый черновик поста может пропасть.")) return;
           S.updApplying = true; render(); await api("update_apply"); return;
         }
         else if (act === "upd-skip") S.info.update = await api("update_skip", { version: (S.info.update.latest || {}).version });
@@ -1741,6 +1745,11 @@
     if (e.target.id === "pvbox") S.pvOpen = e.target.open;
   }, true);
   $main.addEventListener("change", async (e) => {
+    if(e.target.id === "update-channel") {
+      try { S.info.update = await api("update_channel", {channel:e.target.value}); }
+      catch(err) { toast(err.message, "error"); }
+      updBadge(); render(); return;
+    }
     if(window.SettingsAutosave?.capture(e.target))return;
     await window.SettingsAutosave?.flush();
     if(window.SetupGuide && window.SetupGuide.onChange(e))return;
