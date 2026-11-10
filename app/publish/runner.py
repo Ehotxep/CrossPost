@@ -173,14 +173,21 @@ def signature(cfg, platform: str, rating: str | None, lang: str = "main") -> str
     return (sg.get("nsfw" if rating and rating != "sfw" else "sfw") or "").strip()
 
 
-LANGS = ("main", "en")
+LANGS = ("main", "en", "both")
 
 
 def variant(cfg, draft, platform: str) -> tuple[str, str, str]:
     """(заголовок, текст, язык) для площадки: английский вариант, если площадка на него настроена и он заполнен, иначе основной."""
     lang = (cfg.get("text_lang") or {}).get(platform, "main") if (cfg.get("modules") or {}).get("translation") else "main"
     title, text, used = (draft.get("title") or "").strip(), (draft.get("text") or "").strip(), "main"
-    if lang in LANGS and lang != "main":
+    if lang == "both":
+        english = (draft.get("variants") or {}).get("en") or {}
+        en_title, en_text = (english.get("title") or "").strip(), (english.get("text") or "").strip()
+        title = " / ".join(dict.fromkeys(part for part in (title, en_title) if part))
+        text = "\n\n".join(dict.fromkeys(part for part in (text, en_text) if part))
+        if en_title or en_text:
+            used = "both"
+    elif lang == "en":
         v = (draft.get("variants") or {}).get(lang) or {}
         if (v.get("text") or "").strip() or (v.get("title") or "").strip():
             title, text, used = (v.get("title") or "").strip(), (v.get("text") or "").strip(), lang
@@ -285,8 +292,8 @@ def plan(draft: dict) -> dict:
             details = list(details or []) + [f"{len(files)} из {len(all_files)} файлов" + (f" · версии: {', '.join(vs)}" if vs else "")]
         if will and want != "main":   # площадка настроена на английский текст
             _, _, got = variant(cfg, draft, platform)
-            details = list(details or []) + (["текст: English"] if got != "main" else ["⚠ английский текст не заполнен — уйдёт основной"])
-            if (got != "main" and draft.get("signature", True) and cfg["signatures"]["use"].get(platform, True)
+            details = list(details or []) + (["текст: RU + EN" if got == "both" else "текст: English"] if got != "main" else ["⚠ английский текст не заполнен — уйдёт основной"])
+            if (got == "en" and draft.get("signature", True) and cfg["signatures"]["use"].get(platform, True)
                     and signature(cfg, platform, rating) and not has_en_signature(cfg, platform)):
                 details.append("подпись: основная (английской нет)")
         dests.append({"key": key, "platform": platform, "name": name, "will": will and not user_off,
@@ -925,6 +932,7 @@ def _run(draft, report, only):
                     ch = tg["channels"][int(key.split(":")[1])]
                     def on_posted(out, _key=key):   # пост вышел — ссылка сразу, оригиналы догружаются следом
                         _set(_key, link=out["link"], chat_id=out["chat_id"], message_ids=out["message_ids"],
+                             **{k: v for k, v in out.items() if k.startswith("edit_")},
                              message="пост вышел, догружаю PNG-оригиналы…")
                         posted[_key].set()
                     try:
@@ -943,6 +951,7 @@ def _run(draft, report, only):
                                                max_wait=UNATTENDED_WAIT if draft.get("_scheduled_run") else None)
                     _set(key, state="done", message="", link=res["link"], note=res["note"],
                          chat_id=res["chat_id"], message_ids=res["message_ids"],
+                         **{k: v for k, v in res.items() if k.startswith("edit_")},
                          originals_pending=bool(res.get("originals_failed")))
                 elif key == "telegram:group":
                     if d.get("src") in posted:   # ждём только сам пост в канале, не оригиналы
@@ -1259,11 +1268,36 @@ def search_history(q='', platform='', state='', date_from='', date_to='', offset
             where.append('created ' + op + ' ?')
             args.append(value)
     clause = ' WHERE ' + ' AND '.join(where) if where else ''
-    total = db.query('SELECT COUNT(*) AS n FROM publications' + clause, args)[0]['n']
-    rows = db.query('SELECT * FROM publications' + clause + ' ORDER BY id DESC LIMIT ? OFFSET ?', (*args, limit, offset))
-    for row in rows:
-        row['files'] = json.loads(row['files'] or '[]')
-        row['dests'] = json.loads(row['dests'] or '[]')
-        row.pop('draft', None)
+    from app.insights import calendar
+    matched = db.query('SELECT * FROM publications' + clause + ' ORDER BY id DESC', args)
+    matching_ids = {r["id"] for r in matched}
+    raw = {r["id"]: r for r in history(limit=1000000)}
+    works = calendar.month(datetime.now().strftime("%Y-%m"), all_history=True)
+    grouped = []
+    for work in sorted((it for day in works["days"].values() for it in day), key=lambda it: -it["ts"]):
+        ids = work.get("pub_ids") or []
+        if ids:
+            if not matching_ids.intersection(ids):
+                continue
+            source = raw.get(min(ids), {})
+            row = dict(source, id=min(ids), merge_ids=ids, atoms=work["atoms"])
+            row["dests"] = [dict(d, source_pub_id=pid) for pid in ids for d in raw.get(pid, {}).get("dests", [])]
+            row["files"] = [f for pid in ids for f in raw.get(pid, {}).get("files", [])]
+        else:
+            if state and state != "done":
+                continue
+            if platform and not any(part["plat"] in (platform, {"bluesky":"bsky","deviantart":"da"}.get(platform)) for part in work["parts"]):
+                continue
+            if q.strip() and q.strip().casefold() not in (work["text"] + " " + " ".join(work["channels"])).casefold():
+                continue
+            if date_from and work["day"] < date_from[:10] or date_to and work["day"] > date_to[:10]:
+                continue
+            row = dict(id=work["key"], title=work["text"], text=work["text"], rating=work.get("rating"),
+                       created=datetime.fromtimestamp(work["ts"], timezone.utc).isoformat(), files=[], dests=[], atoms=work["atoms"])
+        row["work"] = work
+        row["preview"] = work.get("preview")
+        grouped.append(row)
+    total = len(grouped)
+    rows = grouped[offset:offset + limit]
     return dict(items=rows, total=total, offset=offset, limit=limit,
                 next_offset=offset + len(rows) if offset + len(rows) < total else None)

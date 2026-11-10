@@ -73,6 +73,103 @@ main()
         self.assertTrue(result['ok'], result)
         return result['result']
 
+    def test_error_motion_sorting_and_line_chart_respect_reduced_motion(self):
+        page=self.browser.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("""()=>{
+                CP.S.view='post';CP.S.postMode='progress';
+                CP.S.pubJob={state:'running',progress:.4};
+                CP.S.pubState={pub_id:999,title:'Test',dests:[
+                    {key:'vk',platform:'vk',name:'VK',state:'running',details:[]},
+                    {key:'discord',platform:'discord',name:'Discord',state:'running',details:[]}]};
+                CP.render();
+                CP.S.pubState.dests[0].state='error';CP.S.pubState.dests[0].outcome='not_sent';
+                CP.S.pubState.dests[1].state='done';CP.render();
+            }""")
+            self.assertEqual(page.locator('[data-send-key]').first.get_attribute('data-send-key'),'discord')
+            failed=page.locator('.just-failed .pb')
+            self.assertEqual(failed.evaluate('el=>getComputedStyle(el).animationName'),'send-error-shake')
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(failed.evaluate('el=>getComputedStyle(el).animationName'),'none')
+            page.emulate_media(reduced_motion='no-preference')
+            page.evaluate("""()=>{
+                window.testChart=document.body.appendChild(document.createElement('div'));
+                testChart.style.width='640px';
+                window.testSeries=[{name:'Test',color:'#8888ff',points:[{m:'01.26',v:100},{m:'02.26',v:200}]}];
+                Charts.lineChart(testChart,testSeries);
+            }""")
+            self.assertGreater(page.evaluate("testChart.querySelector('path').getAnimations().length"),0)
+            page.evaluate('Charts.lineChart(testChart,testSeries)')
+            self.assertEqual(page.evaluate("testChart.querySelector('path').getAnimations().length"),0)
+            page.emulate_media(reduced_motion='reduce')
+            page.evaluate('testSeries[0].points[1].v=300;Charts.lineChart(testChart,testSeries)')
+            self.assertEqual(page.evaluate("testChart.querySelector('path').getAnimations().length"),0)
+        finally:
+            page.close()
+
+    def test_list_merge_and_split_are_visible_and_persistent(self):
+        page = self.browser.new_page()
+        page.on("dialog", lambda dialog: dialog.accept())
+        atoms = []
+        try:
+            page.goto(self.base, wait_until="networkidle")
+            page.evaluate("async()=>{CP.S.view='history';CP.S.histMode='published';CP.S.historyFilters={};CP.S.historyOffset=0;await Pub.load('history');CP.render()}")
+            initial = self.api("post_history_search")["total"]
+            page.get_by_role("button", name="Объединить посты", exact=True).click()
+            boxes = page.locator("[data-history-select]")
+            atoms = page.evaluate("()=>CP.S.hist.slice(0,2).flatMap(r=>r.atoms)")
+            boxes.nth(0).check()
+            boxes.nth(1).check()
+            page.get_by_role("button", name="Принудительно объединить", exact=True).click()
+            page.wait_for_function("count=>CP.S.historyPage.total===count", arg=initial-1)
+            self.assertEqual(self.api("post_history_search")["total"], initial-1)
+            page.get_by_role("button", name="Объединить посты", exact=True).click()
+            page.locator(".hitem").filter(has_text="Объединено: 2").locator("input[type=checkbox]").check()
+            page.get_by_role("button", name="Разъединить", exact=True).click()
+            page.wait_for_function("count=>CP.S.historyPage.total===count", arg=initial)
+        finally:
+            if atoms:
+                self.api("cal_split", atoms=atoms)
+            page.close()
+
+    def test_telegram_editor_sends_only_selected_destination(self):
+        page = self.browser.new_page()
+        saved = []
+        def reply(route, value):
+            route.fulfill(content_type="application/json", body=json.dumps({"ok":True,"result":value}))
+        page.route("**/api/pub_stats", lambda r: reply(r, {"id":1,"dests":[{"key":"telegram:test","platform":"telegram","name":"Test channel","editable":True,"source_pub_id":1}]}))
+        page.route("**/api/post_edit_prepare", lambda r: reply(r, {"pub_id":1,"key":"telegram:test","kind":"caption","text":"Old caption","exact":True,"revision":"revision"}))
+        def save(route):
+            saved.append(route.request.post_data_json)
+            reply(route, {})
+        page.route("**/api/post_edit_apply", save)
+        try:
+            page.goto(self.base, wait_until="networkidle")
+            page.evaluate("async()=>{CP.S.view='history';await Pub.load('history');await Pub.openDrawer('pub:1')}")
+            page.get_by_role("button", name="Редактировать в Telegram", exact=True).click()
+            page.locator("#tg-edit-text").fill("Updated caption")
+            page.get_by_role("button", name="Сохранить в Telegram", exact=True).click()
+            page.wait_for_function("()=>CP.S.tgEdit===null")
+            self.assertEqual(saved, [{"pub_id":1,"key":"telegram:test","text":"Updated caption","revision":"revision"}])
+        finally:
+            page.close()
+
+    def test_missing_publication_dependency_shows_original_error_without_error_loop(self):
+        page = self.browser.new_page()
+        try:
+            page.route("**/static/post-state.js", lambda route: route.abort())
+            page.goto(self.base)
+            panel = page.get_by_role("alert")
+            panel.wait_for()
+            self.assertIn("PostState", panel.inner_text())
+            self.assertIn("/static/post-state.js", panel.inner_text())
+            self.assertIn("Pub", panel.inner_text())
+            self.assertEqual(page.locator("#acts").inner_text(), "")
+            self.assertEqual(page.get_by_role("button", name="Перезагрузить интерфейс").count(), 1)
+        finally:
+            page.close()
+
     def test_editor_history_queue_settings_and_preservation(self):
         buffer = io.BytesIO()
         Image.new('RGB', (80, 60), '#356ca1').save(buffer, format='PNG')

@@ -26,7 +26,8 @@ class RedditStatsLinks(unittest.TestCase):
         row = {'id':1, 'title':'', 'created':'2026-01-01', 'rating':'sfw', 'files':'[]', 'dests':json.dumps(dests)}
         with patch.object(post_stats, '_pubs', return_value=[row]), patch.object(post_stats.db, 'query', return_value=[]), \
              patch.object(post_stats.M, 'growth_curve', return_value=[]), \
-             patch('app.publish.settings.module_on', return_value=False):
+             patch('app.publish.settings.module_on', return_value=False), \
+             patch('app.insights.calendar.publication_groups', return_value={}):
             result = post_stats.for_publication(1)['dests']
         self.assertEqual(result[0]['stats_url'], 'https://www.reddit.com/poststats/abc123/')
         self.assertEqual(result[1]['stats_url'], 'https://www.reddit.com/poststats/xyz456/')

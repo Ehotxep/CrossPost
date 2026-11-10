@@ -215,6 +215,18 @@ def reddit_stats_url(link: str) -> str:
 
 
 def for_publication(pub_id: int) -> dict:
+    from app.insights.calendar import publication_groups
+    ids = publication_groups().get(pub_id, [pub_id])
+    result = _for_single_publication(pub_id)
+    result["merge_ids"] = ids
+    result["dests"] = []
+    for pid in ids:
+        part = _for_single_publication(pid)
+        result["dests"].extend(dict(dest, source_pub_id=pid) for dest in part.get("dests", []))
+    return result
+
+
+def _for_single_publication(pub_id: int) -> dict:
     rows = _pubs(pub_id=pub_id)
     if not rows:
         raise ValueError("Публикация не найдена")
@@ -225,6 +237,7 @@ def for_publication(pub_id: int) -> dict:
     for d in json.loads(pub["dests"] or "[]"):
         item = {"key": d.get("key"), "name": d.get("name"), "platform": d.get("platform"), "state": d.get("state"),
                 "link": d.get("link") or ""}
+        item["editable"] = d.get("platform") == "telegram" and d.get("key") != "telegram:group" and bool(d.get("chat_id") and d.get("message_ids"))
         if d.get("platform") == "reddit" and d.get("state") == "done":
             item["stats_url"] = reddit_stats_url(d.get("link"))
         from app.publish import settings as _PS
@@ -311,6 +324,14 @@ def summary(pub_ids: list[int]) -> dict:
                             "fresh": st["age_h"] < 168}
         if best:
             out[str(pid)] = best
+    from app.insights.calendar import publication_groups
+    mapping = publication_groups()
+    original = dict(out)
+    for pid, ids in mapping.items():
+        available = [original[str(i)] for i in ids if str(i) in original]
+        if available:
+            best = max(available, key=lambda item: item.get("index") or 0)
+            out[str(pid)] = dict(best, merge_ids=ids)
     return out
 
 

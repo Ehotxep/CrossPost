@@ -150,7 +150,10 @@
   }
 
   /* Рост каналов: несколько линий по месяцам (подписи «ММ.ГГ»), общая ось, подсказка по месяцу */
+  let lastLineData = "";
   function lineChart(el, series) {
+    const signature = JSON.stringify(series), changed = signature !== lastLineData;
+    lastLineData = signature;
     const key = (m) => m.slice(3) + m.slice(0, 2);
     const months = [...new Set(series.flatMap((s) => s.points.map((p) => p.m)))].sort((a, b) => key(a) < key(b) ? -1 : 1);
     if (months.length < 2) { el.innerHTML = `<p class="muted small">Пока мало данных для графика.</p>`; return; }
@@ -185,6 +188,12 @@
     s += `<rect class="hit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent"/>`;
     el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Медиана просмотров по месяцам">${s}</svg>`;
     const svg = el.querySelector("svg"), hx = svg.querySelector(".hx");
+    if(changed&&!matchMedia("(prefers-reduced-motion: reduce)").matches){
+      svg.querySelectorAll('path[fill="none"]').forEach(path=>{
+        const length=path.getTotalLength();
+        if(length)path.animate([{strokeDasharray:`${length} ${length}`,strokeDashoffset:length},{strokeDasharray:`${length} ${length}`,strokeDashoffset:0}],{duration:1600,easing:"linear"});
+      });
+    }
     const maps = series.map((sr) => Object.fromEntries(sr.points.map((p) => [p.m, p.v])));
     svg.querySelector(".hit").addEventListener("mousemove", (e) => {
       const r = svg.getBoundingClientRect();

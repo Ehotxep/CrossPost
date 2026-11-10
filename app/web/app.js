@@ -1,5 +1,25 @@
 /* Интерфейс Crosspost. Без сборки и фреймворков: состояние → HTML. */
 (function () {
+  const missing = ["Charts", "PostState", "Pub", "SetupGuide", "BrowserTargets", "SettingsAutosave"].filter(name => !window[name]);
+  if (missing.length) {
+    const panel = document.createElement("section");
+    panel.className = "card";
+    panel.setAttribute("role", "alert");
+    const heading = document.createElement("h1");
+    heading.textContent = "Не удалось загрузить интерфейс";
+    const detail = document.createElement("pre");
+    detail.style.whiteSpace = "pre-wrap";
+    detail.textContent = "Модули: " + missing.join(", ") + "\n" + (window.startupErrors || []).join("\n");
+    const help = document.createElement("p");
+    help.textContent = "Закройте CrossPost и запустите снова. Если ошибка повторяется, пришлите этот текст. При восстановлении приложения сохраните папку данных.";
+    const reload = document.createElement("button");
+    reload.className = "btn";
+    reload.textContent = "Перезагрузить интерфейс";
+    reload.onclick = () => location.reload();
+    panel.append(heading, detail, help, reload);
+    document.getElementById("main").replaceChildren(panel);
+    return;
+  }
   const { sparkline, forecastChart, nicheChart, esc } = window.Charts;
   const $main = document.getElementById("main");
 
@@ -777,8 +797,20 @@
   const mainDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
   Object.defineProperty($main, "innerHTML", { configurable: true, get() { return mainDesc.get.call(this); },
     set(v) { if (softMode) { softPending = v; return; } lastMain = v; mainDesc.set.call(this, v); } });
+  function destinationPositions() {
+    return new Map([...$main.querySelectorAll("[data-send-key]")].map(el=>[el.dataset.sendKey,el.getBoundingClientRect()]));
+  }
+  function animateDestinations(before) {
+    if(window.matchMedia("(prefers-reduced-motion: reduce)").matches)return;
+    $main.querySelectorAll("[data-send-key]").forEach(el=>{
+      const old=before.get(el.dataset.sendKey),now=el.getBoundingClientRect();
+      if(old&&(Math.abs(old.x-now.x)>1||Math.abs(old.y-now.y)>1))
+        el.animate([{transform:`translate(${old.x-now.x}px,${old.y-now.y}px)`},{transform:"translate(0,0)"}],{duration:550,easing:"cubic-bezier(.22,.8,.25,1)"});
+    });
+  }
   function softRender() {
     if (S.pstatOpen || S.viewFile || document.querySelector(".bigprev")) return;   // поверх страницы открыто окно — её не трогаем
+    const positions=destinationPositions();
     softMode = true; softPending = null;
     try { renderMain(); } finally { softMode = false; }
     if (softPending === null) return;
@@ -791,12 +823,13 @@
     }
     for (let i = bc.length; i < ac.length; i++) $main.removeChild(ac[i]);
     for (let i = ac.length; i < bc.length; i++) $main.appendChild(bc[i].cloneNode(true));
-    drawCharts();window.SettingsAutosave?.afterRender();
+    drawCharts();animateDestinations(positions);window.SettingsAutosave?.afterRender();
   }
   let lastRenderedView = null, viewTransition = null;
   function render() {
-    const previousView = lastRenderedView;
+    const previousView = lastRenderedView, positions=destinationPositions();
     renderMain();
+    animateDestinations(positions);
     if (S.view === "stats" && S.pstatOpen && window.Pub) $main.insertAdjacentHTML("beforeend", window.Pub.drawerHtml(S.pstatOpen));
     window.SettingsAutosave?.afterRender();
     if (S.info) {

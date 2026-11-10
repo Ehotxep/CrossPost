@@ -925,6 +925,8 @@ class Api:
     def pub_e6_site(self, site: str):
         """Куда загружать: e6ai или e621. Аккаунт, ключ и постоянные теги у каждого сайта свои."""
         from app.publish import settings as PS
+        if site in PS.BOORU_SITES and not PS.BOORU_SITES[site]["available"]:
+            raise ValueError(f'{PS.BOORU_SITES[site]["name"]}: в разработке, публикация пока недоступна')
         if site not in PS.BOORU:
             raise ValueError("Неизвестный сайт")
         PS.update("e6ai", {"site": site})
@@ -1593,6 +1595,14 @@ class Api:
             out["tagging"] = bool(ids) and self.tagger_run(ids) is not None
         return out
 
+    def post_edit_prepare(self, pub_id: int, key: str):
+        from app.publish.edit_post import prepare
+        return prepare(pub_id, key)
+
+    def post_edit_apply(self, pub_id: int, key: str, text: str, revision: str):
+        from app.publish.edit_post import apply
+        return apply(pub_id, key, text, revision)
+
     def pub_stats(self, pub_id: int):
         from app.insights import post_stats
         return post_stats.for_publication(int(pub_id))
@@ -1632,10 +1642,10 @@ class Api:
         return dict(r["data"], _cache={"at": r["at"], "stale": r["stale"], "refreshing": r["refreshing"]},
                     ext=ext_posts.state())
 
-    def cal_merge(self, atoms: list):
+    def cal_merge(self, atoms: list, force: bool = False):
         """Объединить выбранные работы календаря в одну (атомы — исходные посты)."""
         from app.insights import calendar
-        return calendar.merge(atoms)
+        return calendar.merge(atoms, force=force)
 
     def cal_split(self, atoms: list):
         """Разъединить работу календаря на отдельные посты."""

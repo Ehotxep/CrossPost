@@ -200,7 +200,14 @@ def load(raw: bool = False) -> dict:
     return cfg
 
 
-BOORU = {"e6ai": "https://blep.art", "e621": "https://e621.net"}
+# All entries share the e621ng adapter. Planned sites are visible in settings
+# but cannot become publication targets until their API has been verified.
+BOORU_SITES = {
+    "e6ai": {"name": "blep.art", "base": "https://blep.art", "available": True},
+    "e621": {"name": "e621", "base": "https://e621.net", "available": True},
+    "floofgens": {"name": "floofgens.net", "base": "https://floofgens.net", "available": False},
+}
+BOORU = {key: site["base"] for key, site in BOORU_SITES.items() if site["available"]}
 PER_SITE = ("username", "api_key", "constant_tags")   # своё у каждого сайта
 
 
@@ -259,6 +266,7 @@ def update(section: str, changes: dict) -> dict:
 def public(cfg: dict) -> dict:
     """Настройки для интерфейса: секреты не отдаём целиком."""
     out = copy.deepcopy(cfg)
+    out["booru_sites"] = copy.deepcopy(BOORU_SITES)
     tok = out["telegram"].get("bot_token") or ""
     out["telegram"]["bot_token"] = ""
     out["telegram"]["has_token"] = bool(tok)

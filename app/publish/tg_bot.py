@@ -85,8 +85,10 @@ def send_to_channel(token: str, cfg: dict, ch: dict, media: dict, text: str, tit
     spoiler = bool(mature and cfg.get("spoiler_nsfw", True))
     import html as _h, re as _re
     long_text = len(_h.unescape(_re.sub(r"<[^>]+>", "", caption))) > T.CAPTION_LIMIT   # считаем видимые символы
+    original_caption = caption[:4096] if long_text else caption
+    text_message = None
     if long_text:
-        call(token, "sendMessage", {"chat_id": chat, "text": caption[:4096], **({"parse_mode": parse_mode} if parse_mode else {})})
+        text_message = call(token, "sendMessage", {"chat_id": chat, "text": caption[:4096], **({"parse_mode": parse_mode} if parse_mode else {})})
         caption = ""
     try:
         if media["kind"] == "images":
@@ -115,7 +117,9 @@ def send_to_channel(token: str, cfg: dict, ch: dict, media: dict, text: str, tit
             raise PublicationUnknown("Текст уже отправлен, но медиа не опубликовано. Проверьте канал перед повтором.") from e
         raise
     first = msgs[0]
-    out = {"link": T._link(first), "chat_id": first["chat"]["id"], "message_ids": [m["message_id"] for m in msgs], "note": ""}
+    out = {"link": T._link(first), "chat_id": first["chat"]["id"], "message_ids": [m["message_id"] for m in msgs], "note": "",
+           "edit_message_id": (text_message or first)["message_id"], "edit_kind": "text" if text_message else "caption",
+           "edit_text": original_caption, "edit_bot_id": token.split(":")[0]}
     if on_posted:   # пост уже в канале — остальным местам можно не ждать оригиналов
         try:
             on_posted(dict(out))

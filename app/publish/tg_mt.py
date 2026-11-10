@@ -248,6 +248,18 @@ class MtBot:
         return self.run(go, 120, retry=True)
 
     # --- публикация ---
+    def edit_text(self, chat_id, message_id, text):
+        async def go():
+            from telethon.errors import MessageNotModifiedError
+            client = await self._client()
+            peer = await client.get_input_entity(self._peer_arg(str(chat_id)))
+            try:
+                await client.edit_message(peer, int(message_id), text, parse_mode="html")
+            except MessageNotModifiedError:
+                pass
+            return True
+        return self.run(go(), timeout=60)
+
     def send_to_channel(self, cfg: dict, ch: dict, media: dict, caption_html: str, mature: bool, log, progress=None, on_posted=None) -> dict:
         progress = progress or (lambda f: None)
         # сколько байт загружаем: сам пост (0…0.6 прогресса) и оригиналы (0.6…1)
@@ -276,8 +288,9 @@ class MtBot:
                 catcher = await self._start_catch(c, peer)   # ловим автокопию поста в обсуждении — до отправки
                 if catcher:
                     holder.append(catcher[1])
+            text_message = None
             if len(text) > 1024:   # длинный текст — отдельным сообщением перед медиа
-                await c.send_message(peer, caption_html, parse_mode="html")
+                text_message = await c.send_message(peer, caption_html, parse_mode="html")
                 text, entities = "", []
 
             async def media_of(data: bytes, name: str, **kw):
@@ -324,7 +337,9 @@ class MtBot:
             cid = f"-100{first.peer_id.channel_id}" if hasattr(first.peer_id, "channel_id") else str(ch["id"])
             uname = getattr(await c.get_entity(peer), "username", None)
             link = f"https://t.me/{uname}/{first.id}" if uname else f"https://t.me/c/{cid[4:]}/{first.id}"
-            out = {"link": link, "chat_id": cid, "message_ids": [m.id for m in msgs], "note": ""}
+            out = {"link": link, "chat_id": cid, "message_ids": [m.id for m in msgs], "note": "",
+                   "edit_message_id": (text_message or first).id, "edit_kind": "text" if text_message else "caption",
+                   "edit_text": caption_html, "edit_bot_id": self.token.split(":")[0]}
             if on_posted:   # пост уже в канале — остальным местам (пересылка в группу) можно не ждать оригиналов
                 try:
                     on_posted(dict(out))

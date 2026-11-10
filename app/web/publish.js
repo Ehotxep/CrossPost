@@ -511,7 +511,7 @@
     </div>
     ${trHtml()}
     <div class="field"><label>Английский вариант отправлять на ${C().hint("Выбор запоминается: для следующих постов площадки останутся такими же. Остальные получат основной текст. Если английский вариант пуст, любая площадка получит основной текст. Хэштеги берутся из настроек площадки, а подпись — английская из «Настройки» → «Подписи» (если её нет — основная).")}</label>
-      <div class="chips">${list.map(([p, n]) => `<button class="chip ${tl[p] === "en" ? "on" : ""}" style="--tc:var(--accent)" data-pa="tlang" data-p="${p}" aria-pressed="${tl[p] === "en"}">${C().pbadge(p, { sm: true })} ${esc(n)}</button>`).join("")}</div></div>`;
+      <div class="chips">${list.map(([p, n]) => `<button class="chip ${tl[p] === "en" ? "on" : ""}" style="--tc:var(--accent)" data-pa="tlang" data-p="${p}" aria-pressed="${tl[p] === "en"}">${C().pbadge(p, { sm: true })} ${esc(n)}${tl[p] === "both" ? " · RU + EN" : ""}</button>`).join("")}</div></div>`;
   }
   // ----- хэштеги для соцсетей -----
   function htHtml() {
@@ -918,11 +918,12 @@
       const state = ambiguous ? "uncertain" : ["queued", "running", "done", "error"].includes(x.state) ? x.state : "queued";
       const previous = previousSendStates.get(x.key);
       const justSent = state === "done" && (previous === "running" || previous === "queued");
+      const justFailed = state === "error" && (previous === "running" || previous === "queued");
       previousSendStates.set(x.key, state);
       const label = {queued:"в очереди", running:"отправляется", done:"опубликовано", error:"отказ", uncertain:"результат не подтверждён"}[state];
       const symbol = {done:"✓", error:"×", uncertain:"?"}[state] || "";
       const tip = `${x.name || x.platform || x.key}: ${label}`;
-      return `<span class="send-dest ${state}${justSent ? ' just-sent' : ''}" role="img" aria-label="${esc(tip)}" data-tip="${esc(tip)}" title="${esc(tip)}">${C().pbadge(x.platform || (x.key || '').split(':')[0])}${symbol ? `<span class="send-dest-mark" aria-hidden="true">${symbol}</span>` : ''}</span>`;
+      return `<span data-send-key="${esc(x.key)}" class="send-dest ${state}${justSent ? ' just-sent' : ''}${justFailed ? ' just-failed' : ''}" role="img" aria-label="${esc(tip)}" data-tip="${esc(tip)}" title="${esc(tip)}">${C().pbadge(x.platform || (x.key || '').split(':')[0])}${symbol ? `<span class="send-dest-mark" aria-hidden="true">${symbol}</span>` : ''}</span>`;
     };
     const row = (x) => {
       const [ic, lbl] = (x.state === "error" && x.outcome !== "not_sent" ? ["?", "возможно, опубликовано"] : STATE_ICON[x.state]) || ["?", x.state];
@@ -939,8 +940,8 @@
     };
     return `<div class="head"><div><h1 translate="no">${esc(st.title || "Публикация")}</h1>
         <p class="muted">${ratingPill(st.rating)} ${running ? "Публикуется…" : "Готово"} · ${ok} из ${st.dests.length} ${bad ? `· <span class="err">ошибок: ${bad}</span>` : ""}</p></div></div>
-      ${running ? `<div class="send-overall"><div class="progress progress-active" role="progressbar" aria-label="Публикация" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct(job.progress)}"><div style="width:${pct(job.progress)}%"></div></div><span class="send-flight" style="left:${pct(job.progress)}%" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M21 3 3 10.5l7.2 2.4L13 20l8-17ZM10.2 12.9 21 3" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span></div>` : ""}
-      <div class="send-dests" aria-label="Состояние площадок">${st.dests.map(indicator).join("")}</div>
+      ${running ? `<div class="send-overall"><div class="progress progress-active" role="progressbar" aria-label="Публикация" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct(job.progress)}"><div style="width:${pct(job.progress)}%"></div></div><span class="send-flight" style="left:${pct(job.progress)}%" aria-hidden="true"><svg viewBox="0 0 32 32" width="30" height="30" focusable="false"><path d="M3 12 29 3 20 29 13 19Z" fill="var(--card)" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m3 12 10 7L29 3Z" fill="currentColor" fill-opacity=".24"/><path d="m13 19 7 10L29 3Z" fill="currentColor" fill-opacity=".55"/><path d="M29 3 13 19 10 26l7-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>` : ""}
+      <div class="send-dests" aria-label="Состояние площадок">${st.dests.slice().sort((a,b)=>Number(b.state==="done"&&!/возможно|скорее всего|не удалось/i.test(b.note||""))-Number(a.state==="done"&&!/возможно|скорее всего|не удалось/i.test(a.note||""))).map(indicator).join("")}</div>
       ${running ? `<p><button class="btn small" data-pa="job-cancel" data-key="publish" ${job.cancel ? "disabled" : ""}>${job.cancel ? "Отменяю…" : "Отменить"}</button> <span class="muted small">Уже вышедшие посты останутся — отменится то, что ещё не отправлено.</span></p>` : ""}
       <section class="card" style="max-width:900px">${st.dests.map(row).join("")}
         ${st.skipped && st.skipped.length ? `<details class="more"><summary>Пропущено: ${st.skipped.length}</summary><div class="dlist">${st.skipped.map((x) => `<div class="small"><b translate="no">${esc(x.name)}</b> — <span class="muted">${esc(x.reason)}</span></div>`).join("")}</div></details>` : ""}
@@ -1090,8 +1091,12 @@
   // все работы месяца по ключу — для карточки при наведении и шторки
   function calItems() {
     const c = (S().cal || {})[S().calYm];
-    const out = {};
-    if (c && c.days) Object.values(c.days).flat().forEach((it) => { out[it.key] = it; });
+    const out = Object.assign({}, S().mergeItems || {});
+    Object.values(S().cal || {}).forEach(month => Object.values(month.days || {}).flat().forEach(it => { out[it.key] = it; }));
+    (S().hist || []).forEach(row => {
+      const key=row.work?.key||"u"+row.id;
+      out[key]=row.work||{key,atoms:row.atoms||["u"+row.id]};
+    });
     return out;
   }
   const PLAT = { telegram: ["TG", "Telegram"], vk: ["ВК", "ВКонтакте"], bsky: ["Bs", "Bluesky"], e6ai: ["e6", "e6ai"], e621: ["621", "e621"], da: ["DA", "DeviantArt"] };
@@ -1107,9 +1112,10 @@
     const s = S(), sel = s.calSel || [];
     if (!s.calSelMode && !sel.length) return "";
     const items = calItems();
-    const multi = sel.length === 1 && items[sel[0]] && (items[sel[0]].atoms || []).length > 1;
+    const multi = sel.length === 1 && items[sel[0]] && (items[sel[0]].parts || []).length > 1;
     return `<div class="selbar"><span>${sel.length ? `Выбрано: ${sel.length}` : "Нажимайте на работы, чтобы выбрать"}</span><span class="spacer"></span>
-      <button class="btn small" data-pa="cal-merge" ${sel.length < 2 ? "disabled" : ""}>Объединить</button>
+      <button class="btn small" data-pa="cal-merge" ${sel.length < 2 ? "disabled" : ""}>Объединить выбранные</button>
+      <button class="btn small ghost" data-pa="cal-force-merge" ${sel.length < 2 ? "disabled" : ""}>Принудительно объединить</button>
       <button class="btn small ghost" data-pa="cal-split" ${multi ? "" : "disabled"}>Разъединить</button>
       <button class="btn small ghost" data-pa="cal-sel-off">Готово</button></div>`;
   }
@@ -1245,12 +1251,12 @@
     const previous=s.histMode||C().store.get('histMode','calendar');
     const mode=s.histMode=['published','list'].includes(previous)?'published':'calendar';
     const nSched=(s.sched||[]).filter(r=>['pending','running','missed','editing','queued','failed'].includes(r.state)).length;
-    let h=`<div class="toolbar"><h1>Публикации</h1><span class="spacer"></span><button class="btn small ${s.queueOpen?'on':''}" data-pa="history-queue" aria-expanded="${!!s.queueOpen}" aria-controls="history-queue">Очередь${nSched?' · '+nSched:''}</button><div class="seg" role="tablist" aria-label="Вид публикаций">${[['calendar','history.calendar'],['published','history.list']].map(([key,label])=>`<button role="tab" aria-selected="${mode===key}" class="${mode===key?'on':''}" data-pa="history-tab" data-tab="${key}">${window.I18N.key(label)}</button>`).join('')}</div></div>`;
+    let h=`<div class="toolbar"><h1>Публикации</h1><button class="btn ${s.calSelMode ? "on" : ""}" data-pa="cal-sel" aria-pressed="${!!s.calSelMode}">Объединить посты</button><span class="spacer"></span><button class="btn small ${s.queueOpen?'on':''}" data-pa="history-queue" aria-expanded="${!!s.queueOpen}" aria-controls="history-queue">Очередь${nSched?' · '+nSched:''}</button><div class="seg" role="tablist" aria-label="Вид публикаций">${[['calendar','history.calendar'],['published','history.list']].map(([key,label])=>`<button role="tab" aria-selected="${mode===key}" class="${mode===key?'on':''}" data-pa="history-tab" data-tab="${key}">${window.I18N.key(label)}</button>`).join('')}</div></div>`;
     h+=`<div id="history-queue" ${s.queueOpen?'':'hidden'}>${s.queueOpen?`<section class="card"><div class="head"><h2>Очередь</h2><button class="btn small ghost" data-pa="history-queue">Свернуть очередь</button></div>${workerHtml()}${schedHtml()}${pipelineHtml()}${nSched?'':'<p class="muted">Очередь пуста. Подготовьте пост и выберите время публикации.</p>'}</section>`:''}</div>`;
     if(mode==='calendar'){
       h+=calendarHtml()+dayListHtml();
     }else{
-      h+=historySearchHtml();
+      h+=selBarHtml()+historySearchHtml();
       h+=`<div class="toolbar">${C().seg('hf',[['all','Все'],['hits','Хиты на странице']],s.hf==='hits'?'hits':'all')}<span class="spacer"></span><select class="sm" id="hsort" aria-label="Сортировка"><option value="date">Сначала новые</option><option value="index" ${s.hsort==='index'?'selected':''}>По индексу на странице</option></select></div>`;
       if (!rows) { C().$main.innerHTML = h + `<p class="muted">Загрузка…</p>`; return; }
       if (!rows.length) {
@@ -1259,15 +1265,17 @@
       }
       const sum = s.histSum || {};
       let list = rows.slice();
-      if (s.hf === "hits") list = list.filter((r) => (sum[String(r.id)] || {}).index >= C().LV().hit);
-      if (s.hsort === "index") list.sort((a, b) => ((sum[String(b.id)] || {}).index || 0) - ((sum[String(a.id)] || {}).index || 0));
+      if (s.hf === "hits") list = list.filter((r) => (r.work?.index ?? (sum[String(r.id)] || {}).index) >= C().LV().hit);
+      if (s.hsort === "index") list.sort((a, b) => (b.work?.index ?? (sum[String(b.id)] || {}).index ?? 0) - (a.work?.index ?? (sum[String(a.id)] || {}).index ?? 0));
       h += list.length ? `<div class="hlist">${list.map((r) => {
         const title = r.title || (r.text || "").split("\n")[0].slice(0, 80) || "Без названия";
-        const dt = new Date(r.created), x = sum[String(r.id)] || {};
-        return `<div class="hitem ${x.index >= C().LV().super ? "lead" : ""}" role="button" tabindex="0" data-pa="pstat" data-id="${r.id}" data-user-attrs="aria-label" aria-label="Статистика поста ${esc(title)}">
-          <span class="hthumb">${pubThumb(r)}${C().badges({ kind: pubKind(r), n: (r.files || []).length, rank: x.rank, scope: "за месяц", index: x.index, est: x.fresh, sm: true })}</span>
-          <div class="ht"><b translate="no">${esc(title)}</b><span>${dt.toLocaleDateString(LOC, { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
-          ${destBadges(r.dests)}${metricsHtml(r)}<span class="chev">${C().ICON.chev}</span></div>`;
+        const workKey=r.work?.key||"u"+r.id;
+        const dt = new Date(r.created), x = sum[String(r.id)] || {index:r.work?.index};
+        return `<div class="hitem ${x.index >= C().LV().super ? "lead" : ""}" role="button" tabindex="0" ${r.work ? `data-cw="${esc(workKey)}"` : `data-pa="pstat" data-id="${r.id}"`} data-user-attrs="aria-label" aria-label="Статистика поста ${esc(title)}">
+          ${s.calSelMode ? `<input type="checkbox" data-history-select="${esc(workKey)}" aria-label="Выбрать ${esc(title)}" ${(s.calSel||[]).includes(workKey)?"checked":""}>` : ""}
+          <span class="hthumb">${r.preview?`<img src="/mthumb/${encodeURIComponent(r.preview)}?t=${tok()}" alt="">`:pubThumb(r)}${C().badges({ kind: pubKind(r), n: (r.files || []).length, rank: x.rank, scope: "за месяц", index: x.index, est: x.fresh, sm: true })}</span>
+          <div class="ht"><b translate="no">${esc(title)}</b>${r.work?.parts?.length>1?`<span class="pill">Объединено: ${r.work.parts.length}</span>`:""}<span>${dt.toLocaleDateString(LOC, { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
+          ${r.dests.length?destBadges(r.dests):`<span class="small">${esc((r.work?.channels||[]).join(", "))}</span>`}${r.work&&(r.work.views!=null||r.work.parts?.length>1)?`<span class="small">${r.work.parts.length} публикаций · ${r.work.views==null?"нет замеров":C().num(r.work.views)+" просмотров суммарно"}</span>`:metricsHtml(r)}<span class="chev">${C().ICON.chev}</span></div>`;
       }).join("")}</div>` : `<p class="muted">Хитов пока нет — здесь будут посты лучше 90% постов канала (сейчас это ${String(C().LV().hit.toFixed(2)).replace(".", DEC)} к норме и выше).</p>`;
     }
     if (s.pubErr?.features) h += C().problemHtml(s.pubErr.features);
@@ -1284,6 +1292,7 @@
       img = it.preview ? `<img src="/mthumb/${encodeURIComponent(it.preview)}?t=${tok()}" alt="">` : `<span class="hthumb">${phHtml(it)}</span>`;
       big = it.preview ? `/media/${encodeURIComponent(it.preview)}?t=${tok()}` : "";
       sub = it.day ? `${it.day.slice(8)}.${it.day.slice(5, 7)}.${it.day.slice(0, 4)} ${it.time}` : "";
+      badges = (it.pub_ids||[]).map(pid=>`<button class="btn small" data-pa="pstat" data-id="${pid}">Публикация #${pid} · статистика и редактирование</button>`).join("");
     } else if (kind === "pub") {
       const r = (s.hist || []).find((x) => x.id === id);
       const d = (s.pstat || {})[key];
@@ -1483,11 +1492,22 @@
       if (v >= L.hit || (pc != null && pc >= 0.9)) h += `<div class="banner-hit ${v >= L.super ? "super" : ""}">${C().ICON.trophy}<span><b>${v >= L.super ? "Супер-хит" : v >= L.hit ? "Хит канала" : "Сильный пост"}</b>${pc != null ? ` — входит в топ-${Math.max(1, Math.round((1 - pc) * 100))}% публикаций канала` : ""}${top.index ? "" : ", пока по оценке первых часов"}</span>${mk(v, !top.index, "big")}</div>`;
       else if (v < 0.77) h += `<div class="banner-hit low"><span>Пост идёт слабее обычного для канала${pc != null ? ` — лучше ${Math.round(pc * 100)}% публикаций` : ""}</span>${mk(v, !top.index, "big")}</div>`;
     }
-    const shown = d.dests.filter((x) => x.stats || x.e6ai || x.nums || x.stats_url || !x.why);   // ссылка на статистику доступна и без автоматического сбора
+    const shown = d.dests.filter((x) => x.editable || x.stats || x.e6ai || x.nums || x.stats_url || !x.why);   // ссылка на статистику доступна и без автоматического сбора
     if (!shown.length) h += `<p class="muted small">Площадки этого поста не отдают цифр — смотреть их можно только на самой площадке.</p>`;
     for (const x of shown) {
       const plat = x.platform || (x.key || "").split(":")[0];
       h += `<div class="pdest"><div class="pdhead">${C().pbadge(plat)}<b translate="no">${esc(x.name)}</b>${x.link && /^https?:/.test(x.link) ? `<a href="#" data-open="${esc(x.link)}" class="small">открыть</a>` : ""}${x.stats_url ? `<a href="#" data-open="${esc(x.stats_url)}" class="small">Статистика Reddit</a>` : ""}</div>`;
+      if(x.editable) h+=`<button class="btn small" data-pa="tg-edit" data-id="${x.source_pub_id||d.id}" data-key="${esc(x.key)}">Редактировать в Telegram</button>`;
+      const edit=s.tgEdit;
+      if(edit&&edit.pub_id===(x.source_pub_id||d.id)&&edit.key===x.key){
+        h+=`<div class="card"><h3>Изменить ${edit.kind==="text"?"текст":"подпись"} в Telegram</h3>
+          ${!edit.exact?'<p class="warnline">Старый пост: точная отправленная подпись не сохранена. Ниже текст из истории; проверьте подпись и ссылки перед заменой. Отдельное длинное сообщение этим действием не меняется.</p>':""}
+          <label for="tg-edit-text">Текст (поддерживается HTML Telegram)</label><textarea id="tg-edit-text" rows="7" ${edit.busy?"disabled":""}>${esc(edit.text)}</textarea>
+          <p class="muted small">Изменится только это сообщение в канале. Изображения и остальные площадки сохранятся.</p>
+          ${edit.error?`<p class="err">${esc(edit.error)}</p>`:""}
+          <button class="btn primary" data-pa="tg-edit-save" ${edit.busy?"disabled":""}>${edit.busy?"Сохраняю…":"Сохранить в Telegram"}</button>
+          <button class="btn" data-pa="tg-edit-cancel" ${edit.busy?"disabled":""}>Отмена</button></div>`;
+      }
       if (x.stats && x.stats.ok) {
         const st = x.stats, fc = x.forecast;
         if (x.verdict) h += `<p class="verdict">${esc(x.verdict)}</p>`;
@@ -1587,8 +1607,8 @@
     const ok = (k) => s.pubOk && s.pubOk[k] ? `<p class="ok small">${esc(s.pubOk[k])}</p>` : "";
     const busy = (k) => s.pubBusy === k ? "disabled" : "";
     const hint = C().hint, ICON = C().ICON;
-    const segP = (attr, opts, cur) => `<div class="seg" role="radiogroup">${opts.map(([k, l]) =>
-      `<button role="radio" aria-checked="${k === cur}" class="${k === cur ? "on" : ""}" ${attr} data-val="${k}">${l}</button>`).join("")}</div>`;
+    const segP = (attr, opts, cur) => `<div class="seg" role="radiogroup">${opts.map(([k, l, disabled]) =>
+      `<button ${disabled ? "disabled" : ""} role="radio" aria-checked="${k === cur}" class="${k === cur ? "on" : ""}" ${attr} data-val="${k}">${l}</button>`).join("")}</div>`;
     const sel = (attr, opts, cur, label) => `<select class="sm" ${attr} aria-label="${esc(label)}">${opts.map(([k, l]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${l}</option>`).join("")}</select>`;
     const tgl = (attr, on, label, tip) => `<label class="tgl"><input type="checkbox" ${attr} ${on ? "checked" : ""}><span>${label}${tip ? " " + hint(tip) : ""}</span></label>`;
     const badge = (cls, text) => `<span class="badge ${cls}">${text}</span>`;
@@ -1735,7 +1755,8 @@
           ${e6.enabled && e6.has_key ? badge("ok", "✓ " + esc(e6.username)) : badge("off", "не подключено")}</div>${err("e6")}${ok("e6")}
         ${BN() === "e6ai" && !e6.has_key ? `<div class="callout warn">e6ai закрылся. Перед отправкой на blep.art укажите новый API-ключ blep.art и нажмите «Проверить и сохранить». Старый ключ не используется.</div>` : ""}
         <div class="row" style="align-items:center;gap:12px"><span class="small">Куда загружать ${hint("Формат загрузки blep.art и e621 похож, поэтому форма тегов, теггер, проверка, правки модераторов и цифры работают одинаково. Аккаунт, API-ключ, постоянные теги и база тегов у каждого сайта свои — при переключении подставляются сами.")}</span>
-          ${segP(`data-pa="e6-site"`, [["e6ai", "blep.art"], ["e621", "e621"]], BN())}</div>
+          ${segP(`data-pa="e6-site"`, Object.entries(p.booru_sites || {}).map(([key, site]) => [key, site.name + (site.available ? "" : " · в разработке"), !site.available]), BN())}</div>
+        <p class="muted small">floofgens.net — предварительное название будущей площадки на базе e621ng. Публикация и подключение появятся после проверки API; потребуется отдельный ключ этого сайта.</p>
         ${BN() === "e621" ? `<div class="callout warn"><p><b>На e621 ИИ-арт запрещён правилами сайта</b> (кроме узких исключений вроде фонов) — для ИИ-работ есть blep.art. Такие загрузки удалят, а аккаунт могут заблокировать. Загружайте на e621 только работы, которые подходят под его правила. Проверьте и постоянные теги: <code>ai_generated</code> на e621 сразу пометит работу как ИИ.</p></div>` : ""}
         <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 200px"><label for="e6user">Имя пользователя на ${BN() === "e6ai" ? "blep.art" : BN()}</label><input id="e6user" value="${esc(e6.username)}" placeholder="AnotherNeko"></div>
           <div class="field" style="flex:2 1 260px"><label for="e6key">API-ключ ${hint("На " + (BN() === "e6ai" ? "blep.art" : BN()) + ": Account → Manage API Access.")}</label><input id="e6key" type="password" placeholder="${e6.has_key ? "сохранён" : ""}"></div>
@@ -1885,7 +1906,9 @@
     if (sec === "bluesky") h += blueskyHtml(err, ok, busy);
     if (sec === "deviantart") h += daHtml(err, ok, busy);
     if (LANGP.some(([key])=>key===sec)) {
-      h += `<section class="card setc"><h2>Текст публикации</h2>${tgl(`data-platform-texts-setting="${sec}"`, p.platform_texts_enabled?.[sec]===true, "Отдельные заголовок и текст для этой площадки")}
+      h += `<section class="card setc"><h2>Текст публикации</h2><div class="field"><label>Язык публикации</label><div class="seg" role="group" aria-label="Язык публикации">
+          ${[["main","Русский"],["both","Оба"],["en","Английский"]].map(([value,label])=>`<button type="button" data-platform-language="${sec}" data-language="${value}" class="${(p.text_lang?.[sec]||"main")===value?"on":""}" aria-pressed="${(p.text_lang?.[sec]||"main")===value}">${label}</button>`).join("")}</div></div>
+        <p class="muted small">Для двух языков включите функцию перевода и заполните английский вариант поста. Заголовки объединяются через « / », описания — через пустую строку. Подпись и хэштеги добавляются один раз. Отдельный текст площадки заменяет итоговый текст. Пустой перевод не добавляется.</p>${tgl(`data-platform-texts-setting="${sec}"`, p.platform_texts_enabled?.[sec]===true, "Отдельные заголовок и текст для этой площадки")}
         <p class="muted small">Добавляет поля в редактор поста. Если выключено, используется основной или английский вариант, в том числе для постов в очереди. Сохранённые отдельные тексты не удаляются.</p></section>`;
     }
     return h;
@@ -2054,7 +2077,31 @@
   }
 
   // ---------------- события ----------------
+  document.addEventListener("input", e => {if(e.target.id==="tg-edit-text"&&S().tgEdit)S().tgEdit.text=e.target.value;});
   async function onClick(e) {
+    const pick=e.target.closest("[data-history-select]");
+    if(pick){
+      e.stopPropagation();
+      const s=S(),key=pick.dataset.historySelect,it=calItems()[key],sel=s.calSel||(s.calSel=[]),i=sel.indexOf(key);
+      if(i>=0)sel.splice(i,1);else sel.push(key);
+      (s.mergeItems||(s.mergeItems={}))[key]=it;
+      C().render();return true;
+    }
+    const language = e.target.closest("button[data-platform-language]");
+    if (language) {
+      const s = S(), platform = language.dataset.platformLanguage, value = language.dataset.language;
+      if ((s.pub.text_lang?.[platform] || "main") === value) return true;
+      const buttons = language.parentElement.querySelectorAll("button");
+      buttons.forEach(button => { button.disabled = true; });
+      try {
+        s.pub = await C().api("pub_save", {section: "text_lang", changes: {[platform]: value}});
+        s.reviewKey = null;
+        await refreshPlan();
+      } catch (err) { alert(err.message); }
+      finally { buttons.forEach(button => { button.disabled = false; }); }
+      C().render();
+      return true;
+    }
     const ws = e.target.closest('[data-set="when"]');
     if (ws) {
       const s0 = S();
@@ -2088,9 +2135,11 @@
       if (it && (s1.calSelMode || e.ctrlKey || e.metaKey || e.shiftKey)) {   // выбор работ для объединения
         const sel = s1.calSel || (s1.calSel = []), i = sel.indexOf(it.key);
         if (i >= 0) sel.splice(i, 1); else sel.push(it.key);
+        (s1.mergeItems || (s1.mergeItems = {}))[it.key] = it;
         C().render(); return true;
       }
-      if (it && (it.pub_id || it.post_id)) await openDrawer(it.pub_id ? "pub:" + it.pub_id : "post:" + it.post_id);
+      if (it && it.parts?.length > 1) await openDrawer("cal:" + it.key);
+      else if (it && (it.pub_id || it.post_id)) await openDrawer(it.pub_id ? "pub:" + it.pub_id : "post:" + it.post_id);
       else if (it) await openDrawer("cal:" + it.key);
       return true;
     }
@@ -2384,12 +2433,29 @@
       case "cal-day-clear": s.calDay = null; C().render(); return true;
       case "cal-sel": s.calSelMode = !s.calSelMode; if (!s.calSelMode) s.calSel = []; C().render(); return true;
       case "cal-sel-off": s.calSelMode = false; s.calSel = []; C().render(); return true;
-      case "cal-merge": case "cal-split": {
+      case "tg-edit": {
+        try{s.tgEdit=await api("post_edit_prepare",{pub_id:+a.dataset.id,key:a.dataset.key});}
+        catch(err){alert(err.message);}C().render();return true;
+      }
+      case "tg-edit-cancel": s.tgEdit=null;C().render();return true;
+      case "tg-edit-save": {
+        const edit=s.tgEdit;if(!edit||edit.busy)return true;
+        edit.busy=true;edit.error="";C().render();
+        try {
+          await api("post_edit_apply",{pub_id:edit.pub_id,key:edit.key,text:edit.text,revision:edit.revision});
+          s.tgEdit=null;C().toast("Текст обновлён в Telegram","ok");
+        }catch(err){edit.error=err.message;}
+        finally{edit.busy=false;}
+        C().render();return true;
+      }
+      case "cal-merge": case "cal-force-merge": case "cal-split": {
         const items = calItems(), atoms = [...new Set((s.calSel || []).flatMap((k) => (items[k] || {}).atoms || []))];
         try {
-          await api(act === "cal-merge" ? "cal_merge" : "cal_split", { atoms });
-          s.calSel = []; s.calSelMode = false; s.cal = {};
-          await loadCalendar(); C().render();
+          const force=act==="cal-force-merge";
+          if(force&&!confirm("Объединить выбранные посты независимо от дат, площадок и похожести? Это изменит группировку истории и статистики. Исходные посты останутся на площадках; группу можно разъединить."))return true;
+          await api(act === "cal-split" ? "cal_split" : "cal_merge", act==="cal-split"?{atoms}:{atoms,force});
+          s.calSel = []; s.calSelMode = false; s.cal = {}; s.mergeItems={};s.pstat={};s.statsCalendar=null;
+          await loadHistoryPage(0); await loadCalendar(); C().render();
         } catch (err) { (C().toast ? C().toast(err.message, "err") : alert(err.message)); }
         return true;
       }

@@ -24,6 +24,22 @@ class BlepMigration(unittest.TestCase):
             self.assertEqual(get.call_args.kwargs['auth'], ('artist', 'new-key'))
             post_stats._e6_cache.clear()
 
+    def test_floofgens_placeholder_cannot_switch_active_account(self):
+        from app.api import Api
+        from app.publish import settings
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, CROSSPOST_DATA=folder):
+            settings.update('e6ai', {'blep_api_key': 'blep-secret', 'username': 'artist'})
+            public = settings.public(settings.load())
+            site = public['booru_sites']['floofgens']
+            self.assertEqual(site['base'], 'https://floofgens.net')
+            self.assertFalse(site['available'])
+            self.assertNotIn('floofgens', settings.BOORU)
+            with self.assertRaisesRegex(ValueError, 'в разработке'):
+                Api.__new__(Api).pub_e6_site('floofgens')
+            self.assertEqual(settings.booru_site(), 'e6ai')
+            self.assertEqual(settings.load()['e6ai']['api_key'], 'blep-secret')
+            self.assertNotIn('blep-secret', str(public))
+
     def test_old_key_never_used_for_blep_and_new_key_is_isolated(self):
         from app.publish import settings
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, CROSSPOST_DATA=folder):

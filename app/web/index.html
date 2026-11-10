@@ -30,6 +30,17 @@
 <div class="acts" id="acts" aria-live="polite"></div>
 <div id="tip" class="tip" hidden></div>
 <div id="hcard" class="hcard" hidden></div>
+<script>
+window.startupErrors = [];
+window.addEventListener("error", function (event) {
+  var target = event.target;
+  if (target && target.tagName === "SCRIPT") {
+    window.startupErrors.push("Не загружен файл: " + new URL(target.src).pathname);
+  } else if (event.message) {
+    window.startupErrors.push(event.message + " (" + (event.filename ? new URL(event.filename).pathname : "") + ":" + (event.lineno || 0) + ")");
+  }
+}, true);
+</script>
 <script src="/static/lang_en.js"></script>
 <script src="/static/i18n.js"></script>
 <script src="/static/charts.js"></script>
