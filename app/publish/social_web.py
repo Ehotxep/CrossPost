@@ -30,6 +30,13 @@ def _url(platform, community='FurAI'):
     return SITES[platform] + (f'/r/{community}/submit/' if platform == 'reddit' else '/compose/post' if platform == 'x' else '/post/add')
 
 
+
+def _open_form(page, target):
+    # Ads and third-party scripts can keep DOMContentLoaded pending even when
+    # the editor is usable. Wait for the document, then for concrete controls.
+    page.goto(target, wait_until='commit', timeout=20000)
+
+
 def _find(candidates, timeout=10):
     """Only a unique visible match is actionable; never click an arbitrary first item."""
     deadline = time.monotonic() + timeout
@@ -45,20 +52,21 @@ def _find(candidates, timeout=10):
 
 def _title(page):
     return _find([page.locator('textarea[name="title"], input[name="title"]'),
-                  page.get_by_role('textbox', name=re.compile(r'^(Title|Заголовок)\*?$', re.I))], timeout=2)
+                  page.get_by_role('textbox', name=re.compile(r'^(Title|Заголовок)\*?$', re.I))], timeout=10)
 
 
 def _joy_form(page):
-    return _find([page.locator('form').filter(has=page.locator('input[name="tags"], textarea[name="tags"], #post_tags'))], timeout=2)
+    return _find([page.locator('form').filter(has=page.locator('input[name="tags"], textarea[name="tags"], #post_tags'))], timeout=10)
 
 
 def _x_editor(page):
-    return _find([page.locator('[data-testid="tweetTextarea_0"][contenteditable="true"]')], timeout=2)
+    return _find([page.locator('[data-testid="tweetTextarea_0"][contenteditable="true"]')], timeout=10)
 
 
 def _x_scope(page):
     """Prefer the open composer dialog over the background timeline composer."""
     selector = '[data-testid="tweetTextarea_0"][contenteditable="true"]'
+    _find([page.get_by_role('dialog').locator(selector), page.locator(selector)])
     dialogs = page.get_by_role('dialog').filter(has=page.locator(selector)).filter(visible=True)
     if dialogs.count() > 1:
         raise NotPublishedError('Открыто несколько окон редактора X')
@@ -67,7 +75,7 @@ def _x_scope(page):
 
 def login(platform, report, timeout=600):
     with B.session(headless=False) as (ctx, page):
-        page.goto(_url(platform), wait_until='domcontentloaded')
+        _open_form(page, _url(platform))
         report(progress=.1, message='Войдите на сайт в окне браузера; откройте форму нового поста')
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -92,6 +100,8 @@ def login(platform, report, timeout=600):
 
 
 def _fill_body(page, scope, text, required=False):
+    if not text and not required:
+        return
     fields = [scope.locator('textarea[name="body"], textarea[name="text"], #post_text'),
               scope.locator('[contenteditable="true"][role="textbox"], [contenteditable="true"].ProseMirror')]
     if scope.locator('iframe.tox-edit-area__iframe').count() == 1:
@@ -106,12 +116,13 @@ def _reddit_labels(page, flair, nsfw):
     # Both controls belong to the same dialog. A missing required control stops the post.
     if not flair and not nsfw:
         return
+    already_nsfw = page.get_by_text('NSFW', exact=True).filter(visible=True).count() == 1
     _find([page.get_by_role('button', name=re.compile(r'^(Add flair(?: and tags)?|Добавить фл[еэ]йр.*)\*?$', re.I))]).click()
     dialog = _find([page.get_by_role('dialog')])
     label = flair or 'No flair'
     _find([dialog.get_by_role('radio', name=label, exact=True),
            dialog.get_by_text(label, exact=True)]).click()
-    if nsfw:
+    if nsfw and not already_nsfw:
         checkbox = _find([dialog.get_by_role('checkbox', name=re.compile(r'NSFW|Mature|18\+', re.I))])
         checkbox.set_checked(True)
     _find([dialog.get_by_role('button', name=re.compile(r'^(Apply|Save|Применить|Сохранить)$', re.I))]).click()
@@ -180,10 +191,11 @@ def x_dry(files, headless=False, progress=lambda n: None, log=lambda s: None):
     with B.session(headless=headless, wait=DRY_BROWSER_WAIT_SECONDS) as (ctx, page):
         try:
             log('открываю редактор X')
-            page.goto(_url('x'), wait_until='domcontentloaded')
+            _open_form(page, _url('x'))
             if urlparse(page.url).hostname != 'x.com':
                 raise NotPublishedError('X перенаправил на другой адрес — проверьте вход')
-            stage = 'заполнение текста'
+            stage = 'ожидание редактора X'
+            log('страница открыта; ожидаю редактор X')
             scope = _x_scope(page)
             editor = _x_editor(scope)
             existing = scope.locator('[data-testid="attachments"] img, [data-testid="tweetPhoto"] img')
@@ -240,9 +252,10 @@ def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=Fals
     with B.session(headless=headless, wait=DRY_BROWSER_WAIT_SECONDS if dry_run else 600) as (ctx, page):
         try:
             log('открываю форму публикации')
-            page.goto(target, wait_until='domcontentloaded')
+            _open_form(page, target)
             if not _site_host_ok(platform, page.url):
                 raise NotPublishedError('Сайт перенаправил на другой адрес — проверьте вход')
+            log('страница открыта; ожидаю поля формы')
             if platform == 'reddit':
                 stage = 'проверка сообщества'
                 if not re.match(rf'^/r/{re.escape(community)}/submit/?$', urlparse(page.url).path, re.I):
@@ -251,7 +264,7 @@ def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=Fals
                 image_tab = re.compile(r'^(Images(?:\s*(?:&|and)\s*Video)?|Изображения(?:\s*и\s*видео)?)$', re.I)
                 try:
                     _find([page.get_by_role('tab', name=image_tab), page.get_by_role('button', name=image_tab),
-                           page.get_by_role('link', name=image_tab)], timeout=2).click()
+                           page.get_by_role('link', name=image_tab)], timeout=10).click()
                     inline = False
                 except NotPublishedError:
                     inline = True

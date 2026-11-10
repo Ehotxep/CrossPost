@@ -793,10 +793,25 @@
     for (let i = ac.length; i < bc.length; i++) $main.appendChild(bc[i].cloneNode(true));
     drawCharts();window.SettingsAutosave?.afterRender();
   }
+  let lastRenderedView = null, viewTransition = null;
   function render() {
+    const previousView = lastRenderedView;
     renderMain();
     if (S.view === "stats" && S.pstatOpen && window.Pub) $main.insertAdjacentHTML("beforeend", window.Pub.drawerHtml(S.pstatOpen));
     window.SettingsAutosave?.afterRender();
+    if (S.info) {
+      lastRenderedView = S.view;
+      if (previousView && previousView !== S.view) {
+        if (viewTransition) viewTransition.cancel();
+        viewTransition = null;
+        if ($main.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          viewTransition = $main.animate(
+            [{opacity: .82, transform: 'translateY(7px)'}, {opacity: 1, transform: 'translateY(0)'}],
+            {duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)'}
+          );
+        }
+      }
+    }
   }
   function renderMain() {
     applyModules();

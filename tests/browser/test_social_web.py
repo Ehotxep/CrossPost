@@ -175,6 +175,26 @@ class SocialBrowser(unittest.TestCase):
                 self.assertEqual(page.evaluate('window.submits'), 0)
                 self.assertTrue(any('ожидаю подтверждение загрузки' in m for m in messages))
 
+
+    def test_open_form_waits_for_document_commit_with_bounded_timeout(self):
+        from unittest.mock import Mock
+        page = Mock()
+        W._open_form(page, W._url('reddit'))
+        page.goto.assert_called_once_with(W._url('reddit'), wait_until='commit', timeout=20000)
+
+    def test_x_editor_can_appear_after_document_navigation(self):
+        source = '<div id="mount"></div><script>setTimeout(()=>{document.getElementById("mount").innerHTML=' + __import__('json').dumps(X_FORM.replace(UPLOAD, '')) + ';' + UPLOAD.replace('<script>', '').replace('</script>', '') + '}, 2500)</script>'
+        with self.fixture('x', source) as page:
+            W.x_dry([self.image])
+            self.assertEqual(page.evaluate('window.submits'), 0)
+
+    def test_reddit_existing_nsfw_label_does_not_require_checkbox_in_flair_dialog(self):
+        source = '<span>NSFW</span>' + REDDIT.replace('<label><input type=checkbox id=nsfw>NSFW</label>', '')
+        with self.fixture('reddit', source) as page:
+            W.post('reddit', [self.image], 'Title', '', flair='Gay', nsfw=True, dry_run=True)
+            self.assertTrue(page.locator('[value=Gay]').is_checked())
+            self.assertEqual(page.evaluate('window.submits'), 0)
+
     def test_x_modal_ignores_background_composer(self):
         background = '''<div id="background"><div data-testid="tweetTextarea_0" contenteditable="true">Background draft</div>
           <input type="file" data-testid="fileInput"><button data-testid="tweetButtonInline">Post</button></div>'''

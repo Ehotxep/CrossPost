@@ -902,18 +902,35 @@
   }
 
   // ---------------- ход публикации ----------------
+  let progressIdentity = null;
+  let previousSendStates = new Map();
   function progressHtml() {
     const s = S(), st = s.pubState, job = s.pubJob;
+    const identity = st.pub_id != null ? `id:${st.pub_id}` : `started:${st.created || ''}`;
+    if (identity !== progressIdentity) { progressIdentity = identity; previousSendStates = new Map(); }
     const running = job && job.state === "running";
     const ok = st.dests.filter((x) => x.state === "done").length, bad = st.dests.filter((x) => x.state === "error").length;
     const uncertain = st.dests.filter((x) => x.state === "error" && x.outcome !== "not_sent").length;
+    const pct = value => Math.max(0, Math.min(100, Math.round((Number(value) || 0) * 100)));
+    const indicator = x => {
+      const ambiguous = x.state === "error" && x.outcome !== "not_sent" ||
+        x.state === "done" && /возможно|скорее всего|не удалось найти|не удалось.*ссылк/i.test(x.note || "");
+      const state = ambiguous ? "uncertain" : ["queued", "running", "done", "error"].includes(x.state) ? x.state : "queued";
+      const previous = previousSendStates.get(x.key);
+      const justSent = state === "done" && (previous === "running" || previous === "queued");
+      previousSendStates.set(x.key, state);
+      const label = {queued:"в очереди", running:"отправляется", done:"опубликовано", error:"отказ", uncertain:"результат не подтверждён"}[state];
+      const symbol = {done:"✓", error:"×", uncertain:"?"}[state] || "";
+      const tip = `${x.name || x.platform || x.key}: ${label}`;
+      return `<span class="send-dest ${state}${justSent ? ' just-sent' : ''}" role="img" aria-label="${esc(tip)}" data-tip="${esc(tip)}" title="${esc(tip)}">${C().pbadge(x.platform || (x.key || '').split(':')[0])}${symbol ? `<span class="send-dest-mark" aria-hidden="true">${symbol}</span>` : ''}</span>`;
+    };
     const row = (x) => {
       const [ic, lbl] = (x.state === "error" && x.outcome !== "not_sent" ? ["?", "возможно, опубликовано"] : STATE_ICON[x.state]) || ["?", x.state];
       const warn = x.note && /⚠/.test(x.note);
       return `<div class="prow ${x.state}"><span class="pic" title="${lbl}">${ic}</span>
         <div style="flex:1;min-width:0"><b translate="no">${esc(x.name)}</b><br>
           <span class="muted small">${esc((x.details || []).join(" · "))}</span>
-          ${x.state === "running" ? `<div class="progress thin"><div style="width:${Math.round((x.progress || 0) * 100)}%"></div></div>` : ""}
+          ${x.state === "running" ? `<div class="progress thin progress-active" role="progressbar" aria-label="${esc(x.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct(x.progress)}"><div style="width:${pct(x.progress)}%"></div></div>` : ""}
           ${x.state === "running" && x.message ? `<span class="small">${esc(x.message)} ${Math.round((x.progress || 0) * 100)}%</span>` : ""}
           ${x.state === "error" ? `<br><span class="err small">${x.outcome !== "not_sent" ? "Возможно, опубликовано. " : ""}${esc(x.message)}</span>` : ""}
           ${(() => { const m = /снимок экрана: ([\w.-]+\.png)/.exec((x.message || "") + " " + (x.note || "")); return m ? `<figure class="shot"><img src="/bdebug/${encodeURIComponent(m[1])}?t=${tok()}" alt="Снимок экрана"><figcaption class="muted small">Так выглядела страница в момент ошибки — пришлите этот снимок, если непонятно, что пошло не так.</figcaption></figure>` : ""; })()}
@@ -922,8 +939,9 @@
     };
     return `<div class="head"><div><h1 translate="no">${esc(st.title || "Публикация")}</h1>
         <p class="muted">${ratingPill(st.rating)} ${running ? "Публикуется…" : "Готово"} · ${ok} из ${st.dests.length} ${bad ? `· <span class="err">ошибок: ${bad}</span>` : ""}</p></div></div>
-      ${running ? `<div class="progress"><div style="width:${Math.round((job.progress || 0) * 100)}%"></div></div>
-        <p><button class="btn small" data-pa="job-cancel" data-key="publish" ${job.cancel ? "disabled" : ""}>${job.cancel ? "Отменяю…" : "Отменить"}</button> <span class="muted small">Уже вышедшие посты останутся — отменится то, что ещё не отправлено.</span></p>` : ""}
+      ${running ? `<div class="send-overall"><div class="progress progress-active" role="progressbar" aria-label="Публикация" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct(job.progress)}"><div style="width:${pct(job.progress)}%"></div></div><span class="send-flight" style="left:${pct(job.progress)}%" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M21 3 3 10.5l7.2 2.4L13 20l8-17ZM10.2 12.9 21 3" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span></div>` : ""}
+      <div class="send-dests" aria-label="Состояние площадок">${st.dests.map(indicator).join("")}</div>
+      ${running ? `<p><button class="btn small" data-pa="job-cancel" data-key="publish" ${job.cancel ? "disabled" : ""}>${job.cancel ? "Отменяю…" : "Отменить"}</button> <span class="muted small">Уже вышедшие посты останутся — отменится то, что ещё не отправлено.</span></p>` : ""}
       <section class="card" style="max-width:900px">${st.dests.map(row).join("")}
         ${st.skipped && st.skipped.length ? `<details class="more"><summary>Пропущено: ${st.skipped.length}</summary><div class="dlist">${st.skipped.map((x) => `<div class="small"><b translate="no">${esc(x.name)}</b> — <span class="muted">${esc(x.reason)}</span></div>`).join("")}</div></details>` : ""}
       </section>

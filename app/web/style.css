@@ -538,6 +538,20 @@ details.post-extra { margin-top: 12px; }
 .prow.done .pic { background: var(--good-soft); color: var(--good); }
 .prow.error .pic { background: var(--bad-soft); color: var(--bad); }
 .prow.running .pic { background: var(--accent-soft); color: var(--accent-ink); }
+.send-dests { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 10px 0 14px; }
+.send-dest { position: relative; display: inline-flex; padding: 3px; border-radius: 10px; }
+.send-dest.queued .pb { background: var(--card-3); color: var(--ink-3); }
+.send-dest.running { box-shadow: 0 0 0 2px var(--accent); }
+.send-dest.done .pb { background: var(--good); color: var(--bg); }
+.send-dest.error .pb { background: var(--bad); color: var(--bg); }
+.send-dest.uncertain .pb { background: var(--warn); color: var(--bg); }
+.send-dest-mark { position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--card); color: var(--ink); border: 1px solid currentColor;
+  display: grid; place-items: center; font-size: 10px; font-weight: 700; line-height: 1; }
+.send-overall { position: relative; padding-top: 15px; }
+.send-flight { position: absolute; top: 0; color: var(--accent); pointer-events: none;
+  transform: translateX(-50%); display: flex; }
+.send-flight svg { display: block; }
 .shot { margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .shot img { max-width: 100%; max-height: 460px; object-fit: contain; object-position: left top; border: 1px solid var(--line); border-radius: var(--r-md); }
 
@@ -1193,3 +1207,86 @@ main > div:empty, .platbody > div:empty, .postmain > div:empty, .postside > div:
 input[aria-invalid="true"] { border-color: var(--bad); }
 
 .autosave-legacy[hidden], .autosave-footer[hidden] { display: none; }
+
+/* Short feedback on deliberate actions; page refreshes do not animate cards. */
+@media (prefers-reduced-motion: no-preference) {
+  .btn, .icon-btn, #nav button, .pn, .seg button, button.chip, .drow {
+    transition: background-color .16s ease, border-color .16s ease, color .16s ease,
+      box-shadow .16s ease, transform .12s ease;
+  }
+  .btn:not(:disabled):active, .icon-btn:not(:disabled):active,
+  #nav button:not(:disabled):active, button.chip:not(:disabled):active {
+    transform: scale(.98);
+  }
+  .field input, .field textarea, .field select {
+    transition: border-color .16s ease, box-shadow .16s ease, background-color .16s ease;
+  }
+  .toast:not(.out) { animation: toast-enter .2s ease-out both; }
+  #updmodal .backdrop { animation: fadein .16s ease-out both; }
+  #updmodal .updbox { animation: update-dialog-enter .2s ease-out both; }
+  /* The highlight stays inside the filled portion; it never changes progress. */
+  .progress-active > div, .act.running .abar:not(.indet) > i { position: relative; overflow: hidden; }
+  .progress-active > div::after, .act.running .abar:not(.indet) > i::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.32) 50%, transparent 80%);
+    transform: translateX(-100%); animation: progress-glint 1.8s ease-in-out infinite;
+  }
+  .prow.running .pic { animation: sending-pulse 1.5s ease-in-out infinite; }
+  .send-dest .pb { transition: background-color .25s ease, color .25s ease; }
+  .send-flight { transition: left .35s ease; }
+  .send-flight svg { animation: flight-float 1.3s ease-in-out infinite; }
+  .send-dest.just-sent::before { content: ""; position: absolute; inset: 1px; border: 2px solid var(--good);
+    border-radius: 11px; pointer-events: none; animation: sent-ring .6s ease-out both; }
+  .send-dest.just-sent::after { content: "✦"; position: absolute; top: -9px; right: -7px;
+    color: var(--good); font-size: 13px; pointer-events: none; animation: sent-spark .6s ease-out both; }
+  .send-dest.just-sent .send-dest-mark { animation: sent-mark .35s cubic-bezier(.2,1.5,.5,1) both; }
+  /* Calendar, history and statistics react to the item the user is exploring. */
+  .cc, .hitem, .lead, .nitem {
+    transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease, color .18s ease;
+  }
+  .cw img { transition: transform .22s ease, filter .22s ease; }
+  .hitem .chev { transition: transform .18s ease, color .18s ease; }
+  .heat .hc { transition: transform .16s ease, outline-color .16s ease; }
+  @media (hover: hover) {
+    .cw:hover img { transform: scale(1.035); }
+    .hitem:hover .chev { transform: translateX(3px); color: var(--ink-2); }
+    .heat .hc:not(.empty):hover { transform: scale(1.06); }
+  }
+}
+@keyframes flight-float {
+  0%, 100% { transform: translateY(0) rotate(-8deg); }
+  50% { transform: translateY(-4px) rotate(2deg); }
+}
+@keyframes sent-ring {
+  from { opacity: .9; transform: scale(.8); }
+  to { opacity: 0; transform: scale(1.6); }
+}
+@keyframes sent-spark {
+  from { opacity: 0; transform: translate(-4px, 4px) scale(.4); }
+  35% { opacity: 1; }
+  to { opacity: 0; transform: translate(6px, -6px) scale(1.2); }
+}
+@keyframes sent-mark {
+  from { transform: scale(.3); }
+  to { transform: scale(1); }
+}
+@keyframes progress-glint {
+  0%, 15% { transform: translateX(-100%); }
+  75%, 100% { transform: translateX(100%); }
+}
+@keyframes sending-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50% { box-shadow: 0 0 0 5px transparent; }
+}
+@keyframes toast-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes update-dialog-enter {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
