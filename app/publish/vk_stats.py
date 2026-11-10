@@ -295,7 +295,7 @@ def collect(report=lambda **kw: None, days: int = 45, max_pages: int = 15, headl
     col = Collector()
     edge = time.time() - days * 86400
     report(progress=0.05, message="Открываю статистику ВК…")
-    with B.session(headless=headless, wait=wait) as (ctx, page):
+    with B.session(platform="vk", headless=headless, wait=wait) as (ctx, page):
         if not vk_web._logged(ctx):
             raise PlatformError("Во ВК не выполнен вход в браузере Crosspost — «Настройки» → ВКонтакте → «Войти во ВКонтакте»")
 

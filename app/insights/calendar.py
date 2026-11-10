@@ -225,24 +225,34 @@ def _suggest(groups: list, splits: set, limit: int = 5) -> list:
 
 
 def _collapse(g: list) -> dict:
-    """Группа → работа: сумма замеров (не уникальная аудитория), лучший индекс и превью."""
-    main = max(g, key=lambda x: (x["index"] if x["index"] is not None else -1, bool(x["preview"])))
-    first = min(g, key=lambda x: x["ts"])
+    """Группа → работа: данные свежей публикации, без суммирования повторов."""
+    # Destinations of one CrossPost publication are one source. A later mirror
+    # without an index must not hide available statistics of that same post.
+    source_key = lambda x: ("pub", x["pub_id"]) if x.get("pub_id") else ("post", x["key"])
+    newest_source = source_key(max(g, key=lambda x: x["ts"]))
+    fresh = [x for x in g if source_key(x) == newest_source]
+    main = max(fresh, key=lambda x: (x["index"] if x["index"] is not None else -1,
+                                     x.get("stat_at") or 0, bool(x["preview"])))
+    first = min(fresh, key=lambda x: x["ts"])
     it = {k: v for k, v in main.items() if k != "_h"}
     it.update(day=first["day"], time=first["time"], ts=first["ts"])
     it["channels"] = sorted({c for x in g for c in x["channels"]})
-    it["pub_id"] = next((x["pub_id"] for x in g if x["pub_id"]), None)
+    it["pub_id"] = next((x["pub_id"] for x in sorted(g, key=lambda x: -x["ts"]) if x["pub_id"]), None)
     it["app"] = any(x["app"] for x in g)
     it["post_id"] = main["post_id"] or next((x["post_id"] for x in g if x["post_id"]), None)
     for k in ("preview", "text", "link"):
         it[k] = main[k] or next((x[k] for x in g if x[k]), main[k])
-    it["parts"] = [p for x in sorted(g, key=lambda x: x["ts"]) for p in x["parts"]]
+    latest_parts = {}
+    for x in sorted(g, key=lambda x: (x["ts"], x.get("stat_at") or 0)):
+        for part in x["parts"]:
+            latest_parts[(part["plat"], part.get("label", ""))] = part
+    it["parts"] = list(latest_parts.values())
+    it["search_members"] = [{"text": x.get("text", ""), "day": x["day"],
+                            "platform": x.get("platform", ""), "pub_id": x.get("pub_id")}
+                           for x in g]
     it["atoms"] = list(dict.fromkeys([x["key"] for x in sorted(g, key=lambda x: x["ts"])] +
                                     [f'u{x["pub_id"]}' for x in g if x.get("pub_id")]))
     it["pub_ids"] = sorted({x["pub_id"] for x in g if x.get("pub_id")})
-    for metric in ("views", "reactions", "forwards"):
-        values = [x[metric] for x in g if x.get(metric) is not None]
-        it[metric] = sum(values) if values else None
     joined = {frozenset(j) for j in _rules()[0]}
     it["manual"] = any(frozenset((a, b)) in joined for a in it["atoms"] for b in it["atoms"] if a != b)
     return it

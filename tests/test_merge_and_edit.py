@@ -39,8 +39,8 @@ class MergeAndEdit(unittest.TestCase):
         with patch('app.insights.ext_posts.items_between', return_value=[]):
             january = self.calendar.month('2025-01')
             september = self.calendar.month('2026-09')
-            self.assertEqual(january['summary']['posts'], 1)
-            self.assertEqual(september['summary']['posts'], 0)
+            self.assertEqual(january['summary']['posts'], 0)
+            self.assertEqual(september['summary']['posts'], 1)
             row = self.runner.search_history()['items'][0]
             self.assertEqual(row['merge_ids'], [a,b])
             self.assertEqual(len(row['dests']), 2)
@@ -54,6 +54,28 @@ class MergeAndEdit(unittest.TestCase):
         self.calendar.merge([f'u{a}', f'u{b}'], force=True)
         self.assertEqual(self.calendar.publication_groups()[a], [a,b])
 
+    def test_merged_statistics_use_newer_post_instead_of_older_larger_values(self):
+        from app.insights import post_stats
+        old=self.pub('2026-01-01T12:00:00+00:00','Old')
+        new=self.pub('2026-02-01T12:00:00+00:00','New')
+        self.calendar.merge([f'u{old}',f'u{new}'])
+        def details(pid):
+            return {"id":pid,"dests":[{"key":"telegram:1","views":1000 if pid==old else 10}]}
+        with patch.object(post_stats,'_for_single_publication',side_effect=details):
+            result=post_stats.for_publication(old)
+        self.assertEqual(result["id"],new)
+        self.assertEqual(len(result["dests"]),1)
+        self.assertEqual(result["dests"][0]["views"],10)
+        self.assertEqual(result["dests"][0]["source_pub_id"],new)
+
+    def test_later_mirror_of_same_publication_does_not_hide_available_index(self):
+        def atom(key, ts, index):
+            return dict(key=key,ts=ts,index=index,pub_id=1,post_id=None,day='2026-01-01',time='12:00',
+                        preview=None,text='Post',link='',channels=[key],app=True,parts=[],views=10,reactions=1,forwards=0)
+        work=self.calendar._collapse([atom('telegram',1,.9),atom('bsky',2,None)])
+        self.assertEqual(work['index'],.9)
+        self.assertFalse(work['manual'])
+
     def test_imported_post_and_crosspost_merge_in_list_with_combined_metrics(self):
         pid=self.pub('2026-01-01T12:00:00+00:00','Own post')
         with self.db.tx() as c:
@@ -62,6 +84,10 @@ class MergeAndEdit(unittest.TestCase):
         self.calendar.merge([f'u{pid}','vk:external'], force=True)
         history=self.runner.search_history()
         self.assertEqual(history['total'],1)
+        self.assertEqual(self.runner.search_history(q='External')['total'],1)
+        self.assertEqual(self.runner.search_history(platform='vk')['total'],1)
+        self.assertEqual(self.runner.search_history(q='Missing')['total'],0)
+        self.assertEqual(self.runner.search_history(platform='discord')['total'],0)
         work=history['items'][0]['work']
         self.assertEqual(set(work['atoms']),{f'u{pid}','vk:external'})
         self.assertEqual(work['views'],120)

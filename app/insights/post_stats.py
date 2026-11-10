@@ -217,12 +217,15 @@ def reddit_stats_url(link: str) -> str:
 def for_publication(pub_id: int) -> dict:
     from app.insights.calendar import publication_groups
     ids = publication_groups().get(pub_id, [pub_id])
-    result = _for_single_publication(pub_id)
+    ordered = sorted(ids, key=lambda pid: (_pubs(pub_id=pid)[0]["created"], pid))
+    result = _for_single_publication(ordered[-1])
     result["merge_ids"] = ids
-    result["dests"] = []
-    for pid in ids:
+    latest = {}
+    for pid in ordered:
         part = _for_single_publication(pid)
-        result["dests"].extend(dict(dest, source_pub_id=pid) for dest in part.get("dests", []))
+        for dest in part.get("dests", []):
+            latest[dest.get("key")] = dict(dest, source_pub_id=pid)
+    result["dests"] = list(latest.values())
     return result
 
 
@@ -330,7 +333,11 @@ def summary(pub_ids: list[int]) -> dict:
     for pid, ids in mapping.items():
         available = [original[str(i)] for i in ids if str(i) in original]
         if available:
-            best = max(available, key=lambda item: item.get("index") or 0)
+            latest_id = max(ids, key=lambda source: (_pubs(pub_id=source)[0]["created"], source))
+            best = original.get(str(latest_id))
+            if best is None:
+                out.pop(str(pid), None)
+                continue
             out[str(pid)] = dict(best, merge_ids=ids)
     return out
 

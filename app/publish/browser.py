@@ -1,7 +1,7 @@
 """Публикация через браузер: для площадок, где API закрыт (ВК без бизнес-профиля, платные тиры DeviantArt).
 
 Приложение открывает Microsoft Edge (есть в каждой Windows 11) или Chrome с ОТДЕЛЬНЫМ профилем
-в папке данных. В нём вы один раз входите на сайт — дальше вход сохраняется, как в обычном браузере.
+для каждой площадки в папке данных. В нём вы один раз входите на сайт — дальше вход сохраняется, как в обычном браузере.
 Ваш основной браузер и его пароли не трогаются.
 
 Если шаг не удался, сохраняются снимок экрана и страница (папка browser_debug) — по ним видно, что
@@ -17,6 +17,25 @@ from app.paths import sub
 from core.common import PlatformError
 
 _lock = threading.Lock()
+PLATFORMS = {
+    "vk": ("vk.com", "vk.ru", "vkid.ru"),
+    "reddit": ("reddit.com",),
+    "x": ("x.com", "twitter.com"),
+    "joyreactor": ("joyreactor.cc", "reactor.cc"),
+}
+
+
+def profile_dir(platform="vk"):
+    if platform not in PLATFORMS:
+        raise ValueError("Неизвестный профиль браузера")
+    return sub("browser_profiles") / platform
+
+
+def _owns_cookie(cookie, platform):
+    domain = str(cookie.get("domain", "")).lower().lstrip(".")
+    return any(domain == allowed or domain.endswith("." + allowed) for allowed in PLATFORMS[platform])
+
+
 CHANNELS = ("msedge", "chrome", None)   # None — Chromium из Playwright, если он установлен
 
 
@@ -28,11 +47,11 @@ def available() -> tuple[bool, str]:
         return False, "Не установлена библиотека playwright — запустите Install.bat ещё раз"
 
 
-def _launch(pw, headless: bool, downloads: bool = False):
+def _launch(pw, headless: bool, downloads: bool = False, platform: str = "vk"):
     exe = os.environ.get("CROSSPOST_BROWSER_EXE")   # для проверок без Edge
     if os.environ.get("CROSSPOST_BROWSER_HEADLESS"):
         headless = True
-    base = dict(user_data_dir=str(sub("browser")), headless=headless, viewport={"width": 1280, "height": 900},
+    base = dict(user_data_dir=str(profile_dir(platform)), headless=headless, viewport={"width": 1280, "height": 900},
                 locale="ru-RU", accept_downloads=downloads)
     if exe:
         return pw.chromium.launch_persistent_context(executable_path=exe, **base)
@@ -46,8 +65,9 @@ def _launch(pw, headless: bool, downloads: bool = False):
 
 
 @contextmanager
-def session(headless: bool = False, downloads: bool = False, wait: float = 600):
+def session(headless: bool = False, downloads: bool = False, wait: float = 600, platform: str = "vk"):
     """Один браузер за раз: профиль нельзя открыть дважды — ни в одном процессе, ни в двух (окно и фоновая отправка)."""
+    profile_dir(platform)  # Validate before acquiring locks or starting a browser.
     ok, why = available()
     if not ok:
         raise PlatformError(why)
@@ -65,7 +85,8 @@ def session(headless: bool = False, downloads: bool = False, wait: float = 600):
         time.sleep(1)
     try:
         with sync_playwright() as pw:
-            ctx = _launch(pw, headless, downloads)
+            ctx = _launch(pw, headless, downloads, platform=platform)
+            ctx._crosspost_platform = platform
             _restore_cookies(ctx)
             try:
                 page = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -86,27 +107,39 @@ def session(headless: bool = False, downloads: bool = False, wait: float = 600):
         _lock.release()
 
 
-def _cookie_file():
-    return sub("browser") / "crosspost_cookies.json"
+def _cookie_file(platform="vk"):
+    return profile_dir(platform) / "crosspost_cookies.json"
 
 
 def save_cookies(ctx):
     """Сохраняем куки отдельно: «сеансовые» куки браузер при закрытии стирает, а вход на сайте держится на них."""
     import json
     try:
-        _cookie_file().write_text(json.dumps(ctx.cookies()), encoding="utf-8")
+        platform = getattr(ctx, "_crosspost_platform", "vk")
+        folder = profile_dir(platform)
+        folder.mkdir(parents=True, exist_ok=True)
+        cookies = [cookie for cookie in ctx.cookies() if _owns_cookie(cookie, platform)]
+        from core.fsutil import atomic_write
+        atomic_write(_cookie_file(platform), json.dumps(cookies))
     except Exception:
         pass
 
 
 def _restore_cookies(ctx):
     import json
-    f = _cookie_file()
+    platform = getattr(ctx, "_crosspost_platform", "vk")
+    f = _cookie_file(platform)
+    if not f.exists():
+        # Migrate only site cookies, never the shared browser profile itself:
+        # restored tabs and service workers could contact unrelated sites.
+        from app.paths import data_dir
+        f = data_dir() / "browser" / "crosspost_cookies.json"
     if not f.exists():
         return
     try:
-        have = {(c["name"], c["domain"]) for c in ctx.cookies()}
-        saved = [c for c in json.loads(f.read_text(encoding="utf-8")) if (c["name"], c["domain"]) not in have]
+        have = {(c["name"], c["domain"], c.get("path", "/")) for c in ctx.cookies()}
+        saved = [c for c in json.loads(f.read_text(encoding="utf-8"))
+                 if _owns_cookie(c, platform) and (c["name"], c["domain"], c.get("path", "/")) not in have]
         now = time.time()
         saved = [c for c in saved if c.get("expires", -1) in (-1, None) or c["expires"] > now]
         if saved:

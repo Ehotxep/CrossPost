@@ -218,7 +218,7 @@ def apply(stop_worker: bool = True, restart: bool = True) -> dict:
     ok, why = can_update()
     if not ok:
         raise ValueError(why[:1].upper() + why[1:])
-    root = Path(rd["root"])
+    root = Path(rd["root"]).resolve()
     _check_tree(root, rd["version"])   # файлы с диска могли измениться после проверки
     if stop_worker:
         from app import worker
@@ -235,7 +235,7 @@ def apply(stop_worker: bool = True, restart: bool = True) -> dict:
     shutil.copyfile(Path(__file__).with_name("apply_update.py"), helper)
     from app import worker as W
     from app.subproc import python_exe
-    cmd = [sys.executable, str(helper), "--root", str(app_dir()), "--new", str(root), "--data", str(data_dir()),
+    cmd = [sys.executable, str(helper), "--root", str(app_dir().resolve()), "--new", str(root), "--data", str(data_dir().resolve()),
            "--pid", str(os.getpid()), "--version", rd["version"], "--python", python_exe(), "--pythonw", W._pythonw()]
     if not restart:
         cmd.append("--no-restart")

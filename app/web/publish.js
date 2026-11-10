@@ -1112,7 +1112,8 @@
     const s = S(), sel = s.calSel || [];
     if (!s.calSelMode && !sel.length) return "";
     const items = calItems();
-    const multi = sel.length === 1 && items[sel[0]] && (items[sel[0]].parts || []).length > 1;
+    const selected = sel.length === 1 ? items[sel[0]] : null;
+    const multi = selected && ((selected.pub_ids || []).length > 1 || (selected.atoms || []).filter(key => !/^u\d+$/.test(key)).length > 1);
     return `<div class="selbar"><span>${sel.length ? `Выбрано: ${sel.length}` : "Нажимайте на работы, чтобы выбрать"}</span><span class="spacer"></span>
       <button class="btn small" data-pa="cal-merge" ${sel.length < 2 ? "disabled" : ""}>Объединить выбранные</button>
       <button class="btn small ghost" data-pa="cal-force-merge" ${sel.length < 2 ? "disabled" : ""}>Принудительно объединить</button>
@@ -1274,8 +1275,8 @@
         return `<div class="hitem ${x.index >= C().LV().super ? "lead" : ""}" role="button" tabindex="0" ${r.work ? `data-cw="${esc(workKey)}"` : `data-pa="pstat" data-id="${r.id}"`} data-user-attrs="aria-label" aria-label="Статистика поста ${esc(title)}">
           ${s.calSelMode ? `<input type="checkbox" data-history-select="${esc(workKey)}" aria-label="Выбрать ${esc(title)}" ${(s.calSel||[]).includes(workKey)?"checked":""}>` : ""}
           <span class="hthumb">${r.preview?`<img src="/mthumb/${encodeURIComponent(r.preview)}?t=${tok()}" alt="">`:pubThumb(r)}${C().badges({ kind: pubKind(r), n: (r.files || []).length, rank: x.rank, scope: "за месяц", index: x.index, est: x.fresh, sm: true })}</span>
-          <div class="ht"><b translate="no">${esc(title)}</b>${r.work?.parts?.length>1?`<span class="pill">Объединено: ${r.work.parts.length}</span>`:""}<span>${dt.toLocaleDateString(LOC, { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
-          ${r.dests.length?destBadges(r.dests):`<span class="small">${esc((r.work?.channels||[]).join(", "))}</span>`}${r.work&&(r.work.views!=null||r.work.parts?.length>1)?`<span class="small">${r.work.parts.length} публикаций · ${r.work.views==null?"нет замеров":C().num(r.work.views)+" просмотров суммарно"}</span>`:metricsHtml(r)}<span class="chev">${C().ICON.chev}</span></div>`;
+          <div class="ht"><b translate="no">${esc(title)}</b>${r.work?.manual?`<span class="pill">Объединено вручную</span>`:""}<span>${dt.toLocaleDateString(LOC, { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
+          ${r.dests.length?destBadges(r.dests):`<span class="small">${esc((r.work?.channels||[]).join(", "))}</span>`}${r.dests.length?metricsHtml(r):`<span class="small">${r.work?.views==null?"нет замеров":C().num(r.work.views)+" просмотров"}</span>`}<span class="chev">${C().ICON.chev}</span></div>`;
       }).join("")}</div>` : `<p class="muted">Хитов пока нет — здесь будут посты лучше 90% постов канала (сейчас это ${String(C().LV().hit.toFixed(2)).replace(".", DEC)} к норме и выше).</p>`;
     }
     if (s.pubErr?.features) h += C().problemHtml(s.pubErr.features);
@@ -2138,8 +2139,7 @@
         (s1.mergeItems || (s1.mergeItems = {}))[it.key] = it;
         C().render(); return true;
       }
-      if (it && it.parts?.length > 1) await openDrawer("cal:" + it.key);
-      else if (it && (it.pub_id || it.post_id)) await openDrawer(it.pub_id ? "pub:" + it.pub_id : "post:" + it.post_id);
+      if (it && (it.pub_id || it.post_id)) await openDrawer(it.pub_id ? "pub:" + it.pub_id : "post:" + it.post_id);
       else if (it) await openDrawer("cal:" + it.key);
       return true;
     }

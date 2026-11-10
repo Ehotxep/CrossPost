@@ -108,6 +108,24 @@ main()
         finally:
             page.close()
 
+    def test_multiplatform_post_opens_full_statistics_without_manual_merge_label(self):
+        page=self.browser.new_page()
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("""async()=>{
+                CP.S.view='history';CP.S.histMode='published';CP.S.historyFilters={};
+                await Pub.load('history');
+                const row=CP.S.hist[0];row.work.manual=false;
+                row.work.parts.push({plat:'bsky',label:'Bluesky'});
+                window.expectedPub='pub:'+row.work.pub_id;CP.render();
+            }""")
+            self.assertNotIn('Объединено',page.locator('.hitem').first.inner_text())
+            page.locator('.hitem').first.click()
+            page.wait_for_function("()=>CP.S.pstatOpen===window.expectedPub")
+            self.assertEqual(page.get_by_role('dialog',name='Статистика поста').count(),1)
+        finally:
+            page.close()
+
     def test_list_merge_and_split_are_visible_and_persistent(self):
         page = self.browser.new_page()
         page.on("dialog", lambda dialog: dialog.accept())
@@ -125,7 +143,7 @@ main()
             page.wait_for_function("count=>CP.S.historyPage.total===count", arg=initial-1)
             self.assertEqual(self.api("post_history_search")["total"], initial-1)
             page.get_by_role("button", name="Объединить посты", exact=True).click()
-            page.locator(".hitem").filter(has_text="Объединено: 2").locator("input[type=checkbox]").check()
+            page.locator(".hitem").filter(has_text="Объединено вручную").locator("input[type=checkbox]").check()
             page.get_by_role("button", name="Разъединить", exact=True).click()
             page.wait_for_function("count=>CP.S.historyPage.total===count", arg=initial)
         finally:

@@ -27,7 +27,9 @@ def acquire() -> bool:
 def publish(url: str, token: str):
     p = data_dir() / "app.instance"
     try:   # файл только в вашей папке данных; токен действует, пока это окно открыто
-        p.write_text(json.dumps({"url": url, "token": token}), encoding="utf-8")
+        import os
+        from app import __version__
+        p.write_text(json.dumps({"url": url, "token": token, "pid": os.getpid(), "version": __version__}), encoding="utf-8")
     except OSError:
         pass
 

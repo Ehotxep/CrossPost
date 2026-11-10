@@ -118,7 +118,7 @@ def run(report, url: str, headless: bool = False) -> dict:
     t0 = time.time()
 
     report(progress=0.05, message="Открываю браузер…")
-    with B.session(headless=headless, downloads=True) as (ctx, page):
+    with B.session(platform="vk", headless=headless, downloads=True) as (ctx, page):
         if not vk_web._logged(ctx):
             raise PlatformError("Во ВК не выполнен вход в браузере Crosspost — «Настройки» → ВКонтакте → «Войти во ВКонтакте»")
         scrub = Scrubber([c.get("value", "") for c in ctx.cookies()])

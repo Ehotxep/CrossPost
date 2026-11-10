@@ -1276,21 +1276,25 @@ def search_history(q='', platform='', state='', date_from='', date_to='', offset
     grouped = []
     for work in sorted((it for day in works["days"].values() for it in day), key=lambda it: -it["ts"]):
         ids = work.get("pub_ids") or []
+        imported_matches = any(
+            not member.get("pub_id")
+            and (not q.strip() or q.strip().casefold() in member["text"].casefold())
+            and (not platform or member["platform"] in (platform, {"bluesky":"bsky", "deviantart":"da"}.get(platform)))
+            and (not state or state == "done")
+            and (not date_from or member["day"] >= date_from[:10])
+            and (not date_to or member["day"] <= date_to[:10])
+            for member in work.get("search_members", [])
+        )
         if ids:
-            if not matching_ids.intersection(ids):
+            if not matching_ids.intersection(ids) and not imported_matches:
                 continue
-            source = raw.get(min(ids), {})
-            row = dict(source, id=min(ids), merge_ids=ids, atoms=work["atoms"])
+            latest_id = max(ids, key=lambda pid: (raw.get(pid, {}).get("created", ""), pid))
+            source = raw.get(latest_id, {})
+            row = dict(source, id=latest_id, merge_ids=ids, atoms=work["atoms"])
             row["dests"] = [dict(d, source_pub_id=pid) for pid in ids for d in raw.get(pid, {}).get("dests", [])]
             row["files"] = [f for pid in ids for f in raw.get(pid, {}).get("files", [])]
         else:
-            if state and state != "done":
-                continue
-            if platform and not any(part["plat"] in (platform, {"bluesky":"bsky","deviantart":"da"}.get(platform)) for part in work["parts"]):
-                continue
-            if q.strip() and q.strip().casefold() not in (work["text"] + " " + " ".join(work["channels"])).casefold():
-                continue
-            if date_from and work["day"] < date_from[:10] or date_to and work["day"] > date_to[:10]:
+            if not imported_matches:
                 continue
             row = dict(id=work["key"], title=work["text"], text=work["text"], rating=work.get("rating"),
                        created=datetime.fromtimestamp(work["ts"], timezone.utc).isoformat(), files=[], dests=[], atoms=work["atoms"])
