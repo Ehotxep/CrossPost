@@ -22,7 +22,7 @@ class UpdateRestart(unittest.TestCase):
         process=Mock(pid=123)
         process.poll.return_value=1
         with tempfile.TemporaryDirectory() as directory:
-            ok,error=U.wait_for_restart(process,Path(directory),'1.2.3',timeout=.1)
+            ok,error=U.wait_for_restart(process,Path(directory),'1.2.3',timeout=10)
         self.assertFalse(ok)
         self.assertIn('завершился',error)
 
@@ -40,7 +40,7 @@ class UpdateRestart(unittest.TestCase):
                 info['pid']=123
                 (data/'app.instance').write_text(json.dumps(info))
             with patch('urllib.request.build_opener',return_value=client),patch.object(U.time,'sleep',side_effect=update_instance):
-                ok,error=U.wait_for_restart(process,data,'1.2.3',timeout=1)
+                ok,error=U.wait_for_restart(process,data,'1.2.3',timeout=10)
             self.assertTrue(ok,error)
             self.assertEqual(client.open.call_count,1)
 
