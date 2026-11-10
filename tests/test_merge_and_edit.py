@@ -9,10 +9,13 @@ from unittest.mock import patch
 class MergeAndEdit(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.env = patch.dict(os.environ, CROSSPOST_DATA=self.tmp.name)
         self.env.start()
+        self.addCleanup(self.env.stop)
         from app import db
         db.reset_for_tests()
+        self.addCleanup(db.reset_for_tests)
         from app.publish import runner
         self.runner = importlib.reload(runner)
         from app.publish import schedule
@@ -22,11 +25,6 @@ class MergeAndEdit(unittest.TestCase):
         from app.insights import ext_posts
         importlib.reload(ext_posts)
         self.db = db
-
-    def tearDown(self):
-        self.db.reset_for_tests()
-        self.env.stop()
-        self.tmp.cleanup()
 
     def pub(self, date, title, dests=None):
         with self.db.tx() as c:

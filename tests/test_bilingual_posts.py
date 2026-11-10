@@ -13,6 +13,11 @@ class BilingualPosts(unittest.TestCase):
         env = patch.dict('os.environ', CROSSPOST_DATA=folder.name)
         env.start()
         self.addCleanup(env.stop)
+        from app import db
+        db.reset_for_tests()
+        # unittest cleanups run in reverse order: close SQLite before restoring
+        # CROSSPOST_DATA and removing its directory (required on Windows).
+        self.addCleanup(db.reset_for_tests)
         global runner
         from app.publish import runner
         self.cfg = copy.deepcopy(settings.DEFAULTS)
