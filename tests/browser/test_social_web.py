@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from app.publish import social_web as W
-from core.common import PublicationUnknown
+from core.common import NotPublishedError, PublicationUnknown
 
 
 UPLOAD = '''<script>
@@ -62,12 +62,40 @@ class SocialBrowser(unittest.TestCase):
         context.route('**/*', lambda route: route.fulfill(content_type='text/html; charset=utf-8', body=source if route.request.url.endswith(('submit', 'add')) else '<p>Published fixture</p>'))
         @contextmanager
         def session(**kwargs):
+            self.assertEqual(kwargs.get("platform"),platform)
             yield context, page
         try:
             with patch.object(W.B, 'session', session), patch.object(W.B, 'save_cookies'), patch.object(W.B, 'dump', return_value='fixture.png'):
                 yield page
         finally:
             context.close()
+
+    def test_site_dry_run_preserves_existing_title_body_and_tags(self):
+        for platform,source in [
+            ('reddit',REDDIT.replace('<textarea name="title"></textarea>','<textarea name="title">Saved title</textarea>').replace('<textarea name="body"></textarea>','<textarea name="body">Saved body</textarea>')),
+            ('joyreactor',JOY.replace('<textarea name=text></textarea>','<textarea name=text>Saved body</textarea>').replace('<input name=tags>','<input name=tags value="Saved tags">'))
+        ]:
+            with self.subTest(platform=platform),self.fixture(platform,source) as page:
+                with self.assertRaisesRegex(NotPublishedError,'уже есть черновик'):
+                    W.post(platform,[self.image],'New title','New body',tags=['New tags'],dry_run=True)
+                body=page.locator('[name=body]' if platform=='reddit' else '[name=text]')
+                self.assertEqual(body.input_value(),'Saved body')
+                if platform=='reddit':
+                    self.assertEqual(page.locator('[name=title]').input_value(),'Saved title')
+                else:
+                    self.assertEqual(page.locator('[name=tags]').input_value(),'Saved tags')
+                self.assertEqual(page.evaluate('window.submits'),0)
+
+
+    def test_existing_attachment_is_detected_before_text_is_filled(self):
+        source=REDDIT.replace('id=previews></div>','id=previews><img alt="existing attachment"></div>')
+        with self.fixture('reddit',source) as page:
+            with self.assertRaisesRegex(NotPublishedError,'уже есть вложения'):
+                W.post('reddit',[self.image],'New title','New body',dry_run=True)
+            self.assertEqual(page.locator('[name=title]').input_value(),'')
+            self.assertEqual(page.locator('[name=body]').input_value(),'')
+            self.assertEqual(page.evaluate('window.submits'),0)
+
 
     def test_dry_run_fills_rating_flair_tags_and_files_without_submitting(self):
         for platform in W.SITES:

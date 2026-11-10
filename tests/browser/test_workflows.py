@@ -73,6 +73,210 @@ main()
         self.assertTrue(result['ok'], result)
         return result['result']
 
+    def test_error_motion_sorting_and_line_chart_respect_reduced_motion(self):
+        page=self.browser.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("""()=>{
+                CP.S.view='post';CP.S.postMode='progress';
+                CP.S.pubJob={state:'running',progress:.4};
+                CP.S.pubState={pub_id:999,title:'Test',dests:[
+                    {key:'vk',platform:'vk',name:'VK',state:'running',details:[]},
+                    {key:'discord',platform:'discord',name:'Discord',state:'running',details:[]}]};
+                CP.render();
+                CP.S.pubState.dests[0].state='error';CP.S.pubState.dests[0].outcome='not_sent';
+                CP.S.pubState.dests[1].state='done';CP.render();
+            }""")
+            self.assertEqual(page.locator('[data-send-key]').first.get_attribute('data-send-key'),'discord')
+            failed=page.locator('.just-failed .pb')
+            self.assertEqual(failed.evaluate('el=>getComputedStyle(el).animationName'),'send-error-shake')
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(failed.evaluate('el=>getComputedStyle(el).animationName'),'none')
+            page.emulate_media(reduced_motion='no-preference')
+            page.evaluate("""()=>{
+                window.testChart=document.body.appendChild(document.createElement('div'));
+                testChart.style.width='640px';
+                window.testSeries=[{name:'Test',color:'#8888ff',points:[{m:'01.26',v:100},{m:'02.26',v:200}]}];
+                Charts.lineChart(testChart,testSeries);
+            }""")
+            self.assertGreater(page.evaluate("testChart.querySelector('path').getAnimations().length"),0)
+            page.evaluate('Charts.lineChart(testChart,testSeries)')
+            self.assertEqual(page.evaluate("testChart.querySelector('path').getAnimations().length"),0)
+            page.emulate_media(reduced_motion='reduce')
+            page.evaluate('testSeries[0].points[1].v=300;Charts.lineChart(testChart,testSeries)')
+            self.assertEqual(page.evaluate("testChart.querySelector('path').getAnimations().length"),0)
+        finally:
+            page.close()
+
+
+    def test_missing_publication_dependency_shows_original_error_without_error_loop(self):
+        page = self.browser.new_page()
+        try:
+            page.route("**/static/post-state.js", lambda route: route.abort())
+            page.goto(self.base)
+            panel = page.get_by_role("alert")
+            panel.wait_for()
+            self.assertIn("PostState", panel.inner_text())
+            self.assertIn("/static/post-state.js", panel.inner_text())
+            self.assertIn("Pub", panel.inner_text())
+            self.assertEqual(page.locator("#acts").inner_text(), "")
+            self.assertEqual(page.get_by_role("button", name="Перезагрузить интерфейс").count(), 1)
+        finally:
+            page.close()
+
+
+    def test_translation_columns_stay_aligned_with_many_platforms(self):
+        page = self.browser.new_page(viewport={'width':1100, 'height':900})
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("""() => {
+                CP.S.view = 'post'; CP.S.postMode = 'edit';
+                CP.S.pub.modules.translation = true;
+                for (const key of Object.keys(CP.S.pub.text_lang)) CP.S.pub.text_lang[key] = 'en';
+                CP.render();
+            }""")
+            page.wait_for_function("""() => {
+                const ids = ['ptitle', 'ptitle_en', 'ptext', 'ptext_en'];
+                const fields = ids.map(id => document.getElementById(id));
+                if (fields.some(el => !el || !el.getClientRects().length)) return false;
+                const y = fields.map(el => el.getBoundingClientRect().top);
+                return Math.abs(y[0] - y[1]) <= 1 && Math.abs(y[2] - y[3]) <= 1;
+            }""")
+            self.assertGreater(page.locator('[data-pa="tlang"]').count(), 4)
+            page.set_viewport_size({'width':390, 'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
+        finally:
+            page.close()
+
+
+    def test_view_transition_runs_only_on_navigation_and_respects_reduced_motion(self):
+        page = self.browser.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("""() => {
+                CP.render();
+                window.viewAnimations = 0;
+                const main = document.querySelector('#main');
+                const original = main.animate.bind(main);
+                main.animate = (...args) => { window.viewAnimations++; return original(...args); };
+                CP.S.view = 'settings'; CP.S.platSec = 'app'; CP.render();
+            }""")
+            self.assertEqual(page.evaluate('window.viewAnimations'), 1)
+            page.evaluate('CP.render()')
+            self.assertEqual(page.evaluate('window.viewAnimations'), 1)
+            page.emulate_media(reduced_motion='reduce')
+            page.evaluate("CP.S.view='post'; CP.render()")
+            self.assertEqual(page.evaluate('window.viewAnimations'), 1)
+            self.assertTrue(page.locator('#ptitle').is_visible())
+        finally:
+            page.close()
+
+
+    def test_interface_motion_respects_reduced_motion_preference(self):
+        page = self.browser.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("CP.toast('Motion test', 'info')")
+            toast = page.locator('.toast').last
+            self.assertEqual(toast.evaluate("el => getComputedStyle(el).animationName"), 'toast-enter')
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(toast.evaluate("el => getComputedStyle(el).animationName"), 'none')
+            self.assertEqual(page.locator('#nav button').first.evaluate("el => getComputedStyle(el).transitionDuration"), '0s')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='app';await Pub.load('settings');CP.render()}")
+            toggle = page.locator('.tgl input[type=checkbox]').first
+            self.assertEqual(toggle.evaluate("el => getComputedStyle(el, '::after').transitionDuration"), '0s')
+        finally:
+            page.close()
+
+
+    def test_publication_animation_tracks_real_progress_and_reduced_motion(self):
+        page = self.browser.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("""() => {
+                CP.S.view = 'post'; CP.S.postMode = 'progress';
+                CP.S.pubState = {title:'Test',rating:'sfw',dests:[
+                    {key:'discord:0',name:'Discord',state:'running',progress:.42,details:[]},
+                    {key:'vk',name:'VK',state:'done',details:[]},
+                    {key:'reddit:foo',platform:'reddit',name:'Reddit · foo',state:'error',outcome:'unknown',details:[]},
+                    {key:'reddit:bar',platform:'reddit',name:'Reddit · bar',state:'error',outcome:'not_sent',details:[]},
+                    {key:'telegram:1',platform:'telegram',name:'Telegram · one',state:'queued',details:[]},
+                    {key:'telegram:2',platform:'telegram',name:'Telegram · two',state:'done',note:'скорее всего, вышла, но ссылку найти не удалось',details:[]}
+                ]};
+                CP.S.pubJob = {state:'running',progress:.38}; CP.render();
+            }""")
+            overall = page.locator('[role=progressbar][aria-label="Публикация"]')
+            row = page.locator('[role=progressbar][aria-label="Discord"]')
+            self.assertEqual(page.locator('.send-dest').count(), 6)
+            self.assertEqual(page.locator('.send-dest.done').count(), 1)
+            self.assertEqual(page.locator('.send-dest.uncertain').count(), 2)
+            self.assertEqual(page.locator('.send-dest.error').count(), 1)
+            self.assertIn('VK: опубликовано', page.locator('.send-dest.done').get_attribute('aria-label'))
+            self.assertEqual(overall.get_attribute('aria-valuenow'), '38')
+            self.assertEqual(row.get_attribute('aria-valuenow'), '42')
+            self.assertEqual(overall.locator('div').evaluate("el=>el.style.width"), '38%')
+            self.assertEqual(row.locator('div').evaluate("el=>getComputedStyle(el,'::after').animationName"), 'progress-glint')
+            self.assertEqual(page.locator('.prow.done .pic').first.evaluate("el=>getComputedStyle(el).animationName"), 'none')
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(row.locator('div').evaluate("el=>getComputedStyle(el,'::after').animationName"), 'none')
+            self.assertEqual(page.locator('.prow.running .pic').evaluate("el=>getComputedStyle(el).animationName"), 'none')
+            page.evaluate("CP.S.pubJob={state:'done'};CP.render()")
+            self.assertEqual(page.locator('.send-dest.done').count(), 1)
+            self.assertEqual(page.locator('.send-dest.uncertain').count(), 2)
+        finally:
+            page.close()
+
+
+    def test_sending_celebrates_only_new_confirmed_success(self):
+        page = self.browser.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("""() => {
+                CP.S.view='post'; CP.S.postMode='progress';
+                CP.S.pubState={pub_id:987,title:'Test',rating:'sfw',dests:[
+                    {key:'discord:0',platform:'discord',name:'Discord',state:'running',details:[]},
+                    {key:'vk',platform:'vk',name:'VK',state:'done',details:[]},
+                    {key:'reddit:r',platform:'reddit',name:'Reddit',state:'running',details:[]}
+                ]}; CP.S.pubJob={state:'running',progress:.42}; CP.render();
+            }""")
+            self.assertEqual(page.locator('.send-flight').get_attribute('style'), 'left:42%')
+            self.assertEqual(page.locator('.send-dest.just-sent').count(), 0)
+            page.evaluate("""() => {
+                CP.S.pubState.dests[0].state='done';
+                CP.S.pubState.dests[2].state='error';CP.S.pubState.dests[2].outcome='unknown';
+                CP.render();
+            }""")
+            self.assertEqual(page.locator('.send-dest.just-sent').count(), 1)
+            self.assertIn('Discord', page.locator('.send-dest.just-sent').get_attribute('aria-label'))
+            self.assertEqual(page.locator('.send-dest.uncertain.just-sent').count(), 0)
+            self.assertEqual(page.locator('.send-dest.just-sent').evaluate("el=>getComputedStyle(el,'::before').animationName"), 'sent-ring')
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(page.locator('.send-dest.just-sent').evaluate("el=>getComputedStyle(el,'::before').animationName"), 'none')
+            self.assertEqual(page.locator('.send-flight svg').evaluate("el=>getComputedStyle(el).animationName"), 'none')
+            page.evaluate('CP.render()')
+            self.assertEqual(page.locator('.send-dest.just-sent').count(), 0)
+        finally:
+            page.close()
+
+
+    def test_history_hover_motion_respects_reduced_motion(self):
+        page = self.browser.new_page(reduced_motion='no-preference')
+        try:
+            page.set_content('<div class="hitem" style="width:400px;height:60px"><span>Post</span><span class="chev">›</span></div>')
+            page.add_style_tag(path=str(ROOT/'app/web/style.css'))
+            page.locator('.hitem').hover()
+            page.wait_for_function("getComputedStyle(document.querySelector('.hitem .chev')).transform !== 'none'")
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(page.locator('.hitem .chev').evaluate("el=>getComputedStyle(el).transform"), 'none')
+            self.assertEqual(page.locator('.hitem .chev').evaluate("el=>getComputedStyle(el).transitionDuration"), '0s')
+        finally:
+            page.close()
+
+
     def test_editor_history_queue_settings_and_preservation(self):
         buffer = io.BytesIO()
         Image.new('RGB', (80, 60), '#356ca1').save(buffer, format='PNG')

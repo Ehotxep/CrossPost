@@ -6,7 +6,7 @@
     const s=C().S,p=s.pub[platform],job=s.info?.browser_jobs?.[platform],running=job?.state==='running';
     const toggle=(id,on,label)=>`<label class="tgl"><input id="${id}" type="checkbox" ${on?'checked':''}><span>${label}</span></label>`;
     let h=`<section class="card setc"><div class="head"><h2>${C().pbadge(platform)} ${names[platform]}</h2><span class="badge warn">В разработке</span></div>
-      <p class="muted small">Публикация через отдельный профиль браузера Crosspost, как во ВКонтакте. Пока только изображения. Работа с реальным сайтом ещё не проверена.</p>
+      <p class="muted small">Публикация через отдельный профиль браузера этой площадки в Crosspost. При необходимости войдите заново. Пока только изображения. Работа с реальным сайтом ещё не проверена.</p>
       <p class="${p.browser_ok?'ok':'muted'}">${p.browser_ok?'Вход сохранён; доступность формы проверяется при отправке':'Нужно войти через браузер'}</p>
       ${toggle(`bt-${platform}-enabled`,p.enabled,'Включить публикацию')}${toggle(`bt-${platform}-window`,p.show_window,'Показывать окно браузера')}
       <div class="row"><button class="btn" data-social-action="login" data-platform="${platform}" ${running?'disabled':''}>Войти в браузере</button>

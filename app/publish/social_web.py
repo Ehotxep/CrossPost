@@ -1,4 +1,4 @@
-"""Experimental Reddit / JoyReactor UI adapters, using the same profile as VK.
+"""Experimental Reddit / JoyReactor UI adapters, using isolated site profiles.
 
 Selectors must be checked against the live sites before declaring support stable.
 No private HTTP API, CAPTCHA solving, automatic login or submission retries.
@@ -45,7 +45,7 @@ def _joy_form(page):
 
 
 def login(platform, report, timeout=600):
-    with B.session(headless=False) as (ctx, page):
+    with B.session(headless=False, platform=platform) as (ctx, page):
         page.goto(_url(platform), wait_until='domcontentloaded')
         report(progress=.1, message='Войдите на сайт в окне браузера; откройте форму нового поста')
         deadline = time.monotonic() + timeout
@@ -74,6 +74,25 @@ def _fill_body(page, scope, text, required=False):
         return
     editor = _find(fields)
     editor.fill(text)  # Playwright fills contenteditable without executing user HTML.
+
+
+def _assert_empty_composer(scope, platform):
+    """Do not mutate a restored site draft, even during a dry run."""
+    fields = scope.locator('textarea[name="title"], input[name="title"], textarea[name="body"], textarea[name="text"], #post_text, input[name="tags"], textarea[name="tags"], #post_tags, [contenteditable="true"][role="textbox"], [contenteditable="true"].ProseMirror').filter(visible=True)
+    for field in fields.all():
+        if field.evaluate('el => String(el.value ?? el.innerText ?? "").trim()'):
+            raise NotPublishedError('В редакторе уже есть черновик. Сохраните или очистите его перед проверкой')
+    images = scope.locator('[data-testid="media-preview"] img, [data-testid="image-preview"], shreddit-media-editor img, .uploaded_image img, .post_content img, [contenteditable="true"] img')
+    if images.count():
+        raise NotPublishedError('В редакторе уже есть вложения. Сохраните или очистите черновик')
+    for picker in scope.locator('input[type="file"]').all():
+        if picker.evaluate('el => !!el.files?.length'):
+            raise NotPublishedError('В редакторе уже выбраны файлы. Сохраните или очистите черновик')
+    if scope.locator('iframe.tox-edit-area__iframe').count() == 1:
+        body = scope.frame_locator('iframe.tox-edit-area__iframe').locator('body[contenteditable="true"]')
+        body.wait_for(state='visible')
+        if body.inner_text().strip() or body.locator('img').count():
+            raise NotPublishedError('В редакторе уже есть черновик. Сохраните или очистите его перед проверкой')
 
 
 def _reddit_labels(page, flair, nsfw):
@@ -132,13 +151,15 @@ def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=Fals
     if platform == 'joyreactor' and not tags:
         raise NotPublishedError('Для JoyReactor нужны теги')
     submitted = False
-    with B.session(headless=headless) as (ctx, page):
+    with B.session(headless=headless, platform=platform) as (ctx, page):
         try:
             log('открываю форму публикации')
             page.goto(target, wait_until='domcontentloaded')
             if urlparse(page.url).hostname != urlparse(target).hostname:
                 raise NotPublishedError('Сайт перенаправил на другой адрес — проверьте вход')
             if platform == 'reddit':
+                _title(page)
+                _assert_empty_composer(page, platform)
                 _find([page.get_by_role('tab', name=re.compile(r'^(Images(?: & Video)?|Изображения.*)$', re.I))]).click()
                 _title(page).fill(title)
                 scope = page
@@ -146,6 +167,7 @@ def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=Fals
                 _reddit_labels(page, flair, nsfw)
             else:
                 scope = _joy_form(page)
+                _assert_empty_composer(scope, platform)
                 _fill_body(page, scope, '\n\n'.join(part for part in (title, text) if part), required=True)
                 _find([scope.locator('input[name="tags"], textarea[name="tags"], #post_tags')]).fill(', '.join(tags))
             progress(.2)

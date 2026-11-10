@@ -25,7 +25,7 @@ def _logged(ctx) -> bool:
 
 def login(report, timeout: int = 600) -> bool:
     """Открывает окно браузера и ждёт, пока вы войдёте во ВК (до 10 минут)."""
-    with B.session(headless=False) as (ctx, page):
+    with B.session(platform="vk", headless=False) as (ctx, page):
         page.goto(BASE + "/", wait_until="domcontentloaded")
         if _logged(ctx):
             B.save_cookies(ctx)
@@ -52,7 +52,7 @@ def login(report, timeout: int = 600) -> bool:
 
 def check() -> bool:
     """Есть ли сохранённый вход (без открытия окна)."""
-    with B.session(headless=True) as (ctx, page):
+    with B.session(platform="vk", headless=True) as (ctx, page):
         return _logged(ctx)
 
 
@@ -483,7 +483,7 @@ def _wait_uploaded(page, n: int, timeout: int = 180, before: int = 0):
 def post(group_id: str, files: list[str], text: str, dry_run: bool = False, headless: bool = False,
          progress=lambda f: None, log=lambda m: None, kind: str = "images") -> dict:
     sent = {"v": False}   # «Опубликовать» уже нажато: что бы ни случилось дальше, запись могла выйти — повторять вслепую нельзя
-    with B.session(headless=headless) as (ctx, page):
+    with B.session(platform="vk", headless=headless) as (ctx, page):
         try:
             log("открываю группу")
             page.goto(_group_url(group_id), wait_until="domcontentloaded")

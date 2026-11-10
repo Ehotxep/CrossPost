@@ -79,9 +79,15 @@ def set_window_icon(title: str, hwnd: int | None = None, timeout: float = 15.0):
     import ctypes
     from ctypes import wintypes
     user32 = ctypes.windll.user32
+    user32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
     user32.FindWindowW.restype = wintypes.HWND
+    user32.LoadImageW.argtypes = (wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                                    ctypes.c_int, ctypes.c_int, wintypes.UINT)
     user32.LoadImageW.restype = wintypes.HANDLE
     user32.SendMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    user32.SendMessageW.restype = ctypes.c_ssize_t
+    user32.GetSystemMetrics.argtypes = (ctypes.c_int,)
+    user32.GetSystemMetrics.restype = ctypes.c_int
     ico = str(active_ico())
     deadline = time.time() + timeout
     while not hwnd and time.time() < deadline:

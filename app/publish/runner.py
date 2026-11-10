@@ -997,7 +997,7 @@ def _run(draft, report, only):
                         if not res.get("duplicate"):   # через сутки сверим с правками модераторов
                             try:
                                 from app.insights import e6learn
-                                e6learn.record(state()["pub_id"], res["post_id"], tags6 if kind in ("gif", "video") else e6_tags(cfg, draft, f["id"]), E6.name(cfg["e6ai"]))
+                                e6learn.record(state()["pub_id"], res["post_id"], tags6 if kind in ("gif", "video") else e6_tags(cfg, draft, f["id"]), "e621" if cfg["e6ai"].get("site_name") == "e621" else "blep")
                             except Exception:
                                 from app.applog import log
                                 log("e6ai: не удалось запомнить загрузку для сверки правок")
@@ -1051,7 +1051,6 @@ def _run(draft, report, only):
                     import tempfile
                     platform = d['platform']
                     with tempfile.TemporaryDirectory(prefix=platform + '-', dir=sub('tmp')) as folder:
-                        from pathlib import Path
                         paths = []
                         for i, image in enumerate(media_for(platform)):
                             path = Path(folder) / f'{i}.jpg'

@@ -215,7 +215,14 @@ class Api:
         busy = [self.JOB_LABELS.get(k, (k,))[0] for k, j in self.jobs.all().items() if j["state"] == "running" and k != "app:update"]
         if busy:
             raise ValueError("Сейчас идёт: " + ", ".join(busy) + ". Дождитесь окончания — программа закроется на время обновления.")
-        res = selfupdate.apply()
+        if getattr(self, "_updating", False):
+            raise ValueError("Обновление уже устанавливается")
+        self._updating = True
+        try:
+            res = selfupdate.apply()
+        except BaseException:
+            self._updating = False
+            raise
 
         def close():
             import os as _os
@@ -1461,7 +1468,7 @@ class Api:
         """Состояние фоновой отправки для окна. Заодно запускает её, если появилась работа (окно опрашивает раз в 20 секунд)."""
         from app import worker
         from app import backups
-        if backups.pending() or os.environ.get("CROSSPOST_NO_SCHEDULER"):
+        if getattr(self, "_updating", False) or backups.pending() or os.environ.get("CROSSPOST_NO_SCHEDULER"):
             return worker.describe()
         import time as _t
         from app.publish import schedule

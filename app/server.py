@@ -206,7 +206,7 @@ def make_server(api, port: int = 0):
             if path.startswith("/static/"):
                 f = (WEB / path[len("/static/"):]).resolve()
                 if WEB in f.parents and f.is_file():
-                    ctype = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+                    ctype = {".js": "text/javascript", ".css": "text/css", ".html": "text/html"}.get(f.suffix.lower()) or mimetypes.guess_type(f.name)[0] or "application/octet-stream"
                     if ctype.startswith("text/") or ctype.endswith("javascript"):
                         ctype += "; charset=utf-8"
                     return self._send(200, f.read_bytes(), ctype)
