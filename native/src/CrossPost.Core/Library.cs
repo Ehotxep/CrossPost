@@ -12,7 +12,15 @@ public record MetricValues(long? Views = null, long? Reactions = null, long? For
     public bool HasData => new[] { Views, Reactions, Forwards, Replies, Reach, Bookmarks }.Any(value => value.HasValue);
 }
 public record MetricSample(Guid Id, Guid PostId, DateTimeOffset? Observed, MetricValues Values, string Source, DateTimeOffset Recorded = default);
-public record LibraryData(IReadOnlyList<LibraryPost> Posts, IReadOnlyList<MetricSample> Metrics, IReadOnlySet<Guid> ManualWorks);
+public sealed class LibraryData(IReadOnlyList<LibraryPost> posts, IReadOnlyList<MetricSample> metrics, IReadOnlySet<Guid> manualWorks)
+{
+    public IReadOnlyList<LibraryPost> Posts { get; } = posts;
+    public IReadOnlyList<MetricSample> Metrics { get; } = metrics;
+    public IReadOnlySet<Guid> ManualWorks { get; } = manualWorks;
+    public IReadOnlyDictionary<Guid, MetricSample> LatestMetrics { get; } = metrics.GroupBy(sample => sample.PostId)
+        .ToDictionary(group => group.Key, group => group.OrderByDescending(sample => sample.Observed)
+            .ThenByDescending(sample => sample.Recorded).ThenByDescending(sample => sample.Id).First());
+}
 public record PlatformTotals(string Platform, string Target, int Publications, long? Views, long? Reactions, int WithViews, int WithReactions);
 public record ImportReport(Guid BatchId, string Snapshot, string Backup, int Publications, int Measurements, int ArchivedSchedules, string[] Notes);
 
@@ -21,8 +29,7 @@ public static class Library
     public static Guid Key(string value) => new(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 16));
     public static string Platform(string value) => value.ToLowerInvariant() switch
     { "bsky" => "bluesky", "da" => "deviantart", "e6ai" => "blep.art", _ => value.ToLowerInvariant() };
-    public static MetricSample? Latest(LibraryData data, Guid postId) => data.Metrics.Where(sample => sample.PostId == postId)
-        .OrderByDescending(sample => sample.Observed).ThenByDescending(sample => sample.Recorded).ThenByDescending(sample => sample.Id).FirstOrDefault();
+    public static MetricSample? Latest(LibraryData data, Guid postId) => data.LatestMetrics.GetValueOrDefault(postId);
     // Only successful publications count. A later failed attempt does not replace a live post.
     public static LibraryPost[] Representatives(LibraryData data) => data.Posts
         .Where(post => post.State == DeliveryState.Sent && !post.Excluded && !post.Platform.StartsWith("demo.", StringComparison.Ordinal))
