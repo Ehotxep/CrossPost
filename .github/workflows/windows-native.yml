@@ -56,6 +56,7 @@ jobs:
       - name: Start the actual WPF application in an isolated smoke test
         shell: pwsh
         run: |
+          try {
           $env:CROSSPOST_NATIVE_DATA = Join-Path $env:RUNNER_TEMP ("CrossPostSmoke-" + [guid]::NewGuid())
           $process = Start-Process -FilePath (Resolve-Path artifacts/win-x64/CrossPost.Native.exe) -ArgumentList "--smoke-test" -PassThru
           if (-not $process.WaitForExit(45000)) { $process.Kill(); throw "WPF initialization timed out" }
@@ -74,8 +75,19 @@ jobs:
           if (-not $verify.WaitForExit(90000)) { $verify.Kill(); throw "Background worker test timed out" }
           $verify.Refresh()
           Get-ChildItem $env:CROSSPOST_NATIVE_DATA -Filter "*error.log" | ForEach-Object { Get-Content $_.FullName }
-          if ($verify.ExitCode -ne 0) { throw "Worker scheduling/IPC/restart test failed: $($verify.ExitCode)" }
+          if ($verify.ExitCode -ne 0) {
+            Get-ChildItem $env:CROSSPOST_NATIVE_DATA -Filter "*error.log" | ForEach-Object {
+              $message = (Get-Content $_.FullName -Raw).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+              Write-Output "::error::$message"
+            }
+            throw "Worker scheduling/IPC/restart test failed: $($verify.ExitCode)"
+          }
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "worker-smoke-ready.txt"))) { throw "Worker readiness marker missing" }
+          } catch {
+            $message = $_.Exception.ToString().Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::error::$message"
+            throw
+          }
       - name: Add usage instructions and create ZIP
         shell: pwsh
         run: |
