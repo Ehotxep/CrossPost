@@ -27,6 +27,7 @@ public partial class MainWindow
         var edit = await new Workflow(_store).EditAsync(Client(true, "discord"), sent, "Демо Discord изменено", CancellationToken.None);
         if (!edit.Result.Confirmed || (await _store.LibraryAsync()).Posts.Single(post => post.NativeId == sent.Id).Platform != "demo.discord")
             throw new InvalidOperationException("Discord edit/library projection failed");
+        await WorkerProcess.VerifyLegacyRefusalAsync();
         await WorkerProcess.EnsureStartedAsync();
         var queued = await new QueuePlanner(_store).AddAsync(CurrentDraft, CurrentOptions, "demo", DateTimeOffset.UtcNow.AddSeconds(20));
         await _store.SaveDocumentAsync("discord-worker-smoke-id", queued.Id);

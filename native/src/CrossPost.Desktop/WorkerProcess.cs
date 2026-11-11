@@ -39,17 +39,25 @@ internal static class WorkerProcess
     }
     public static async Task EnsureStartedAsync()
     {
-        if (!IsRunning) Start();
+        var nextLaunch = DateTimeOffset.MinValue;
         for (var attempt = 0; attempt < 30; attempt++)
         {
-            if (await CommandAsync("protocol|2", 300)) return;
-            if (await CommandAsync("ping", 300))
+            // A previous process may finish stopping while we are waiting for readiness.
+            if (!IsRunning && DateTimeOffset.UtcNow >= nextLaunch)
+            {
+                Start(); nextLaunch = DateTimeOffset.UtcNow.AddSeconds(2);
+            }
+            var reply = await RequestAsync("protocol|2", 1000);
+            if (reply == "ok") return;
+            if (reply == "error")
                 throw new InvalidOperationException("Работает Worker предыдущей версии. Остановите очередь на вкладке «Очередь», затем нажмите «Запустить очередь». Новое задание ещё не добавлено.");
             await Task.Delay(100);
         }
         throw new InvalidOperationException("Фоновый процесс не подтвердил запуск. Проверьте worker-error.log в папке данных.");
     }
-    public static async Task<bool> CommandAsync(string command, int timeoutMilliseconds = 2000)
+    public static async Task<bool> CommandAsync(string command, int timeoutMilliseconds = 2000) =>
+        await RequestAsync(command, timeoutMilliseconds) == "ok";
+    private static async Task<string?> RequestAsync(string command, int timeoutMilliseconds)
     {
         try
         {
@@ -59,10 +67,23 @@ internal static class WorkerProcess
             using var writer = new StreamWriter(pipe, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
             using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
             await writer.WriteLineAsync(("v1|" + command).AsMemory(), timeout.Token);
-            return await reader.ReadLineAsync(timeout.Token) == "ok";
+            return await reader.ReadLineAsync(timeout.Token);
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or UnauthorizedAccessException)
-        { return false; }
+        { return null; }
+    }
+    public static async Task VerifyLegacyRefusalAsync()
+    {
+        using var owner = Acquire(); using var stopping = new CancellationTokenSource();
+        var server = ServeAsync(stopping.Token, command => command == "ping");
+        var refused = false;
+        try
+        {
+            try { await EnsureStartedAsync(); }
+            catch (InvalidOperationException error) when (error.Message.Contains("предыдущей версии")) { refused = true; }
+            if (!refused) throw new InvalidOperationException("Legacy Worker compatibility guard did not reject an explicit unsupported protocol");
+        }
+        finally { stopping.Cancel(); await server; }
     }
     public static async Task<int> RunAsync()
     {

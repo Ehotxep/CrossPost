@@ -108,8 +108,18 @@ public sealed partial class Store
         var ids = publication.Delivery.AllMediaMessageIds.Concat(publication.Delivery.EditMessageId is { } id ? [id] : Array.Empty<long>())
             .Distinct().Select(value => value.ToString(System.Globalization.CultureInfo.InvariantCulture))
             .Concat(publication.Delivery.RemoteMessageId is { } remote ? [remote] : Array.Empty<string>()).ToArray();
+        var target = publication.Delivery.ChatId;
+        if (publication.Platform == "discord" && Uri.TryCreate(publication.Delivery.Link, UriKind.Absolute, out var uri) && uri.Host == "discord.com")
+        {
+            var parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 4 && parts[0] == "channels" && parts[2] == target)
+            {
+                target = parts[1] + "/" + parts[2];
+                ids = ids.Append("url:" + uri.GetLeftPart(UriPartial.Path).TrimEnd('/')).Distinct().ToArray();
+            }
+        }
         await UpsertLibraryAsync(connection, transaction, new(publication.Id, publication.Id,
-            publication.Demo ? "demo." + publication.Platform : publication.Platform, publication.Delivery.ChatId, ids,
+            publication.Demo ? "demo." + publication.Platform : publication.Platform, target, ids,
             publication.Created, publication.EditText.Split('\n')[0], publication.EditText, publication.Delivery.State,
             publication.Delivery.Link ?? "", publication.Demo, publication.Id, "native"));
         using var marker = connection.CreateCommand(); marker.Transaction = transaction;

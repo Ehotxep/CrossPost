@@ -135,7 +135,17 @@ internal static class DiscordChecks
                 }, CancellationToken.None);
                 var publication = (await store.HistoryAsync()).Single(); var library = await store.LibraryAsync();
                 Check(publication.Platform == "discord" && publication.QueueId == job.Id && library.Posts.Single().Platform == "discord", "Discord routed into Telegram history");
-                Check(library.Posts.Single().ExternalIds.Contains("9007199254740993123"), "String ID changed");
+                Check(library.Posts.Single().ExternalIds.Contains("9007199254740993123") && library.Posts.Single().Target == "789/456", "String ID or canonical Discord destination changed");
+                var sourcePath = Path.Combine(folder, "python-history.db");
+                using (var source = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = sourcePath, Pooling = false }.ToString()))
+                {
+                    await source.OpenAsync(); using var command = source.CreateCommand();
+                    command.CommandText = "CREATE TABLE publications(id INTEGER PRIMARY KEY,created TEXT,title TEXT,text TEXT,dests TEXT); INSERT INTO publications VALUES(1,'2026-11-01T00:00:00Z','Legacy','Body',$dests)";
+                    command.Parameters.AddWithValue("$dests", JsonSerializer.Serialize(new[] { new { key = "discord:0", platform = "discord", state = "done", link = publication.Delivery.Link } }));
+                    await command.ExecuteNonQueryAsync();
+                }
+                await new LegacyImporter(store).ImportAsync(sourcePath);
+                Check((await store.LibraryAsync()).Posts.Count == 1, "Same Discord link duplicated native and imported history");
                 var stored = JsonSerializer.Serialize(publication) + JsonSerializer.Serialize(await store.QueueAsync());
                 Check(!stored.Contains(Secret) && !stored.Contains("/webhooks/"), "Webhook credential stored in queue/history");
             }
