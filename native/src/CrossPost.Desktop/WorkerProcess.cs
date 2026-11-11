@@ -47,7 +47,7 @@ internal static class WorkerProcess
             {
                 Start(); nextLaunch = DateTimeOffset.UtcNow.AddSeconds(2);
             }
-            var reply = await RequestAsync("protocol|2", 1000);
+            var reply = await RequestAsync("protocol|3", 1000);
             if (reply == "ok") return;
             if (reply == "error")
                 throw new InvalidOperationException("Работает Worker предыдущей версии. Остановите очередь на вкладке «Очередь», затем нажмите «Запустить очередь». Новое задание ещё не добавлено.");
@@ -110,13 +110,13 @@ internal static class WorkerProcess
                     if (command.StartsWith("cancel|", StringComparison.Ordinal) && Guid.TryParse(command[7..], out var id) && id == activeId)
                     { active?.Cancel(); return true; }
                 }
-                return command is "ping" or "protocol|2";
+                return command is "ping" or "protocol|3";
             });
             try
             {
                 var store = new Store(App.DataFolder); await store.InitializeAsync(recoverUnfinished: false);
                 await store.RecoverQueueAsync();
-                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow, 2));
+                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow, 3));
                 var runner = new QueueRunner(store);
                 while (!stopping.IsCancellationRequested)
                 {
@@ -126,6 +126,14 @@ internal static class WorkerProcess
                     {
                         var ran = await runner.RunNextAsync(DateTimeOffset.UtcNow, async job =>
                         {
+                            if (job.Options.Platform == "bluesky")
+                            {
+                                if (job.Options.Demo) return (IPublisher)new DemoBluesky();
+                                var bluesky = await store.ReadDocumentAsync<BlueskyOptions>("bluesky-options") ?? new();
+                                if (bluesky.Demo) throw new QueuePausedException("Включён деморежим Bluesky. Задание приостановлено.");
+                                if (bluesky.Did != job.BotId || bluesky.Did != job.Options.Chat) throw new QueuePausedException("Выбран другой аккаунт Bluesky. Проверьте задание вручную.");
+                                return new BlueskyClient(http, bluesky.Handle, SecretVault.Load("bluesky"), job.Options.Chat, job.Options.ContentLabel);
+                            }
                             if (job.Options.Platform == "discord")
                             {
                                 if (job.Options.Demo) return (IPublisher)new DemoDiscord();
@@ -193,6 +201,12 @@ internal static class WorkerProcess
             var discord = await WaitFor(discordId);
             if (discord.Platform != "discord" || discord.Delivery.Kind != "discord" || discord.Created.UtcDateTime < closed || discord.Delivery.AttachmentIds?.Length != 2)
                 throw new InvalidOperationException("Discord queue was routed incorrectly or did not run after window exit");
+            var blueskyId = await store.ReadDocumentAsync<Guid?>("bluesky-worker-smoke-id") ?? throw new InvalidOperationException("Bluesky smoke queue job missing");
+            var bluesky = await WaitFor(blueskyId);
+            if (bluesky.Platform != "bluesky" || bluesky.Delivery.Kind != "bluesky" || bluesky.Created.UtcDateTime < closed
+                || bluesky.Delivery.AttachmentIds?.Length != 2 || bluesky.Draft.ContentLabel != "explicit"
+                || bluesky.Draft.AltFor(0) != "Поворот" || bluesky.Draft.AltFor(1) != "Прозрачность")
+                throw new InvalidOperationException("Bluesky background routing, ALT or rating snapshot failed");
             var info = await store.ReadDocumentAsync<WorkerInfo>("worker-info");
             if (info?.ProcessId == Environment.ProcessId || !await CommandAsync("ping"))
                 throw new InvalidOperationException("Independent worker IPC failed");

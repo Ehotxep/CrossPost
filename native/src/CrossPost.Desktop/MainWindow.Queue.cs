@@ -9,7 +9,7 @@ public record QueueRow(ScheduledPost Record)
 {
     public string DueText => Record.Due.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
     public string Title => Record.Draft.Title.Length > 0 ? Record.Draft.Title : (Record.Draft.PlainText.Length > 0 ? Record.Draft.PlainText.Split('\n')[0] : "Изображения");
-    public string Destination => (Record.Options.Platform == "discord" ? "Discord • " : "Telegram • ") + (Record.Options.Demo ? "ДЕМО" : Record.Options.Chat);
+    public string Destination => (PublishLimits.Name(Record.Options.Platform) + " • ") + (Record.Options.Demo ? "ДЕМО" : Record.Options.Chat);
     public string Status => Record.State switch
     {
         QueueState.Pending => "Ожидает", QueueState.Paused => "Приостановлено", QueueState.Running => "Отправляется",

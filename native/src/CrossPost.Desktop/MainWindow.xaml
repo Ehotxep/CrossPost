@@ -14,12 +14,18 @@
    <ScrollViewer x:Name="ComposeView" VerticalScrollBarVisibility="Auto">
     <StackPanel MaxWidth="900" HorizontalAlignment="Stretch">
      <TextBlock Text="Новый пост" FontSize="26" FontWeight="SemiBold" Margin="0,0,0,18"/>
-     <WrapPanel Margin="0,0,0,10"><TextBlock Text="Площадка" VerticalAlignment="Center" Margin="0,0,12,0"/><ComboBox x:Name="PlatformPicker" Width="180" Foreground="#111827" Background="#F1F5F9" SelectedIndex="0" SelectionChanged="PlatformChanged"><ComboBoxItem Content="Telegram"/><ComboBoxItem Content="Discord"/></ComboBox></WrapPanel>
+     <WrapPanel Margin="0,0,0,10"><TextBlock Text="Площадка" VerticalAlignment="Center" Margin="0,0,12,0"/><ComboBox x:Name="PlatformPicker" Width="180" Foreground="#111827" Background="#F1F5F9" SelectedIndex="0" SelectionChanged="PlatformChanged"><ComboBoxItem Content="Telegram"/><ComboBoxItem Content="Discord"/><ComboBoxItem Content="Bluesky"/></ComboBox></WrapPanel>
      <TextBlock Text="Заголовок"/><TextBox x:Name="TitleInput" TextChanged="DraftChanged"/>
      <TextBlock Text="Описание"/><TextBox x:Name="BodyInput" Height="160" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged"/>
      <WrapPanel><Button Content="Добавить изображения" Click="PickImage"/><Button Content="Убрать выбранное" Click="RemoveImage"/><Button Content="Новый черновик" Click="ClearDraft"/></WrapPanel>
      <WrapPanel><Button Content="Выше" Click="MoveImageUp"/><Button Content="Ниже" Click="MoveImageDown"/></WrapPanel>
      <ListBox x:Name="ImageList" MaxHeight="130" Background="#242A36" Foreground="#EDF0F7" DisplayMemberPath="Label" SelectionChanged="ImageSelected"/>
+     <StackPanel x:Name="BlueskyComposer" Visibility="Collapsed" Margin="0,8,0,8">
+      <WrapPanel><TextBlock Text="Рейтинг Bluesky" VerticalAlignment="Center" Margin="0,0,10,0"/><ComboBox x:Name="BlueskyRating" Width="180" SelectedIndex="0" Foreground="#111827" Background="#F1F5F9" SelectionChanged="BlueskyRatingChanged"><ComboBoxItem Content="SFW"/><ComboBoxItem Content="Эротика • nudity"/><ComboBoxItem Content="Откровенное • porn"/></ComboBox></WrapPanel>
+      <TextBlock Text="ALT выбранного изображения" Margin="0,8,0,0"/><TextBox x:Name="ImageAltInput" TextChanged="ImageAltChanged" TextWrapping="Wrap" AcceptsReturn="True" Height="65"/>
+      <Button Content="Подготовить копии для Bluesky" Click="PrepareBlueskyImages" HorizontalAlignment="Left"/>
+      <TextBlock Text="До 4 изображений по 2 000 000 байт. Подготовка сохраняет PNG с прозрачностью, если он помещается; иначе создаёт JPEG на белом фоне. Оригиналы сохраняются. Результат появится в предпросмотре." TextWrapping="Wrap" Foreground="#ABB5CA"/>
+     </StackPanel>
      <TextBlock x:Name="ImageLabel" TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,8,0,8"/>
      <Image x:Name="PreviewImage" Height="130" Stretch="Uniform" HorizontalAlignment="Left"/>
      <Border Background="{StaticResource Panel}" Padding="16" Margin="0,14,0,14">
@@ -124,7 +130,16 @@
       <WrapPanel><Button Content="Сохранить Discord" Click="SaveDiscordSettings"/><Button Content="Проверить webhook" Click="CheckDiscord"/></WrapPanel>
       <TextBlock Text="Проверка только читает сведения о webhook. Ссылка хранится с защитой Windows; в задания записываются ID webhook и канала. Публикация: до 2000 символов и 10 JPEG/PNG до 20 MiB каждый, всего до 24 MiB. Упоминания не вызывают уведомлений." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,12,0,0"/>
      </StackPanel></Border>
-     <TextBlock Text="В прототипе: Telegram и Discord, очередь, история, импорт Python-базы и локальная статистика. MTProto, видео и остальные адаптеры будут добавлены отдельно." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,20,0,12"/>
+     <Border Background="{StaticResource Panel}" Padding="16" Margin="0,20,0,0"><StackPanel>
+      <TextBlock Text="Bluesky • пароль приложения" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12"/>
+      <CheckBox x:Name="BlueskyDemoInput" Content="Деморежим Bluesky — без входа и публикаций" IsChecked="True"/>
+      <TextBlock Text="Handle"/><TextBox x:Name="BlueskyHandleInput"/>
+      <TextBlock Text="Пароль приложения из настроек Bluesky"/><PasswordBox x:Name="BlueskyPasswordInput"/>
+      <TextBlock x:Name="BlueskyAccountLabel" Text="Аккаунт пока не проверен" TextWrapping="Wrap" Foreground="#ABB5CA"/>
+      <WrapPanel><Button Content="Сохранить Bluesky" Click="SaveBlueskySettings"/><Button Content="Проверить вход" Click="CheckBluesky"/></WrapPanel>
+      <TextBlock Text="Проверка выполняет вход без создания поста. Пароль приложения защищается Windows DPAPI; сессия используется только во время действия. В этой версии поддерживаются аккаунты на серверах Bluesky; собственные PDS пока не подключены." TextWrapping="Wrap" Foreground="#ABB5CA"/>
+     </StackPanel></Border>
+     <TextBlock Text="В прототипе: Telegram, Discord и Bluesky, очередь, история, импорт Python-базы и локальная статистика. MTProto, видео и остальные адаптеры будут добавлены отдельно." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,20,0,12"/>
     </StackPanel>
    </ScrollViewer>
   </Grid>

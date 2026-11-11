@@ -16,7 +16,7 @@ public record HistoryRow(Publication Record)
 {
     public string CreatedText => Record.Created.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
     public string Title => Record.EditText.Split('\n')[0] is { Length: > 0 } title ? title : "Изображение";
-    public string Mode => (Record.Demo ? "ДЕМО • " : "") + (Record.Platform == "discord" ? "Discord" : "Telegram");
+    public string Mode => (Record.Demo ? "ДЕМО • " : "") + PublishLimits.Name(Record.Platform);
     public string Status => Record.Delivery.State switch
     {
         DeliveryState.Sent => "Отправлено", DeliveryState.Refused => "Не отправлено",
@@ -75,7 +75,7 @@ public partial class MainWindow : Window
         };
         Closing += OnClosing;
     }
-    private Draft CurrentDraft => new(TitleInput.Text, BodyInput.Text, _images.FirstOrDefault(), _images.Skip(1).ToArray());
+    private Draft CurrentDraft => new(TitleInput.Text, BodyInput.Text, _images.FirstOrDefault(), _images.Skip(1).ToArray(), _alts.ToArray(), SelectedBlueskyLabel);
     private async Task RunSmokeChecksAsync()
     {
         // Executed only with --smoke-test and an explicitly isolated data directory.
@@ -105,6 +105,8 @@ public partial class MainWindow : Window
         SwitchView(HistoryView); UpdateLayout(); SwitchView(SettingsView); UpdateLayout(); SwitchView(QueueView); UpdateLayout(); SwitchView(ComposeView);
         App.TraceSmoke("discord scenario");
         await RunDiscordSmokeAsync();
+        App.TraceSmoke("bluesky media and queue scenario");
+        await RunBlueskySmokeAsync();
         App.TraceSmoke("library scenario");
         await RunLibrarySmokeAsync();
         App.TraceSmoke("schedule Telegram after window exit");
@@ -122,10 +124,12 @@ public partial class MainWindow : Window
         if (App.SmokeTest) _options = _options with { Demo = true };
         var draft = await _store.ReadDocumentAsync<Draft>("draft") ?? new();
         TitleInput.Text = draft.Title; BodyInput.Text = draft.Text; _images.AddRange(draft.Images);
+        _alts.AddRange(Enumerable.Range(0, draft.Images.Length).Select(draft.AltFor));
         RefreshImages();
         DemoInput.IsChecked = _options.Demo; ChatInput.Text = _options.Chat;
         TokenInput.Password = SecretVault.Load();
         await InitializeDiscordAsync();
+        await InitializeBlueskyAsync(draft);
         _loaded = true;
         UpdatePreview(); ApplyMode();
         await LoadHistoryAsync();
@@ -149,19 +153,22 @@ public partial class MainWindow : Window
     private void UpdatePreview()
     {
         var draft = CurrentDraft;
-        PreviewText.Text = draft.PlainText.Length > 0 ? draft.PlainText : "Без текста";
-        CountLabel.Text = $"{draft.PlainText.Length} / {PublishLimits.Text(CurrentOptions.Platform)} символов" +
+        var content = CurrentOptions.Platform == "bluesky" ? BlueskyText.Build(draft.PlainText).Text : draft.PlainText;
+        PreviewText.Text = content.Length > 0 ? content : "Без текста";
+        CountLabel.Text = $"{PublishLimits.Count(content, CurrentOptions.Platform)} / {PublishLimits.Text(CurrentOptions.Platform)} символов" +
             (CurrentOptions.Platform == "telegram" && _images.Count > 0 && draft.PlainText.Length > 1024 ? " • Текст уйдёт отдельным сообщением перед фото" : "");
         ImageLabel.Text = _images.Count == 0 ? "Изображения не выбраны"
-            : $"{_images.Count} / 10 • " + (CurrentOptions.Platform == "discord" ? "вложения Discord" : _images.Count == 1 ? "одно фото" : "альбом, подпись под первым фото");
+            : $"{_images.Count} / {(CurrentOptions.Platform == "bluesky" ? 4 : 10)} • " + (CurrentOptions.Platform == "bluesky" ? "изображения Bluesky" : CurrentOptions.Platform == "discord" ? "вложения Discord" : _images.Count == 1 ? "одно фото" : "альбом, подпись под первым фото");
     }
     private void RefreshImages(int selection = 0)
     {
+        while (_alts.Count < _images.Count) _alts.Add("");
+        if (_alts.Count > _images.Count) _alts.RemoveRange(_images.Count, _alts.Count - _images.Count);
         ImageList.ItemsSource = _images.Select(path => new ImageRow(path)).ToArray();
         ImageList.SelectedIndex = _images.Count == 0 ? -1 : Math.Clamp(selection, 0, _images.Count - 1);
         UpdateImagePreview();
     }
-    private void ImageSelected(object sender, SelectionChangedEventArgs e) => UpdateImagePreview();
+    private void ImageSelected(object sender, SelectionChangedEventArgs e) { UpdateImagePreview(); UpdateAltInput(); }
     private void UpdateImagePreview()
     {
         if (PreviewImage is null) return;
@@ -195,12 +202,12 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         if (MessageBox.Show("Очистить текущий черновик?", "CrossPost", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
-        TitleInput.Clear(); BodyInput.Clear(); _images.Clear(); RefreshImages(); UpdatePreview();
+        TitleInput.Clear(); BodyInput.Clear(); _images.Clear(); _alts.Clear(); BlueskyRating.SelectedIndex = 0; RefreshImages(); UpdatePreview();
         await Guard(SaveDraftAsync);
     }
-    private void ValidateImages(Draft candidate)
+    private void ValidateImages(Draft candidate, bool allowPreparation = false)
     {
-        candidate.Validate(CurrentOptions.Platform);
+        candidate.Validate(CurrentOptions.Platform, allowPreparation);
         foreach (var path in candidate.Images)
         {
             using var stream = File.OpenRead(path);
@@ -218,7 +225,7 @@ public partial class MainWindow : Window
         {
             var paths = _images.Concat(picker.FileNames).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             var candidate = CurrentDraft with { ImagePath = paths.FirstOrDefault(), AdditionalImagePaths = paths.Skip(1).ToArray() };
-            ValidateImages(candidate);
+            ValidateImages(candidate, allowPreparation: CurrentOptions.Platform == "bluesky");
             _images.Clear(); _images.AddRange(paths); RefreshImages(paths.Length - 1); UpdatePreview(); await SaveDraftAsync();
         });
     }
@@ -226,13 +233,14 @@ public partial class MainWindow : Window
     {
         if (_busy || ImageList.SelectedIndex < 0) return;
         var index = ImageList.SelectedIndex;
-        _images.RemoveAt(index); RefreshImages(index); UpdatePreview(); await Guard(SaveDraftAsync);
+        _images.RemoveAt(index); if (index < _alts.Count) _alts.RemoveAt(index); RefreshImages(index); UpdatePreview(); await Guard(SaveDraftAsync);
     }
     private async Task MoveImage(int offset)
     {
         var index = ImageList.SelectedIndex;
         if (_busy || index < 0 || index + offset < 0 || index + offset >= _images.Count) return;
         (_images[index], _images[index + offset]) = (_images[index + offset], _images[index]);
+        (_alts[index], _alts[index + offset]) = (_alts[index + offset], _alts[index]);
         RefreshImages(index + offset); await SaveDraftAsync();
     }
     private async void MoveImageUp(object sender, RoutedEventArgs e) => await Guard(() => MoveImage(-1));
@@ -266,7 +274,9 @@ public partial class MainWindow : Window
             _options = options; ApplyMode(); StatusLabel.Text = "Настройки сохранены.";
         });
     }
-    private IPublisher Client(bool demo, string platform = "telegram", string? channel = null) => platform == "discord"
+    private IPublisher Client(bool demo, string platform = "telegram", string? channel = null) => platform == "bluesky"
+        ? demo ? new DemoBluesky() : new BlueskyClient(_http, _bluesky.Handle, SecretVault.Load("bluesky"), channel ?? _bluesky.Did, SelectedBlueskyLabel)
+        : platform == "discord"
         ? demo ? new DemoDiscord() : new DiscordClient(_http, DiscordEndpoint.Parse(SecretVault.Load("discord")), channel ?? _discord.ChannelId, _discord.Spoiler, _discord.SuppressEmbeds)
         : demo ? new DemoTelegram() : new TelegramClient(_http, SecretVault.Load());
     private async Task RunOperation(Func<CancellationToken, Task> action)
@@ -318,14 +328,15 @@ public partial class MainWindow : Window
     {
         _selected = (HistoryList.SelectedItem as HistoryRow)?.Record;
         EditInput.Text = _selected?.EditText ?? "";
+        EditInput.IsReadOnly = _selected?.Platform == "bluesky";
         EditButton.IsEnabled = !_busy && CanEdit(_selected);
         HistoryDetails.Text = _selected is null ? "Выберите запись." :
-            $"{new HistoryRow(_selected).Mode} • {_selected.Delivery.ChatId} • {new HistoryRow(_selected).Status}\nИзображений: {(_selected.Platform == "discord" ? _selected.Delivery.AttachmentIds?.Length ?? 0 : _selected.Delivery.AllMediaMessageIds.Length)} • ID сообщения: {_selected.Delivery.RemoteMessageId ?? _selected.Delivery.EditMessageId?.ToString()}\n{_selected.Delivery.Error}\n{_selected.EditState}";
+            $"{new HistoryRow(_selected).Mode} • {_selected.Delivery.ChatId} • {new HistoryRow(_selected).Status}\nИзображений: {(_selected.Platform is "discord" or "bluesky" ? _selected.Delivery.AttachmentIds?.Length ?? 0 : _selected.Delivery.AllMediaMessageIds.Length)} • ID сообщения: {_selected.Delivery.RemoteMessageId ?? _selected.Delivery.EditMessageId?.ToString()}\n{_selected.Delivery.Error}\n{_selected.EditState}" + (_selected.Platform == "bluesky" ? "\nBluesky не поддерживает редактирование опубликованного поста." : "");
     }
     private async void EditPost(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
     {
         if (_selected is not { } selected) return;
-        if (!selected.Demo && MessageBox.Show("Изменить это сообщение в " + (selected.Platform == "discord" ? "Discord" : "Telegram") + "?", "Редактирование", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        if (!selected.Demo && MessageBox.Show("Изменить это сообщение в " + PublishLimits.Name(selected.Platform) + "?", "Редактирование", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         StatusLabel.Text = selected.Demo ? "Демонстрационное изменение…" : "Сохраняю на площадке…";
         var updated = await new Workflow(_store).EditAsync(Client(selected.Demo, selected.Platform, selected.Delivery.ChatId), selected, EditInput.Text, ct);
         await LoadHistoryAsync();
@@ -334,7 +345,7 @@ public partial class MainWindow : Window
     private void CancelOperation(object sender, RoutedEventArgs e) => _operation?.Cancel();
     private void OpenPost(object sender, RoutedEventArgs e)
     {
-        if (_selected?.Delivery.Link is { } link && Uri.TryCreate(link, UriKind.Absolute, out var uri) && uri.Scheme == "https" && (uri.Host == "t.me" || uri.Host == "discord.com"))
+        if (_selected?.Delivery.Link is { } link && Uri.TryCreate(link, UriKind.Absolute, out var uri) && uri.Scheme == "https" && (uri.Host == "t.me" || uri.Host == "discord.com" || uri.Host == "bsky.app"))
             Process.Start(new ProcessStartInfo(link) { UseShellExecute = true });
     }
     private void OpenData(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo(App.DataFolder) { UseShellExecute = true });

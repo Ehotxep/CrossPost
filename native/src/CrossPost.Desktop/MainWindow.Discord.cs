@@ -7,10 +7,10 @@ namespace CrossPost.Desktop;
 public partial class MainWindow
 {
     private DiscordOptions _discord = new();
-    private AppOptions CurrentOptions => PlatformPicker?.SelectedIndex == 1 ? _discord.PublishOptions : _options;
-    private string CurrentPlatformLabel => CurrentOptions.Platform == "discord" ? "Discord" : "Telegram";
-    private string CurrentCredentialId => CurrentOptions.Platform == "discord" ? DiscordEndpoint.Parse(SecretVault.Load("discord")).Id : TelegramClient.BotId(SecretVault.Load());
-    private static bool CanEdit(Publication? publication) => publication?.Delivery.EditMessageId is not null || publication?.Delivery.RemoteMessageId is not null;
+    private AppOptions CurrentOptions => PlatformPicker?.SelectedIndex switch { 1 => _discord.PublishOptions, 2 => _bluesky.PublishOptions with { ContentLabel = SelectedBlueskyLabel }, _ => _options };
+    private string CurrentPlatformLabel => PublishLimits.Name(CurrentOptions.Platform);
+    private string CurrentCredentialId => CurrentOptions.Platform switch { "discord" => DiscordEndpoint.Parse(SecretVault.Load("discord")).Id, "bluesky" => _bluesky.Did, _ => TelegramClient.BotId(SecretVault.Load()) };
+    private static bool CanEdit(Publication? publication) => publication?.Platform != "bluesky" && (publication?.Delivery.EditMessageId is not null || publication?.Delivery.RemoteMessageId is not null);
     private async Task InitializeDiscordAsync()
     {
         _discord = await _store.ReadDocumentAsync<DiscordOptions>("discord-options") ?? new();
@@ -20,7 +20,7 @@ public partial class MainWindow
         DiscordTargetLabel.Text = _discord.ChannelId.Length > 0 ? $"{_discord.Name} • канал {_discord.ChannelId}" : "Канал пока не проверен";
     }
     private void PlatformChanged(object sender, SelectionChangedEventArgs e)
-    { if (_loaded) { ApplyMode(); UpdatePreview(); } }
+    { if (_loaded) { ApplyMode(); UpdatePreview(); UpdateBlueskyControls(); } }
     private async void SaveDiscordSettings(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
     {
         var demo = DiscordDemoInput.IsChecked != false;

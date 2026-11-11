@@ -6,9 +6,9 @@ namespace CrossPost.Desktop;
 
 internal static class SecretVault
 {
-    private static byte[] Entropy(string platform) => Encoding.UTF8.GetBytes(platform == "discord" ? "CrossPost.Native.Prototype.Discord.v1" : "CrossPost.Native.Prototype.Telegram.v1");
+    private static byte[] Entropy(string platform) => Encoding.UTF8.GetBytes(platform switch { "discord" => "CrossPost.Native.Prototype.Discord.v1", "bluesky" => "CrossPost.Native.Prototype.Bluesky.v1", _ => "CrossPost.Native.Prototype.Telegram.v1" });
     private static string PathFor(string platform) => Path.Combine(App.DataFolder, platform switch
-    { "telegram" => "telegram-token.dpapi", "discord" => "discord-webhook.dpapi", _ => throw new ArgumentOutOfRangeException(nameof(platform)) });
+    { "telegram" => "telegram-token.dpapi", "discord" => "discord-webhook.dpapi", "bluesky" => "bluesky-password.dpapi", _ => throw new ArgumentOutOfRangeException(nameof(platform)) });
     public static string Load(string platform = "telegram")
     {
         var FilePath = PathFor(platform);

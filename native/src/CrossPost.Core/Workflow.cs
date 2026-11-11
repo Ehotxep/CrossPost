@@ -15,7 +15,7 @@ public sealed class Workflow(Store store)
             result = await publisher.SendAsync(options.Chat, draft, ct, async confirmed =>
             {
                 latest = confirmed;
-                try { await store.SavePublicationAsync(publication with { Delivery = confirmed }); }
+                try { await store.SavePublicationAsync(publication with { Delivery = confirmed, EditText = confirmed.SentText ?? publication.EditText }); }
                 catch (Exception error) { throw new CheckpointFailure(error); }
             });
         }
@@ -23,7 +23,7 @@ public sealed class Workflow(Store store)
         { result = latest with { State = DeliveryState.Unknown, Error = "Отправка прервана. Проверьте канал перед повтором." }; }
         catch (Exception)
         { result = latest with { State = DeliveryState.Unknown, Error = "Результат отправки неизвестен. Проверьте канал перед повтором." }; }
-        publication = publication with { Delivery = result };
+        publication = publication with { Delivery = result, EditText = result.SentText ?? publication.EditText };
         try { await store.SavePublicationAsync(publication); }
         catch (Exception error)
         { throw new InvalidOperationException("Результат не сохранён в истории. Не отправляйте повторно до проверки канала.", error); }
