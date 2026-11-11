@@ -144,7 +144,7 @@ public partial class MainWindow
             {
                 IsEnabled = true; UpdateStatus.Text = "Обновление установлено. Настройки, история и очередь сохранены.";
                 if (request.ResumeWorker) await WorkerProcess.EnsureStartedAsync();
-                if (Environment.GetEnvironmentVariable("CROSSPOST_UPDATE_SMOKE") == "1") Application.Current.Shutdown();
+                if (Environment.GetEnvironmentVariable("CROSSPOST_UPDATE_SMOKE") == "1") Close();
                 return;
             }
             await Task.Delay(100);

@@ -63,7 +63,7 @@ jobs:
           Copy-Item artifacts/updater/CrossPost.Updater.exe artifacts/win-x64/CrossPost.Updater.exe
           Copy-Item README.md artifacts/win-x64/README.md
           ./tools/Package.ps1 -Version '${{ steps.version.outputs.version }}'
-      - name: Start the actual WPF application in an isolated smoke test
+      - name: Verify actual WPF layout and single-request close in an isolated test
         shell: pwsh
         run: |
           try {
@@ -80,6 +80,7 @@ jobs:
             throw "WPF initialization failed: $($process.ExitCode)"
           }
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "smoke-ready.txt"))) { throw "WPF readiness marker missing" }
+          if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "close-smoke-ready.txt"))) { throw "Window did not confirm normal single-request close" }
           Set-Content (Join-Path $env:CROSSPOST_NATIVE_DATA "window-closed.txt") "Window process exited"
           $verify = Start-Process -FilePath (Resolve-Path artifacts/win-x64/CrossPost.Native.exe) -ArgumentList "--verify-worker-smoke" -PassThru
           if (-not $verify.WaitForExit(90000)) { $verify.Kill(); throw "Background worker test timed out" }

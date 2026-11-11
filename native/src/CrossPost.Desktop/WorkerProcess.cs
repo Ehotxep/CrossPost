@@ -4,6 +4,7 @@ using System.IO.Pipes;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using CrossPost.Core;
 
 namespace CrossPost.Desktop;
@@ -183,6 +184,12 @@ internal static class WorkerProcess
         try
         {
             var store = new Store(App.DataFolder);
+            var closingDraft = JsonSerializer.Deserialize<Draft>(await File.ReadAllTextAsync(Path.Combine(App.DataFolder,"close-smoke-expected.json")))
+                ?? throw new InvalidOperationException("No expected closing draft");
+            var savedDraft = await store.ReadDocumentAsync<Draft>("draft");
+            if (!File.Exists(Path.Combine(App.DataFolder,"close-smoke-ready.txt")) || savedDraft is null || !savedDraft.SameContent(closingDraft)
+                || savedDraft.EnglishTitle != "Unsaved English title at close")
+                throw new InvalidOperationException("Single-request close lost pending draft edits");
             var jobId = await store.ReadDocumentAsync<Guid?>("worker-smoke-id") ?? throw new InvalidOperationException("No isolated smoke job");
             var job = (await store.QueueAsync()).Single(value => value.Id == jobId);
             if (!job.Options.Demo) throw new InvalidOperationException("Worker smoke job must be demo");

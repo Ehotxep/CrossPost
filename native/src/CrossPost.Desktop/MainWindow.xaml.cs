@@ -35,7 +35,7 @@ public partial class MainWindow : Window
     private readonly SemaphoreSlim _draftLock = new(1, 1);
     private AppOptions _options = new();
     private readonly List<string> _images = [];
-    private bool _loaded, _busy, _closing;
+    private bool _loaded, _busy, _closing, _closeAuthorized;
     private CancellationTokenSource? _operation;
     private Publication? _selected;
     public ObservableCollection<HistoryRow> History { get; } = [];
@@ -51,7 +51,7 @@ public partial class MainWindow : Window
         var queueTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         queueTimer.Tick += async (_, _) => { if (_loaded) await Guard(async () => { RefreshWorkerBadge(); if (QueueView.Visibility == Visibility.Visible) await LoadQueueAsync(); }); };
         queueTimer.Start();
-        Closed += (_, _) => queueTimer.Stop();
+        Closed += (_, _) => { queueTimer.Stop(); _http.Dispose(); };
         _draftTimer.Tick += async (_, _) => { _draftTimer.Stop(); await Guard(SaveDraftAsync); };
         Loaded += async (_, _) =>
         {
@@ -83,8 +83,18 @@ public partial class MainWindow : Window
                 exit = 1;
                 await File.AppendAllTextAsync(Path.Combine(App.DataFolder, "error.log"), error + Environment.NewLine);
             }
+            if (exit == 0)
+            {
+                // Exercise the real close handler with edits that the debounce timer has not saved.
+                EnglishTitleInput.Text = "Unsaved English title at close";
+                EnglishBodyInput.Text = "Final edits must survive one close request";
+                File.WriteAllText(Path.Combine(App.DataFolder,"close-smoke-expected.json"),System.Text.Json.JsonSerializer.Serialize(CurrentDraft));
+                Closed += (_,_) => File.WriteAllText(Path.Combine(App.DataFolder,"close-smoke-ready.txt"),"Closed after one external Close call");
+                App.TraceSmoke("single close request with pending draft edits");
+                Close();
+                return;
+            }
             Closing -= OnClosing;
-            _http.Dispose();
             Application.Current.Shutdown(exit);
         };
         Closing += OnClosing;
@@ -384,18 +394,27 @@ public partial class MainWindow : Window
     private void OpenData(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo(App.DataFolder) { UseShellExecute = true });
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
+        if (_closeAuthorized) return;
         e.Cancel = true;
         if (_closing) return;
         if (_busy)
         { MessageBox.Show("Дождитесь завершения операции или отмените её. Отмена отправки может оставить неизвестный результат."); return; }
         _closing = true;
+        var enabledBeforeClose = IsEnabled;
+        StatusLabel.Text = "Сохраняю черновик перед закрытием…";
+        IsEnabled = false;
         try
         {
             _draftTimer.Stop();
             if (_loaded) await SaveDraftAsync();
-            _http.Dispose();
-            Closing -= OnClosing; Close();
+            // SQLite's async methods may complete synchronously. Close must run only
+            // after the original Closing event has unwound, even in that case.
+            await Dispatcher.InvokeAsync(() => { _closeAuthorized = true; Close(); }, DispatcherPriority.Normal);
         }
-        catch (Exception error) { _closing = false; StatusLabel.Text = "Не удалось сохранить черновик: " + error.Message; }
+        catch (Exception error)
+        {
+            _closeAuthorized = false; _closing = false; IsEnabled = enabledBeforeClose;
+            StatusLabel.Text = "Не удалось сохранить черновик. Окно оставлено открытым: " + error.Message;
+        }
     }
 }
