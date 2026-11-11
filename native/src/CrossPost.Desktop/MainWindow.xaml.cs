@@ -274,8 +274,8 @@ public partial class MainWindow : Window
             _options = options; ApplyMode(); StatusLabel.Text = "Настройки сохранены.";
         });
     }
-    private IPublisher Client(bool demo, string platform = "telegram", string? channel = null) => platform == "bluesky"
-        ? demo ? new DemoBluesky() : new BlueskyClient(_http, _bluesky.Handle, SecretVault.Load("bluesky"), channel ?? _bluesky.Did, SelectedBlueskyLabel)
+    private IPublisher Client(bool demo, string platform = "telegram", string? channel = null, string? contentLabel = null) => platform == "bluesky"
+        ? demo ? new DemoBluesky() : new BlueskyClient(_http, _bluesky.Handle, SecretVault.Load("bluesky"), channel ?? _bluesky.Did, contentLabel ?? SelectedBlueskyLabel)
         : platform == "discord"
         ? demo ? new DemoDiscord() : new DiscordClient(_http, DiscordEndpoint.Parse(SecretVault.Load("discord")), channel ?? _discord.ChannelId, _discord.Spoiler, _discord.SuppressEmbeds)
         : demo ? new DemoTelegram() : new TelegramClient(_http, SecretVault.Load());
@@ -311,7 +311,7 @@ public partial class MainWindow : Window
         if (!options.Demo && MessageBox.Show("Отправить пост в " + options.Chat + "?", "Реальная публикация", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         StatusLabel.Text = options.Demo ? "Демонстрационная отправка…" : "Отправляю в " + CurrentPlatformLabel + "…";
         var botId = options.Demo ? "demo" : CurrentCredentialId;
-        var sent = await new Workflow(_store).SendAsync(Client(options.Demo, options.Platform, options.Chat), botId, options, draft, ct);
+        var sent = await new Workflow(_store).SendAsync(Client(options.Demo, options.Platform, options.Chat, options.ContentLabel), botId, options, draft, ct);
         await LoadHistoryAsync();
         StatusLabel.Text = (sent.Demo ? "ДЕМО: " : "") + new HistoryRow(sent).Status +
             (sent.Delivery.Error.Length > 0 ? ". " + sent.Delivery.Error : "");
