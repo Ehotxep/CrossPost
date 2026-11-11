@@ -227,23 +227,29 @@ internal static class WorkerProcess
             {
                 using var pipe = new NamedPipeServerStream(PipeName, PipeDirection.InOut, 1,
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-                await pipe.WaitForConnectionAsync(ct);
+                await pipe.WaitForConnectionAsync(ct).ConfigureAwait(false);
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeout.CancelAfter(TimeSpan.FromSeconds(2));
                 // Fixed-size byte reads bound control messages before allocating strings.
                 var bytes = new byte[256]; var count = 0;
                 while (count < bytes.Length)
                 {
-                    var read = await pipe.ReadAsync(bytes.AsMemory(count, 1), timeout.Token);
+                    var read = await pipe.ReadAsync(bytes.AsMemory(count, 1), timeout.Token).ConfigureAwait(false);
                     if (read == 0 || bytes[count++] == '\n') break;
                 }
                 var request = Encoding.UTF8.GetString(bytes, 0, count).Trim('\uFEFF', '\r', '\n');
                 var ok = count < bytes.Length && request.StartsWith("v1|", StringComparison.Ordinal) && handle(request[3..]);
                 // A stop command cancels the listener, but its acknowledgement must still reach the caller.
-                await pipe.WriteAsync(Encoding.UTF8.GetBytes(ok ? "ok\n" : "error\n"));
-                await pipe.FlushAsync();
+                await pipe.WriteAsync(Encoding.UTF8.GetBytes(ok ? "ok\n" : "error\n")).ConfigureAwait(false);
+                await pipe.FlushAsync().ConfigureAwait(false);
             }
-            catch (Exception error) when (error is IOException or OperationCanceledException) { }
+            catch (Exception error) when (error is IOException or OperationCanceledException)
+            {
+                if (ct.IsCancellationRequested) break;
+                // A client may still hold the previous pipe instance. Yield so its
+                // continuation can close it; a tight retry loop can starve WPF.
+                await Task.Delay(25).ConfigureAwait(false);
+            }
         }
     }
 }

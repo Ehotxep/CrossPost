@@ -56,9 +56,12 @@ public partial class MainWindow : Window
             var exit = 0;
             try
             {
+                App.TraceSmoke("initialize");
                 await InitializeAsync();
+                App.TraceSmoke("telegram demo");
                 await RunSmokeChecksAsync();
                 await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
+                App.TraceSmoke("window ready");
                 await File.WriteAllTextAsync(Path.Combine(App.DataFolder, "smoke-ready.txt"), "WPF initialized; demo album, reordering, persistence and editing checked");
             }
             catch (Exception error)
@@ -100,8 +103,11 @@ public partial class MainWindow : Window
         var edited = await workflow.EditAsync(new DemoTelegram(), sent, "Изменённая подпись", CancellationToken.None);
         if (!edited.Result.Confirmed) throw new InvalidOperationException("WPF demo edit failed");
         SwitchView(HistoryView); UpdateLayout(); SwitchView(SettingsView); UpdateLayout(); SwitchView(QueueView); UpdateLayout(); SwitchView(ComposeView);
+        App.TraceSmoke("discord scenario");
         await RunDiscordSmokeAsync();
+        App.TraceSmoke("library scenario");
         await RunLibrarySmokeAsync();
+        App.TraceSmoke("schedule Telegram after window exit");
         var queued = await new QueuePlanner(_store).AddAsync(CurrentDraft, new(), "demo", DateTimeOffset.UtcNow.AddSeconds(20));
         await _store.SaveDocumentAsync("worker-smoke-id", queued.Id);
         WorkerProcess.Start();

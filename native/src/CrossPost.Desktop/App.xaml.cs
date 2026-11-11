@@ -54,6 +54,10 @@ public partial class App : Application
         MainWindow = new MainWindow();
         MainWindow.Show();
     }
+    public static void TraceSmoke(string stage)
+    {
+        if (SmokeTest) File.AppendAllText(Path.Combine(DataFolder, "smoke-stage.log"), $"{DateTimeOffset.UtcNow:O} {stage}\n");
+    }
     public static string DataFolder => Environment.GetEnvironmentVariable("CROSSPOST_NATIVE_DATA") is { Length: > 0 } folder
         ? Path.GetFullPath(folder)
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CrossPostNativePrototype");

@@ -84,6 +84,11 @@ jobs:
           }
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "worker-smoke-ready.txt"))) { throw "Worker readiness marker missing" }
           } catch {
+            $stages = Join-Path $env:CROSSPOST_NATIVE_DATA "smoke-stage.log"
+            if (Test-Path $stages) {
+              $trace = (Get-Content $stages -Raw).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+              Write-Output "::notice::$trace"
+            }
             $message = $_.Exception.ToString().Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
             Write-Output "::error::$message"
             throw
