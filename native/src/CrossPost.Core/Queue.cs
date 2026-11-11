@@ -4,7 +4,7 @@ namespace CrossPost.Core;
 
 public enum QueueState { Pending, Paused, Running, Completed, Refused, Partial, Unknown, Cancelled }
 public record ScheduledPost(Guid Id, DateTimeOffset Created, DateTimeOffset Due, Draft Draft,
-    AppOptions Options, string BotId, QueueState State = QueueState.Pending, string Error = "");
+    AppOptions Options, string BotId, QueueState State = QueueState.Pending, string Error = "", Guid? WorkId = null);
 public sealed class QueuePausedException(string message) : Exception(message);
 
 public static class ScheduleTime
@@ -20,37 +20,53 @@ public static class ScheduleTime
     }
 }
 
+public record PublishTarget(AppOptions Options, string CredentialId);
+
 public sealed class QueuePlanner(Store store)
 {
     public async Task<ScheduledPost> AddAsync(Draft draft, AppOptions options, string botId, DateTimeOffset due)
     {
-        draft.Validate(options.Platform);
-        if (!options.Demo && (string.IsNullOrWhiteSpace(options.Chat) || string.IsNullOrWhiteSpace(botId)))
-            throw new InvalidOperationException("Для задания нужны канал и бот.");
-        var id = Guid.NewGuid();
-        var folder = Path.Combine(store.Folder, "queue-media", id.ToString("N"));
+        var jobs = await AddBatchAsync(draft, [new(options, botId)], due);
+        return jobs[0];
+    }
+    public async Task<ScheduledPost[]> AddBatchAsync(Draft draft, PublishTarget[] targets, DateTimeOffset due, CancellationToken ct = default)
+    {
+        if (targets.Length == 0) throw new InvalidOperationException("Выберите назначения публикации.");
+        if (targets.Select(target => (target.Options.Platform, target.Options.Chat)).Distinct().Count() != targets.Length)
+            throw new InvalidOperationException("Назначение выбрано несколько раз.");
+        foreach (var target in targets)
+        {
+            draft.Validate(target.Options.Platform);
+            if (!target.Options.Demo && (string.IsNullOrWhiteSpace(target.Options.Chat) || string.IsNullOrWhiteSpace(target.CredentialId)))
+                throw new InvalidOperationException($"{PublishLimits.Name(target.Options.Platform)}: сохраните настройки назначения.");
+        }
+        var workId = Guid.NewGuid(); var jobs = new List<ScheduledPost>(); var folders = new List<string>();
         try
         {
-            var copies = new List<string>();
-            for (var index = 0; index < draft.Images.Length; index++)
+            foreach (var target in targets)
             {
-                Directory.CreateDirectory(folder);
-                var path = draft.Images[index];
-                var copy = Path.Combine(folder, index + Path.GetExtension(path).ToLowerInvariant());
-                await using (var input = File.OpenRead(path))
-                await using (var output = new FileStream(copy, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
-                    await input.CopyToAsync(output);
-                copies.Add(copy);
+                ct.ThrowIfCancellationRequested();
+                var id = Guid.NewGuid(); var folder = Path.Combine(store.Folder, "queue-media", id.ToString("N")); folders.Add(folder);
+                var copies = new List<string>();
+                for (var index = 0; index < draft.Images.Length; index++)
+                {
+                    Directory.CreateDirectory(folder); var path = draft.Images[index];
+                    var copy = Path.Combine(folder, index + Path.GetExtension(path).ToLowerInvariant());
+                    await using (var input = File.OpenRead(path))
+                    await using (var output = new FileStream(copy, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+                        await input.CopyToAsync(output, ct);
+                    copies.Add(copy);
+                }
+                var snapshot = draft with { ImagePath = copies.FirstOrDefault(), AdditionalImagePaths = copies.Skip(1).ToArray() };
+                snapshot.Validate(target.Options.Platform);
+                jobs.Add(new(id, DateTimeOffset.UtcNow, due.ToUniversalTime(), snapshot, target.Options, target.CredentialId, WorkId: workId));
             }
-            var snapshot = draft with { ImagePath = copies.FirstOrDefault(), AdditionalImagePaths = copies.Skip(1).ToArray() };
-            snapshot.Validate(options.Platform);
-            var job = new ScheduledPost(id, DateTimeOffset.UtcNow, due.ToUniversalTime(), snapshot, options, botId);
-            await store.InsertQueueAsync(job);
-            return job;
+            ct.ThrowIfCancellationRequested();
+            await store.InsertQueueBatchAsync(jobs); return jobs.ToArray();
         }
         catch
         {
-            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+            foreach (var folder in folders) if (Directory.Exists(folder)) Directory.Delete(folder, true);
             throw;
         }
     }
@@ -76,7 +92,7 @@ public sealed class QueueRunner(Store store)
             job.Draft.Validate(job.Options.Platform);
             var publisher = await client(job);
             ct.ThrowIfCancellationRequested();
-            var sent = await new Workflow(store).SendAsync(publisher, job.BotId, job.Options, job.Draft, ct, job.Id);
+            var sent = await new Workflow(store).SendAsync(publisher, job.BotId, job.Options, job.Draft, ct, job.Id, job.WorkId);
             await store.FinishQueueAsync(job with { State = StateFor(sent.Delivery.State), Error = sent.Delivery.Error });
         }
         catch (QueuePausedException error)

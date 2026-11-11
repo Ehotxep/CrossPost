@@ -30,6 +30,7 @@ internal static class WorkerProcess
     public static void Start()
     {
         if (IsRunning) return;
+        if (CrossPost.Update.UpdateGate.IsHeld(App.DataFolder)) throw new InvalidOperationException("Устанавливается обновление. Дождитесь перезапуска.");
         var path = Environment.ProcessPath ?? throw new InvalidOperationException("Не найден исполняемый файл приложения.");
         var start = new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = AppContext.BaseDirectory };
         if (Path.GetFileNameWithoutExtension(path).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
@@ -47,7 +48,7 @@ internal static class WorkerProcess
             {
                 Start(); nextLaunch = DateTimeOffset.UtcNow.AddSeconds(2);
             }
-            var reply = await RequestAsync("protocol|3", 1000);
+            var reply = await RequestAsync("protocol|4", 1000);
             if (reply == "ok") return;
             if (reply == "error")
                 throw new InvalidOperationException("Работает Worker предыдущей версии. Остановите очередь на вкладке «Очередь», затем нажмите «Запустить очередь». Новое задание ещё не добавлено.");
@@ -101,24 +102,26 @@ internal static class WorkerProcess
         using (var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(90) })
         {
             var gate = new object();
+            var draining = false;
             Guid? activeId = null; CancellationTokenSource? active = null;
             var server = ServeAsync(stopping.Token, command =>
             {
                 if (command == "stop") { stopping.Cancel(); return true; }
                 lock (gate)
                 {
+                    if (command == "drain") { draining = true; return true; }
                     if (command.StartsWith("cancel|", StringComparison.Ordinal) && Guid.TryParse(command[7..], out var id) && id == activeId)
                     { active?.Cancel(); return true; }
                 }
-                return command is "ping" or "protocol|3";
+                return command is "ping" or "protocol|4";
             });
             try
             {
                 var store = new Store(App.DataFolder); await store.InitializeAsync(recoverUnfinished: false);
                 await store.RecoverQueueAsync();
-                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow, 3));
+                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow, 4));
                 var runner = new QueueRunner(store);
-                while (!stopping.IsCancellationRequested)
+                while (!stopping.IsCancellationRequested && !Volatile.Read(ref draining))
                 {
                     using var operation = CancellationTokenSource.CreateLinkedTokenSource(stopping.Token);
                     lock (gate) { active = operation; }
@@ -207,6 +210,10 @@ internal static class WorkerProcess
                 || bluesky.Delivery.AttachmentIds?.Length != 2 || bluesky.Draft.ContentLabel != "explicit"
                 || bluesky.Draft.AltFor(0) != "Поворот" || bluesky.Draft.AltFor(1) != "Прозрачность")
                 throw new InvalidOperationException("Bluesky background routing, ALT or rating snapshot failed");
+            var batch = await store.ReadDocumentAsync<Guid[]>("batch-worker-smoke-ids") ?? throw new InvalidOperationException("Linked batch missing");
+            foreach (var id in batch) { var post = await WaitFor(id); if (post.Created.UtcDateTime < closed) throw new InvalidOperationException("Batch sent before window exit"); }
+            var linked = (await store.LibraryAsync()).Posts.Where(post => post.NativeId is { } id && batch.Contains(id)).ToArray();
+            if (linked.Length != 3 || linked.Select(post => post.WorkId).Distinct().Count() != 1) throw new InvalidOperationException("Background crosspost did not form one work");
             var info = await store.ReadDocumentAsync<WorkerInfo>("worker-info");
             if (info?.ProcessId == Environment.ProcessId || !await CommandAsync("ping"))
                 throw new InvalidOperationException("Independent worker IPC failed");

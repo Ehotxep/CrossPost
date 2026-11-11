@@ -52,7 +52,16 @@ public partial class MainWindow : Window
         _draftTimer.Tick += async (_, _) => { _draftTimer.Stop(); await Guard(SaveDraftAsync); };
         Loaded += async (_, _) =>
         {
-            if (!App.SmokeTest) { await Guard(InitializeAsync); return; }
+            if (!App.SmokeTest)
+            {
+                try { await InitializeAsync(); await InitializeUpdatesAsync(); }
+                catch (Exception error)
+                {
+                    StatusLabel.Text = error.Message;
+                    if (App.UpdateLaunch) Application.Current.Shutdown(1);
+                }
+                return;
+            }
             var exit = 0;
             try
             {
@@ -109,6 +118,12 @@ public partial class MainWindow : Window
         await RunBlueskySmokeAsync();
         App.TraceSmoke("library scenario");
         await RunLibrarySmokeAsync();
+        App.TraceSmoke("schedule linked batch after window exit");
+        TargetTelegram.IsChecked = TargetDiscord.IsChecked = TargetBluesky.IsChecked = true;
+        await EnqueueTargetsAsync(DateTimeOffset.UtcNow.AddSeconds(20), false);
+        var batch = (await _store.QueueAsync()).GroupBy(job => job.WorkId).Single(group => group.Count() == 3).Select(job => job.Id).ToArray();
+        await _store.SaveDocumentAsync("batch-worker-smoke-ids", batch);
+        TargetDiscord.IsChecked = TargetBluesky.IsChecked = false;
         App.TraceSmoke("schedule Telegram after window exit");
         var queued = await new QueuePlanner(_store).AddAsync(CurrentDraft, new(), "demo", DateTimeOffset.UtcNow.AddSeconds(20));
         await _store.SaveDocumentAsync("worker-smoke-id", queued.Id);
@@ -130,11 +145,13 @@ public partial class MainWindow : Window
         TokenInput.Password = SecretVault.Load();
         await InitializeDiscordAsync();
         await InitializeBlueskyAsync(draft);
+        var targets = await _store.ReadDocumentAsync<string[]>("publish-targets") ?? ["telegram"];
+        TargetTelegram.IsChecked = targets.Contains("telegram"); TargetDiscord.IsChecked = targets.Contains("discord"); TargetBluesky.IsChecked = targets.Contains("bluesky");
         _loaded = true;
         UpdatePreview(); ApplyMode();
         await LoadHistoryAsync();
         await LoadQueueAsync();
-        if (!App.SmokeTest && (await _store.QueueAsync()).Any(job => job.State is QueueState.Pending or QueueState.Running)) await WorkerProcess.EnsureStartedAsync();
+        if (!App.SmokeTest && !App.UpdateLaunch && (await _store.QueueAsync()).Any(job => job.State is QueueState.Pending or QueueState.Running)) await WorkerProcess.EnsureStartedAsync();
         StatusLabel.Text = "Готово. Черновик сохраняется автоматически.";
     }
     private async Task Guard(Func<Task> action)
@@ -145,8 +162,9 @@ public partial class MainWindow : Window
     private void ApplyMode()
     {
         var options = CurrentOptions;
+        RenderTargetSummary();
         ModeLabel.Text = options.Demo ? $"{CurrentPlatformLabel} • ДЕМО" : $"{CurrentPlatformLabel} • реальная отправка";
-        SendButton.Content = options.Demo ? "Выполнить демо-отправку" : "Отправить в " + CurrentPlatformLabel;
+        SendButton.Content = "Опубликовать в выбранные";
         DestinationLabel.Text = options.Demo ? "Назначение: демонстрационный канал" : "Назначение: " + options.Chat;
         PreviewHeading.Text = "Предпросмотр текста " + CurrentPlatformLabel;
     }
@@ -193,7 +211,7 @@ public partial class MainWindow : Window
     {
         var draft = CurrentDraft;
         await _draftLock.WaitAsync();
-        try { await _store.SaveDocumentAsync("draft", draft); }
+        try { await _store.SaveDocumentAsync("draft", draft); await _store.SaveDocumentAsync("publish-targets", SelectedPlatformNames()); }
         finally { _draftLock.Release(); }
     }
     private async void SaveDraftClick(object sender, RoutedEventArgs e) => await Guard(async () =>
@@ -290,6 +308,7 @@ public partial class MainWindow : Window
         catch (Exception error) { StatusLabel.Text = error.Message; }
         finally
         {
+            if (!_closing) MainContent.IsEnabled = true;
             _busy = false; _operation.Dispose(); _operation = null;
             SendButton.IsEnabled = true;
             EditButton.IsEnabled = CanEdit(_selected);
@@ -301,21 +320,7 @@ public partial class MainWindow : Window
         StatusLabel.Text = _options.Demo ? "Проверка демонстрационного режима…" : "Проверка Telegram…";
         StatusLabel.Text = "Бот доступен: " + await Client(_options.Demo).CheckAsync(ct);
     });
-    private async void SendPost(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
-    {
-        var options = CurrentOptions;
-        var draft = CurrentDraft; ValidateImages(draft); await SaveDraftAsync();
-        var uncertain = (await _store.HistoryAsync()).Any(p => p.Draft.SameContent(draft) && p.Demo == options.Demo && p.Platform == options.Platform
-            && p.Delivery.State is DeliveryState.Sending or DeliveryState.Unknown or DeliveryState.Partial);
-        if (uncertain && MessageBox.Show("У этого черновика есть неподтверждённая или частичная отправка. Сначала проверьте канал. Отправить ещё раз с риском дубликата?", "CrossPost", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        if (!options.Demo && MessageBox.Show("Отправить пост в " + options.Chat + "?", "Реальная публикация", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        StatusLabel.Text = options.Demo ? "Демонстрационная отправка…" : "Отправляю в " + CurrentPlatformLabel + "…";
-        var botId = options.Demo ? "demo" : CurrentCredentialId;
-        var sent = await new Workflow(_store).SendAsync(Client(options.Demo, options.Platform, options.Chat, options.ContentLabel), botId, options, draft, ct);
-        await LoadHistoryAsync();
-        StatusLabel.Text = (sent.Demo ? "ДЕМО: " : "") + new HistoryRow(sent).Status +
-            (sent.Delivery.Error.Length > 0 ? ". " + sent.Delivery.Error : "");
-    });
+    private async void SendPost(object sender, RoutedEventArgs e) => await EnqueueTargetsAsync(DateTimeOffset.UtcNow, true);
     private async Task LoadHistoryAsync()
     {
         var selectedId = _selected?.Id;

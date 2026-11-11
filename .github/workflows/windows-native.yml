@@ -2,7 +2,7 @@ name: Windows native prototype
 on:
   push:
     branches: [windows-native]
-    tags: ['native-v0.1.0']
+    tags: ['native-v*']
     paths: ['native/**', '.github/workflows/windows-native.yml']
   workflow_dispatch:
 permissions:
@@ -10,6 +10,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     timeout-minutes: 20
     defaults:
       run:
@@ -18,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: native/global.json
       - name: Read native version
         id: version
         shell: pwsh
@@ -53,6 +55,14 @@ jobs:
           }
       - name: Publish standalone Windows application
         run: dotnet publish src/CrossPost.Desktop -c Release -r win-x64 --self-contained true --no-restore -o artifacts/win-x64
+      - name: Publish independent updater and package files
+        shell: pwsh
+        run: |
+          dotnet publish src/CrossPost.Updater -c Release -r win-x64 --self-contained true --no-restore -o artifacts/updater
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item artifacts/updater/CrossPost.Updater.exe artifacts/win-x64/CrossPost.Updater.exe
+          Copy-Item README.md artifacts/win-x64/README.md
+          ./tools/Package.ps1 -Version '${{ steps.version.outputs.version }}'
       - name: Start the actual WPF application in an isolated smoke test
         shell: pwsh
         run: |
@@ -93,13 +103,23 @@ jobs:
             Write-Output "::error::$message"
             throw
           }
-      - name: Add usage instructions and create ZIP
+      - name: Verify actual Windows updater success and failed-start rollback
         shell: pwsh
         run: |
-          Copy-Item README.md artifacts/win-x64/README.md
-          $archive = "artifacts/CrossPost-Native-Prototype-${{ steps.version.outputs.version }}-win-x64.zip"
-          Compress-Archive -Path artifacts/win-x64/* -DestinationPath $archive
-          (Get-FileHash $archive -Algorithm SHA256).Hash | Set-Content "$archive.sha256"
+          $env:CROSSPOST_NATIVE_DATA = Join-Path $env:RUNNER_TEMP ("CrossPostUpdateSmoke-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $env:CROSSPOST_NATIVE_DATA | Out-Null
+          $archive = (Resolve-Path "artifacts/CrossPost-Native-Prototype-${{ steps.version.outputs.version }}-win-x64.zip").Path
+          $process = Start-Process -FilePath (Resolve-Path artifacts/win-x64/CrossPost.Native.exe) -ArgumentList "--verify-update-smoke", $archive -PassThru
+          if (-not $process.WaitForExit(330000)) { $process.Kill(); throw "Windows updater lifecycle timed out" }
+          $process.Refresh()
+          if ($process.ExitCode -ne 0) {
+            Get-ChildItem $env:CROSSPOST_NATIVE_DATA -Filter '*error.log' | ForEach-Object {
+              $message = (Get-Content $_.FullName -Raw).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+              Write-Output "::error::$message"
+            }
+            throw "Windows updater failed: $($process.ExitCode)"
+          }
+          if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA 'update-smoke-ready.txt'))) { throw "Update readiness missing" }
       - uses: actions/upload-artifact@v4
         with:
           name: CrossPost-Native-Prototype-${{ steps.version.outputs.version }}-win-x64
@@ -108,7 +128,7 @@ jobs:
             native/artifacts/*.sha256
           retention-days: 30
   release:
-    if: github.ref == 'refs/tags/native-v0.1.0'
+    if: startsWith(github.ref, 'refs/tags/native-v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -117,10 +137,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: CrossPost-Native-Prototype-0.1.0-win-x64
+          name: CrossPost-Native-Prototype-${{ needs.build.outputs.version }}-win-x64
           path: native-release
-      - name: Publish the requested native prototype prerelease
+      - name: Publish tagged native version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create native-v0.1.0 native-release/*.zip native-release/*.sha256 --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false --title "CrossPost Native 0.1.0 — C# / WPF prototype" --notes-file native/RELEASE-NOTES.md
+          version='${{ needs.build.outputs.version }}'
+          test "$GITHUB_REF_NAME" = "native-v$version"
+          flags=()
+          if [[ "$version" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" native-release/*.zip native-release/*.sha256 --repo "$GITHUB_REPOSITORY" --verify-tag "${flags[@]}" --latest=false --title "CrossPost Native $version" --notes-file native/RELEASE-NOTES.md

@@ -5,7 +5,7 @@ namespace CrossPost.Core;
 
 public sealed partial class Store
 {
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 4;
     internal Task<SqliteConnection> OpenForImportAsync() => OpenAsync();
     public async Task<string> BackupAsync(string reason)
     {
@@ -37,7 +37,7 @@ public sealed partial class Store
             CREATE TABLE IF NOT EXISTS library_group_events(id TEXT PRIMARY KEY,at TEXT,kind TEXT,posts TEXT);
             CREATE TABLE IF NOT EXISTS legacy_rules_applied(id TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS legacy_imports(id TEXT PRIMARY KEY,json TEXT NOT NULL);
-            PRAGMA user_version=3;
+            PRAGMA user_version=4;
             """;
         await create.ExecuteNonQueryAsync();
         using var hasPublications = connection.CreateCommand(); hasPublications.Transaction = transaction;
@@ -127,7 +127,7 @@ public sealed partial class Store
                 if (publication.Delivery.Link is { } link) ids = ids.Append("url:" + link.TrimEnd('/')).ToArray();
             }
         }
-        await UpsertLibraryAsync(connection, transaction, new(publication.Id, publication.Id,
+        await UpsertLibraryAsync(connection, transaction, new(publication.Id, publication.WorkId ?? publication.Id,
             publication.Demo ? "demo." + publication.Platform : publication.Platform, target, ids,
             publication.Created, publication.EditText.Split('\n')[0], publication.EditText, publication.Delivery.State,
             publication.Delivery.Link ?? "", publication.Demo, publication.Id, "native"));

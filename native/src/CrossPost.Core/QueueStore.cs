@@ -16,9 +16,18 @@ public sealed partial class Store
     }
     public async Task InsertQueueAsync(ScheduledPost job)
     {
-        using var connection = await OpenAsync(); using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO queue(id,state,due,json) VALUES($id,$state,$due,$json)";
-        QueueParameters(command, job); await command.ExecuteNonQueryAsync();
+        await InsertQueueBatchAsync([job]);
+    }
+    public async Task InsertQueueBatchAsync(IEnumerable<ScheduledPost> jobs)
+    {
+        using var connection = await OpenAsync(); using var transaction = connection.BeginTransaction(deferred: false);
+        foreach (var job in jobs)
+        {
+            using var command = connection.CreateCommand(); command.Transaction = transaction;
+            command.CommandText = "INSERT INTO queue(id,state,due,json) VALUES($id,$state,$due,$json)";
+            QueueParameters(command, job); await command.ExecuteNonQueryAsync();
+        }
+        transaction.Commit();
     }
     private static void QueueParameters(SqliteCommand command, ScheduledPost job)
     {

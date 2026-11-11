@@ -7,10 +7,27 @@ namespace CrossPost.Desktop;
 public partial class App : Application
 {
     private Mutex? _mutex;
+    public static bool UpdateLaunch => Environment.GetCommandLineArgs().Contains("--updated");
     public static bool SmokeTest => Environment.GetCommandLineArgs().Contains("--smoke-test");
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.Contains("--verify-update-smoke") && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CROSSPOST_NATIVE_DATA")))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            Shutdown(await UpdateSmoke.VerifyAsync(e.Args[^1])); return;
+        }
+        if (UpdateSmoke.Enabled && e.Args.Contains("--update-smoke-parent"))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            try { await UpdateSmoke.PrepareParentAsync(e.Args[^1]); Shutdown(); }
+            catch (Exception error) { await File.WriteAllTextAsync(Path.Combine(DataFolder,"update-parent-error.log"),error.ToString()); Shutdown(1); }
+            return;
+        }
+        if (UpdateSmoke.Enabled && ((UpdateLaunch && Environment.GetEnvironmentVariable("CROSSPOST_UPDATE_SMOKE_FAIL") == "1") || e.Args.Contains("--update-failed")))
+        { Shutdown(1); return; }
+        if (!UpdateLaunch && CrossPost.Update.UpdateGate.IsHeld(DataFolder))
+        { if (!SmokeTest) MessageBox.Show("CrossPost устанавливает обновление. Дождитесь автоматического перезапуска."); Shutdown(1); return; }
         if (e.Args.Contains("--verify-worker-smoke"))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;

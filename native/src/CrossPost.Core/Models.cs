@@ -57,7 +57,7 @@ public record Delivery(DeliveryState State, string ChatId, long? EditMessageId =
     public long[] AllMediaMessageIds => MediaMessageIds ?? (MediaMessageId is { } id ? [id] : []);
 }
 public record Publication(Guid Id, DateTimeOffset Created, Draft Draft, bool Demo,
-    string BotId, Delivery Delivery, string EditText, int Revision = 1, string EditState = "", Guid? QueueId = null, string Platform = "telegram", AppOptions? Options = null);
+    string BotId, Delivery Delivery, string EditText, int Revision = 1, string EditState = "", Guid? QueueId = null, string Platform = "telegram", AppOptions? Options = null, Guid? WorkId = null);
 public record AppOptions(bool Demo = true, string Chat = "", string Platform = "telegram", bool Spoiler = false, bool SuppressEmbeds = true, string ContentLabel = "sfw");
 public record BlueskyOptions(bool Demo = true, string Handle = "", string Did = "", string Pds = "", string ContentLabel = "sfw")
 {

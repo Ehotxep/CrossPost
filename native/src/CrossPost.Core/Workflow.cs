@@ -2,11 +2,11 @@ namespace CrossPost.Core;
 
 public sealed class Workflow(Store store)
 {
-    public async Task<Publication> SendAsync(IPublisher publisher, string botId, AppOptions options, Draft draft, CancellationToken ct, Guid? queueId = null)
+    public async Task<Publication> SendAsync(IPublisher publisher, string botId, AppOptions options, Draft draft, CancellationToken ct, Guid? queueId = null, Guid? workId = null)
     {
         draft.Validate(options.Platform);
         var publication = new Publication(queueId ?? Guid.NewGuid(), DateTimeOffset.UtcNow, draft, options.Demo, botId,
-            new(DeliveryState.Sending, options.Chat), draft.PlainText, QueueId: queueId, Platform: options.Platform, Options: options);
+            new(DeliveryState.Sending, options.Chat), draft.PlainText, QueueId: queueId, Platform: options.Platform, Options: options, WorkId: workId);
         await store.SavePublicationAsync(publication);
         var latest = publication.Delivery;
         Delivery result;

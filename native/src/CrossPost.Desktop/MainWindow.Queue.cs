@@ -63,18 +63,7 @@ public partial class MainWindow
         if (due <= DateTimeOffset.UtcNow) throw new InvalidOperationException("Выберите время в будущем.");
         await EnqueueAsync(due);
     });
-    private async Task EnqueueAsync(DateTimeOffset due) => await RunOperation(async _ =>
-    {
-        var options = CurrentOptions;
-        var draft = CurrentDraft; ValidateImages(draft);
-        if (!options.Demo && MessageBox.Show($"Разрешить автоматическую отправку в {options.Chat} в {due.ToLocalTime():dd.MM.yyyy HH:mm}? Очередь продолжит работу после закрытия окна.",
-            "Запланированная публикация", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        var botId = options.Demo ? "demo" : CurrentCredentialId;
-        await SaveDraftAsync();
-        await WorkerProcess.EnsureStartedAsync();
-        await new QueuePlanner(_store).AddAsync(draft, options, botId, due); SwitchView(QueueView); await LoadQueueAsync();
-        StatusLabel.Text = "Задание сохранено. Текст и файлы скопированы; дальнейшие правки черновика его не изменят.";
-    });
+    private Task EnqueueAsync(DateTimeOffset due) => EnqueueTargetsAsync(due, false);
     private void QueueSelected(object sender, SelectionChangedEventArgs e)
     {
         var job = SelectedJob;
