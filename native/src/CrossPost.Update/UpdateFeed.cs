@@ -24,7 +24,11 @@ public sealed class UpdateFeed(HttpClient http)
             if (release.GetProperty("draft").GetBoolean() || (!preview && release.GetProperty("prerelease").GetBoolean())) continue;
             var tag = release.GetProperty("tag_name").GetString() ?? "";
             if (!tag.StartsWith("native-v", StringComparison.Ordinal)) continue;
-            var version = tag[8..]; NativeVersion parsed;
+            var version = tag[8..];
+            // Before the prototype numbering reset these were separate native builds.
+            // They must not appear as upgrades for the new 0.0.x prototype series.
+            if (version is "0.1.0" or "0.2.0-dev" or "0.3.0-dev" or "0.4.0-dev" or "0.5.0-dev" or "0.6.0-dev" or "0.7.0-dev") continue;
+            NativeVersion parsed;
             try { parsed = NativeVersion.Parse(version); } catch (Exception e) when (e is FormatException or OverflowException) { continue; }
             if ((!preview && parsed.Pre.Length > 0) || parsed.CompareTo(installed) <= 0) continue;
             var name = $"CrossPost-Native-Prototype-{version}-win-x64.zip";
