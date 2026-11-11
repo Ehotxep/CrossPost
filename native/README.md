@@ -50,12 +50,12 @@ Python-база, настройки, сессии и очередь не чит�
 
 ## Сборка из исходников
 
-Нужен .NET 10 SDK. Из корня репозитория:
+Нужен .NET 10 SDK. Из папки `native` (здесь закреплена версия SDK):
 
-    dotnet restore native/CrossPost.sln --locked-mode
-    dotnet build native/CrossPost.sln -c Release --no-restore
-    dotnet run --project native/tests/CrossPost.SmokeTests -c Release --no-build
-    dotnet publish native/src/CrossPost.Desktop -c Release -r win-x64 --self-contained true -o native/artifacts/win-x64
+    dotnet restore CrossPost.sln --locked-mode
+    dotnet build CrossPost.sln -c Release --no-restore
+    dotnet run --project tests/CrossPost.SmokeTests -c Release --no-build
+    dotnet publish src/CrossPost.Desktop -c Release -r win-x64 --self-contained true -o artifacts/win-x64
 
 CrossPost.SmokeTests — исполняемый набор проверок без реальных запросов к Telegram:
 SQLite, демонстрационный режим, правильные методы Bot API, идентификаторы сообщений,

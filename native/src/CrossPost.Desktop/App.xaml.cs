@@ -18,7 +18,7 @@ public partial class App : Application
             try
             {
                 Directory.CreateDirectory(DataFolder);
-                File.AppendAllText(Path.Combine(DataFolder, "error.log"), $"{DateTimeOffset.Now:O} {args.Exception.GetType().Name}\n");
+                File.AppendAllText(Path.Combine(DataFolder, "error.log"), $"{DateTimeOffset.Now:O} {(SmokeTest ? args.Exception.ToString() : args.Exception.GetType().Name)}\n");
             }
             catch (IOException) { }
             if (SmokeTest) { args.Handled = true; Shutdown(1); return; }
