@@ -507,6 +507,7 @@ await Run("schedule converts local time to UTC and rejects invalid or ambiguous 
     }
     return Task.CompletedTask;
 });
+await ImportChecks.RunAsync(Run);
 Console.WriteLine($"Checks completed; failures: {failures}");
 return failures == 0 ? 0 : 1;
 

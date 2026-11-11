@@ -50,7 +50,13 @@ jobs:
           if (-not $process.WaitForExit(45000)) { $process.Kill(); throw "WPF initialization timed out" }
           $process.Refresh()
           if (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "error.log")) { Get-Content (Join-Path $env:CROSSPOST_NATIVE_DATA "error.log") }
-          if ($process.ExitCode -ne 0) { throw "WPF initialization failed: $($process.ExitCode)" }
+          if ($process.ExitCode -ne 0) {
+            Get-ChildItem $env:CROSSPOST_NATIVE_DATA -Filter "*error.log" | ForEach-Object {
+              $message = (Get-Content $_.FullName -Raw).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+              Write-Output "::error::$message"
+            }
+            throw "WPF initialization failed: $($process.ExitCode)"
+          }
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "smoke-ready.txt"))) { throw "WPF readiness marker missing" }
           Set-Content (Join-Path $env:CROSSPOST_NATIVE_DATA "window-closed.txt") "Window process exited"
           $verify = Start-Process -FilePath (Resolve-Path artifacts/win-x64/CrossPost.Native.exe) -ArgumentList "--verify-worker-smoke" -PassThru

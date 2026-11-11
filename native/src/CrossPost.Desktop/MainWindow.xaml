@@ -2,13 +2,14 @@
  Icon="/Assets/CrossPost.ico" Title="CrossPost Native — прототип" Width="1100" Height="800" MinWidth="850" MinHeight="650">
  <Grid Margin="24">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-  <DockPanel Margin="0,0,0,20">
-   <TextBlock Text="crosspost / native" FontSize="24" FontWeight="SemiBold" Margin="0,0,30,0" VerticalAlignment="Center"/>
-   <StackPanel Orientation="Horizontal">
-    <Button Content="Новый пост" Click="ShowCompose"/><Button Content="История" Click="ShowHistory"/><Button Content="Очередь" Click="ShowQueue"/><Button Content="Настройки" Click="ShowSettings"/>
-   </StackPanel>
-   <TextBlock x:Name="ModeLabel" Text="ДЕМО • ничего не публикуется" Foreground="#65DBB2" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-  </DockPanel>
+  <Grid Margin="0,0,0,16">
+   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <TextBlock Text="crosspost / native" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,10"/>
+   <TextBlock x:Name="ModeLabel" Text="ДЕМО • ничего не публикуется" Foreground="#65DBB2" HorizontalAlignment="Right" VerticalAlignment="Top"/>
+   <WrapPanel Grid.Row="1">
+    <Button Content="Новый пост" Click="ShowCompose"/><Button Content="Публикации" Click="ShowLibrary"/><Button Content="Статистика" Click="ShowLibraryStats"/><Button Content="Очередь" Click="ShowQueue"/><Button Content="Telegram • правки" Click="ShowHistory"/><Button Content="Настройки" Click="ShowSettings"/>
+   </WrapPanel>
+  </Grid>
   <Grid Grid.Row="1">
    <ScrollViewer x:Name="ComposeView" VerticalScrollBarVisibility="Auto">
     <StackPanel MaxWidth="900" HorizontalAlignment="Stretch">
@@ -69,6 +70,40 @@
      <TextBlock Text="Для переноса выберите дату и время ниже. Повтор неизвестной или частичной отправки автоматически не выполняется." TextWrapping="Wrap" Foreground="#ABB5CA"/>
      <WrapPanel Margin="0,5,0,0"><DatePicker x:Name="QueueDate" Width="145" Margin="0,4,10,4"/><TextBox x:Name="QueueClock" Width="85" Margin="0,4,10,4"/></WrapPanel>
     </StackPanel>
+   </Grid>
+   <Grid x:Name="LibraryView" Visibility="Collapsed">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <WrapPanel><TextBlock Text="Публикации" FontSize="26" FontWeight="SemiBold" Margin="0,0,18,0"/><Button Content="Импорт Python-базы…" Click="ImportLegacy"/><Button Content="Обновить" Click="RefreshLibrary"/><CheckBox x:Name="IncludeDemo" Content="Демо" Checked="LibraryFilterChanged" Unchecked="LibraryFilterChanged" VerticalAlignment="Center" Margin="5"/></WrapPanel>
+    <Grid Grid.Row="1" Margin="0,8,0,0">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
+     <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,16,0">
+      <StackPanel>
+       <WrapPanel><Button Content="‹" Click="PreviousLibraryMonth"/><TextBlock x:Name="LibraryMonthLabel" FontSize="18" VerticalAlignment="Center" Margin="4"/><Button Content="›" Click="NextLibraryMonth"/><Button Content="Месяц" Click="ClearLibraryDay"/></WrapPanel>
+       <UniformGrid Columns="7"><TextBlock Text="Пн"/><TextBlock Text="Вт"/><TextBlock Text="Ср"/><TextBlock Text="Чт"/><TextBlock Text="Пт"/><TextBlock Text="Сб"/><TextBlock Text="Вс"/></UniformGrid>
+       <ItemsControl x:Name="CalendarDays" Height="228"><ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="7"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate><DataTemplate><Button Content="{Binding Label}" Tag="{Binding Date}" Click="SelectLibraryDay" FontSize="11" Padding="0" Margin="1" Background="{Binding Background}" ToolTip="{Binding Detail}"/></DataTemplate></ItemsControl.ItemTemplate>
+       </ItemsControl>
+       <TextBlock x:Name="LibrarySummary" TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,12,0,0"/>
+       <TextBlock x:Name="ImportSummary" TextWrapping="Wrap" Margin="0,10,0,0" Foreground="#65DBB2"/>
+      </StackPanel>
+     </ScrollViewer>
+     <Grid Grid.Column="1">
+      <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <ListView x:Name="WorkList" SelectionMode="Extended" SelectionChanged="WorkSelected" Background="#1A1E27" Foreground="#EDF0F7">
+       <ListView.View><GridView><GridViewColumn Header="Дата" Width="125" DisplayMemberBinding="{Binding DateLabel}"/><GridViewColumn Header="Работа" Width="230" DisplayMemberBinding="{Binding Title}"/><GridViewColumn Header="Площадки" Width="150" DisplayMemberBinding="{Binding Platforms}"/><GridViewColumn Header="Результат" Width="160" DisplayMemberBinding="{Binding StateLabel}"/><GridViewColumn Header="Связь" Width="160" DisplayMemberBinding="{Binding GroupLabel}"/></GridView></ListView.View>
+      </ListView>
+      <StackPanel Grid.Row="1" Margin="0,8,0,0"><WrapPanel><Button Content="Объединить" Click="JoinWorks" ToolTip="Объединить любые выбранные работы, сохранив все публикации и замеры"/><Button Content="Разъединить" Click="SplitWorks"/><Button Content="Открыть" Click="OpenLibraryPost"/></WrapPanel><ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto"><TextBlock x:Name="WorkDetails" TextWrapping="Wrap" Foreground="#ABB5CA"/></ScrollViewer></StackPanel>
+     </Grid>
+    </Grid>
+   </Grid>
+   <Grid x:Name="LibraryStatsView" Visibility="Collapsed">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="220"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <WrapPanel><TextBlock Text="Статистика" FontSize="26" FontWeight="SemiBold" Margin="0,0,20,0"/><Button Content="Обновить локальные данные" Click="RefreshLibrary"/></WrapPanel>
+    <TextBlock Grid.Row="1" Text="Фактические импортированные замеры. Для каждой работы и назначения учитывается последняя успешная публикация. Демо и исключённые записи не учитываются. «—» означает отсутствие данных." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,12,0,12"/>
+    <ListView Grid.Row="2" x:Name="TotalsList" Background="#1A1E27" Foreground="#EDF0F7"><ListView.View><GridView>
+     <GridViewColumn Header="Площадка" Width="130" DisplayMemberBinding="{Binding Platform}"/><GridViewColumn Header="Назначение" Width="180" DisplayMemberBinding="{Binding Target}"/><GridViewColumn Header="Публикаций" Width="100" DisplayMemberBinding="{Binding Publications}"/><GridViewColumn Header="Просмотры" Width="140" DisplayMemberBinding="{Binding ViewsLabel}"/><GridViewColumn Header="Реакции" Width="140" DisplayMemberBinding="{Binding ReactionsLabel}"/>
+    </GridView></ListView.View></ListView>
+    <TextBlock Grid.Row="3" Text="Сеть и браузеры этот раздел не запускает. Подробные замеры по публикациям — в календаре. Сбор новых метрик и индекс успеха будут подключены отдельно." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,20,0,0"/>
    </Grid>
    <ScrollViewer x:Name="SettingsView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
     <StackPanel MaxWidth="720" HorizontalAlignment="Left">

@@ -24,6 +24,7 @@ public sealed partial class Store
     }
     public async Task InitializeAsync(bool recoverUnfinished = true)
     {
+        await InitializeLibraryAsync();
         using var connection = await OpenAsync();
         using var command = connection.CreateCommand();
         command.CommandText = """
@@ -63,7 +64,8 @@ public sealed partial class Store
     public async Task SavePublicationAsync(Publication publication)
     {
         using var connection = await OpenAsync();
-        using var command = connection.CreateCommand();
+        using var transaction = connection.BeginTransaction(deferred: false);
+        using var command = connection.CreateCommand(); command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO publications(id,created,json,revision) VALUES($id,$created,$json,$revision)
             ON CONFLICT(id) DO UPDATE SET json=excluded.json,revision=excluded.revision
@@ -73,6 +75,8 @@ public sealed partial class Store
         command.Parameters.AddWithValue("$json", JsonSerializer.Serialize(publication));
         command.Parameters.AddWithValue("$revision", publication.Revision);
         await command.ExecuteNonQueryAsync();
+        await ProjectNativeAsync(connection, transaction, publication);
+        transaction.Commit();
     }
     public async Task<IReadOnlyList<Publication>> HistoryAsync()
     {

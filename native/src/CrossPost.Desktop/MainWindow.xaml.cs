@@ -100,6 +100,7 @@ public partial class MainWindow : Window
         var edited = await workflow.EditAsync(new DemoTelegram(), sent, "Изменённая подпись", CancellationToken.None);
         if (!edited.Result.Confirmed) throw new InvalidOperationException("WPF demo edit failed");
         SwitchView(HistoryView); UpdateLayout(); SwitchView(SettingsView); UpdateLayout(); SwitchView(QueueView); UpdateLayout(); SwitchView(ComposeView);
+        await RunLibrarySmokeAsync();
         var queued = await new QueuePlanner(_store).AddAsync(CurrentDraft, new(), "demo", DateTimeOffset.UtcNow.AddSeconds(20));
         await _store.SaveDocumentAsync("worker-smoke-id", queued.Id);
         WorkerProcess.Start();
@@ -234,6 +235,8 @@ public partial class MainWindow : Window
     {
         ComposeView.Visibility = view == ComposeView ? Visibility.Visible : Visibility.Collapsed;
         HistoryView.Visibility = view == HistoryView ? Visibility.Visible : Visibility.Collapsed;
+        LibraryView.Visibility = view == LibraryView ? Visibility.Visible : Visibility.Collapsed;
+        LibraryStatsView.Visibility = view == LibraryStatsView ? Visibility.Visible : Visibility.Collapsed;
         QueueView.Visibility = view == QueueView ? Visibility.Visible : Visibility.Collapsed;
         SettingsView.Visibility = view == SettingsView ? Visibility.Visible : Visibility.Collapsed;
     }
