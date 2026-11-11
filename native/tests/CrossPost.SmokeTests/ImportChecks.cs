@@ -13,7 +13,12 @@ internal static class ImportChecks
     }
     private static void Exec(SqliteConnection connection, string sql)
     { using var command = connection.CreateCommand(); command.CommandText = sql; command.ExecuteNonQuery(); }
-    private static string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
+    private static string Hash(string path)
+    {
+        // SQLite keeps a writable WAL handle open. Allow that writer while hashing a read-only snapshot of its bytes.
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
     private static string Folder()
     { var path = Path.Combine(Path.GetTempPath(), "crosspost-import-" + Guid.NewGuid()); Directory.CreateDirectory(path); return path; }
     private static SqliteConnection Fixture(string path)

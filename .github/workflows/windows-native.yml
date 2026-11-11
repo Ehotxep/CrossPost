@@ -39,7 +39,18 @@ jobs:
       - name: Build C# and WPF
         run: dotnet build CrossPost.sln -c Release --no-restore
       - name: Check storage and Telegram contracts without sending
-        run: dotnet run --project tests/CrossPost.SmokeTests -c Release --no-build
+        shell: pwsh
+        run: |
+          $output = & dotnet run --project tests/CrossPost.SmokeTests -c Release --no-build 2>&1
+          $result = $LASTEXITCODE
+          $output | ForEach-Object { Write-Output $_ }
+          if ($result -ne 0) {
+            $output | Where-Object { $_ -match '^FAIL' } | ForEach-Object {
+              $message = ([string]$_).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+              Write-Output "::error::$message"
+            }
+            exit $result
+          }
       - name: Publish standalone Windows application
         run: dotnet publish src/CrossPost.Desktop -c Release -r win-x64 --self-contained true --no-restore -o artifacts/win-x64
       - name: Start the actual WPF application in an isolated smoke test
