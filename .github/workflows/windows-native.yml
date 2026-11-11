@@ -102,6 +102,12 @@ jobs:
             $message = $_.Exception.ToString().Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
             Write-Output "::error::$message"
             throw
+          } finally {
+            $screens = Join-Path $env:CROSSPOST_NATIVE_DATA "screenshots"
+            if (Test-Path $screens) {
+              New-Item -ItemType Directory -Force artifacts/ui-screenshots | Out-Null
+              Copy-Item (Join-Path $screens "*.png") artifacts/ui-screenshots/
+            }
           }
       - name: Verify actual Windows updater success and failed-start rollback
         shell: pwsh
@@ -120,6 +126,12 @@ jobs:
             throw "Windows updater failed: $($process.ExitCode)"
           }
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA 'update-smoke-ready.txt'))) { throw "Update readiness missing" }
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('native/artifacts/ui-screenshots/*.png') != ''
+        with:
+          name: CrossPost-Native-UI-${{ steps.version.outputs.version }}-win-x64
+          path: native/artifacts/ui-screenshots/*.png
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: CrossPost-Native-Prototype-${{ steps.version.outputs.version }}-win-x64

@@ -1,5 +1,5 @@
 <Window x:Class="CrossPost.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Icon="/Assets/CrossPost.ico" Title="CrossPost Native — прототип" Width="1100" Height="800" MinWidth="850" MinHeight="650">
+ Style="{StaticResource AppWindowStyle}" Icon="/Assets/CrossPost.ico" Title="CrossPost Native — прототип" Width="1100" Height="800" MinWidth="850" MinHeight="650">
  <Grid Margin="24">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <Grid Margin="0,0,0,16">
@@ -7,17 +7,17 @@
    <TextBlock Text="crosspost / native" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,10"/>
    <TextBlock x:Name="ModeLabel" Text="ДЕМО • ничего не публикуется" Foreground="#65DBB2" HorizontalAlignment="Right" VerticalAlignment="Top"/>
    <WrapPanel Grid.Row="1">
-    <Button Content="Новый пост" Click="ShowCompose"/><Button Content="Публикации" Click="ShowLibrary"/><Button Content="Статистика" Click="ShowLibraryStats"/><Button Content="Очередь" Click="ShowQueue"/><Button Content="История • правки" Click="ShowHistory"/><Button Content="Настройки" Click="ShowSettings"/><Button x:Name="UpdateNotice" Content="Доступно обновление" Click="ShowSettings" Visibility="Collapsed" Background="#16815C"/>
+    <Button x:Name="NavCompose" Content="Новый пост" Click="ShowCompose"/><Button x:Name="NavLibrary" Content="Публикации" Click="ShowLibrary"/><Button x:Name="NavStats" Content="Статистика" Click="ShowLibraryStats"/><Button x:Name="NavQueue" Content="Очередь" Click="ShowQueue"/><Button x:Name="NavHistory" Content="История • правки" Click="ShowHistory"/><Button x:Name="NavSettings" Content="Настройки" Click="ShowSettings"/><Button x:Name="UpdateNotice" Content="Доступно обновление" Click="ShowSettings" Visibility="Collapsed" Background="#16815C"/>
    </WrapPanel>
   </Grid>
   <Grid x:Name="MainContent" Grid.Row="1">
    <ScrollViewer x:Name="ComposeView" VerticalScrollBarVisibility="Auto">
     <StackPanel MaxWidth="900" HorizontalAlignment="Stretch">
      <TextBlock Text="Новый пост" FontSize="26" FontWeight="SemiBold" Margin="0,0,0,18"/>
-     <WrapPanel Margin="0,0,0,10"><TextBlock Text="Предпросмотр" VerticalAlignment="Center" Margin="0,0,12,0"/><ComboBox x:Name="PlatformPicker" Width="180" Foreground="#111827" Background="#F1F5F9" SelectedIndex="0" SelectionChanged="PlatformChanged"><ComboBoxItem Content="Telegram"/><ComboBoxItem Content="Discord"/><ComboBoxItem Content="Bluesky"/></ComboBox></WrapPanel>
+     <WrapPanel Margin="0,0,0,10"><TextBlock Text="Предпросмотр" VerticalAlignment="Center" Margin="0,0,12,0"/><ComboBox x:Name="PlatformPicker" Width="180" SelectedIndex="0" SelectionChanged="PlatformChanged"><ComboBoxItem Content="Telegram"/><ComboBoxItem Content="Discord"/><ComboBoxItem Content="Bluesky"/></ComboBox></WrapPanel>
      <Border Background="{StaticResource Panel}" Padding="12" Margin="0,0,0,12"><StackPanel>
       <TextBlock Text="Куда опубликовать" FontWeight="SemiBold"/>
-      <WrapPanel Margin="0,6,0,4"><CheckBox x:Name="TargetTelegram" Checked="TargetSelectionChanged" Unchecked="TargetSelectionChanged" Content="Telegram" IsChecked="True" Margin="0,0,20,0"/><CheckBox x:Name="TargetDiscord" Checked="TargetSelectionChanged" Unchecked="TargetSelectionChanged" Content="Discord" Margin="0,0,20,0"/><CheckBox x:Name="TargetBluesky" Checked="TargetSelectionChanged" Unchecked="TargetSelectionChanged" Content="Bluesky"/></WrapPanel>
+      <WrapPanel Margin="0,6,0,4"><CheckBox x:Name="TargetTelegram" Checked="TargetSelectionChanged" Unchecked="TargetSelectionChanged" Content="Telegram" IsChecked="True" Margin="0,0,20,0"/><CheckBox x:Name="TargetDiscord" Checked="TargetSelectionChanged" Unchecked="TargetSelectionChanged" Content="Discord" Margin="0,0,20,0"/><CheckBox Margin="0,0,20,0" x:Name="TargetBluesky" Checked="TargetSelectionChanged" Unchecked="TargetSelectionChanged" Content="Bluesky"/></WrapPanel>
       <TextBlock x:Name="TargetSummary" TextWrapping="Wrap" Margin="0,4,0,6" Foreground="#65DBB2"/>
       <TextBlock Text="Отметьте назначения для общего запуска. Выбор площадки выше переключает предпросмотр и её параметры." TextWrapping="Wrap" Foreground="#ABB5CA"/>
      </StackPanel></Border>
@@ -32,7 +32,7 @@
      </StackPanel></Expander>
      <Border Background="{StaticResource Panel}" Padding="12" Margin="0,0,0,14"><StackPanel>
       <TextBlock x:Name="PlatformTextHeading" Text="Текст для Telegram" FontWeight="SemiBold"/>
-      <WrapPanel Margin="0,6,0,6"><TextBlock Text="Язык площадки" VerticalAlignment="Center" Margin="0,0,12,0"/><ComboBox x:Name="PlatformLanguage" Width="200" SelectedIndex="0" Foreground="#111827" Background="#F1F5F9" SelectionChanged="PlatformLanguageChanged"><ComboBoxItem Content="Как в общем тексте"/><ComboBoxItem Content="Русский"/><ComboBoxItem Content="Оба"/><ComboBoxItem Content="English"/></ComboBox></WrapPanel>
+      <WrapPanel Margin="0,6,0,6"><TextBlock Text="Язык площадки" VerticalAlignment="Center" Margin="0,0,12,0"/><ComboBox x:Name="PlatformLanguage" Width="200" SelectedIndex="0" SelectionChanged="PlatformLanguageChanged"><ComboBoxItem Content="Как в общем тексте"/><ComboBoxItem Content="Русский"/><ComboBoxItem Content="Оба"/><ComboBoxItem Content="English"/></ComboBox></WrapPanel>
       <CheckBox x:Name="CustomTextToggle" Content="Использовать отдельный текст для этой площадки" Visibility="Collapsed" Checked="CustomTextToggled" Unchecked="CustomTextToggled"/>
       <Expander x:Name="PlatformTextEditor" Header="Отдельные заголовки и описания" Margin="0,8,0,0"><StackPanel x:Name="CustomTextFields" Visibility="Collapsed" Margin="8">
        <TextBlock Text="Русский · заголовок"/><TextBox x:Name="CustomTitleInput" TextChanged="CustomTextChanged"/>
@@ -42,22 +42,22 @@
       </StackPanel></Expander>
       <TextBlock Text="Отдельные тексты включаются для каждой площадки в настройках. Язык можно выбрать независимо от отдельного текста." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,6,0,0"/>
      </StackPanel></Border>
-     <WrapPanel><Button Content="Добавить изображения" Click="PickImage"/><Button Content="Убрать выбранное" Click="RemoveImage"/><Button Content="Новый черновик" Click="ClearDraft"/></WrapPanel>
-     <WrapPanel><Button Content="Выше" Click="MoveImageUp"/><Button Content="Ниже" Click="MoveImageDown"/></WrapPanel>
+     <WrapPanel><Button Content="Добавить изображения" Click="PickImage"/><Button x:Name="RemoveImageButton" Content="Убрать выбранное" Click="RemoveImage"/><Button Content="Новый черновик" Click="ClearDraft"/></WrapPanel>
+     <WrapPanel><Button x:Name="MoveImageUpButton" Content="Выше" Click="MoveImageUp"/><Button x:Name="MoveImageDownButton" Content="Ниже" Click="MoveImageDown"/></WrapPanel>
      <ListBox x:Name="ImageList" MaxHeight="130" Background="#242A36" Foreground="#EDF0F7" DisplayMemberPath="Label" SelectionChanged="ImageSelected"/>
      <StackPanel x:Name="BlueskyComposer" Visibility="Collapsed" Margin="0,8,0,8">
-      <WrapPanel><TextBlock Text="Рейтинг Bluesky" VerticalAlignment="Center" Margin="0,0,10,0"/><ComboBox x:Name="BlueskyRating" Width="180" SelectedIndex="0" Foreground="#111827" Background="#F1F5F9" SelectionChanged="BlueskyRatingChanged"><ComboBoxItem Content="SFW"/><ComboBoxItem Content="Эротика • nudity"/><ComboBoxItem Content="Откровенное • porn"/></ComboBox></WrapPanel>
+      <WrapPanel><TextBlock Text="Рейтинг Bluesky" VerticalAlignment="Center" Margin="0,0,10,0"/><ComboBox x:Name="BlueskyRating" Width="180" SelectedIndex="0" SelectionChanged="BlueskyRatingChanged"><ComboBoxItem Content="SFW"/><ComboBoxItem Content="Эротика • nudity"/><ComboBoxItem Content="Откровенное • porn"/></ComboBox></WrapPanel>
       <TextBlock Text="ALT выбранного изображения" Margin="0,8,0,0"/><TextBox x:Name="ImageAltInput" TextChanged="ImageAltChanged" TextWrapping="Wrap" AcceptsReturn="True" Height="65"/>
       <Button Content="Подготовить копии для Bluesky" Click="PrepareBlueskyImages" HorizontalAlignment="Left"/>
       <TextBlock Text="До 4 изображений по 2 000 000 байт. Подготовка сохраняет PNG с прозрачностью, если он помещается; иначе создаёт JPEG на белом фоне. Оригиналы сохраняются. Результат появится в предпросмотре." TextWrapping="Wrap" Foreground="#ABB5CA"/>
      </StackPanel>
      <TextBlock x:Name="ImageLabel" TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,8,0,8"/>
-     <Image x:Name="PreviewImage" Height="130" Stretch="Uniform" HorizontalAlignment="Left"/>
+     <Image x:Name="PreviewImage" Visibility="Collapsed" Height="130" Stretch="Uniform" HorizontalAlignment="Left"/>
      <Border Background="{StaticResource Panel}" Padding="16" Margin="0,14,0,14">
       <StackPanel><TextBlock x:Name="PreviewHeading" Text="Предпросмотр текста Telegram" FontWeight="SemiBold"/><TextBlock x:Name="PreviewText" TextWrapping="Wrap" Margin="0,8,0,0"/><TextBlock x:Name="CountLabel" Foreground="#ABB5CA" Margin="0,10,0,0"/></StackPanel>
      </Border>
      <TextBlock x:Name="DestinationLabel" TextWrapping="Wrap"/>
-     <WrapPanel Margin="0,10,0,12"><Button x:Name="SendButton" Content="Опубликовать в выбранные" Click="SendPost"/><Button Content="В очередь" Click="QueueNow"/><Button Content="Сохранить черновик" Click="SaveDraftClick"/></WrapPanel>
+
      <TextBlock x:Name="ScheduleZoneLabel" Text="Публикация по расписанию"/>
      <WrapPanel Margin="0,5,0,8"><DatePicker x:Name="ScheduleDate" Width="145" Margin="0,4,10,4"/><TextBox x:Name="ScheduleClock" Text="12:00" Width="85" Margin="0,4,10,4"/><Button Content="Запланировать" Click="SchedulePost"/></WrapPanel>
      <TextBlock Text="Очередь работает после закрытия окна, пока включён компьютер. Текст, файлы и канал сохраняются в задании." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,0,0,14"/>
@@ -142,7 +142,7 @@
      <Border Background="{StaticResource Panel}" Padding="16" Margin="0,0,0,20"><StackPanel>
       <TextBlock Text="Обновления CrossPost Native" FontSize="22" FontWeight="SemiBold"/>
       <TextBlock x:Name="UpdateVersionLabel" Margin="0,8,0,8"/>
-      <ComboBox x:Name="UpdateChannel" SelectedIndex="0" Foreground="#111827" Background="#F1F5F9"><ComboBoxItem Content="Предварительные нативные версии"/><ComboBoxItem Content="Только стабильные нативные версии"/></ComboBox>
+      <ComboBox x:Name="UpdateChannel" SelectedIndex="0"><ComboBoxItem Content="Предварительные нативные версии"/><ComboBoxItem Content="Только стабильные нативные версии"/></ComboBox>
       <CheckBox x:Name="AutoCheckUpdates" Content="Проверять обновления при запуске (GitHub)" IsChecked="True" Margin="0,8,0,4"/>
       <WrapPanel><Button Content="Сохранить" Click="SaveUpdateOptions"/><Button Content="Проверить обновления" Click="CheckUpdates"/><Button x:Name="InstallUpdateButton" Content="Скачать и перезапустить" Click="InstallUpdate" IsEnabled="False"/><Button Content="Установить из ZIP…" Click="InstallLocalUpdate"/></WrapPanel>
       <ProgressBar x:Name="UpdateProgress" Minimum="0" Maximum="100" Height="6" Margin="0,8,0,8" Visibility="Collapsed"/>
@@ -151,7 +151,7 @@
      <Border Background="{StaticResource Panel}" Padding="16" Margin="0,0,0,20"><StackPanel>
       <TextBlock Text="Отдельные тексты площадок" FontSize="22" FontWeight="SemiBold"/>
       <TextBlock Text="Включите нужные площадки. В редакторе появится переключатель отдельного текста; общий текст и сохранённые варианты останутся доступны." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,8,0,8"/>
-      <WrapPanel><CheckBox x:Name="CustomTelegram" Content="Telegram" Margin="0,0,18,0"/><CheckBox x:Name="CustomDiscord" Content="Discord" Margin="0,0,18,0"/><CheckBox x:Name="CustomBluesky" Content="Bluesky"/></WrapPanel>
+      <WrapPanel><CheckBox x:Name="CustomTelegram" Content="Telegram" Margin="0,0,18,0"/><CheckBox x:Name="CustomDiscord" Content="Discord" Margin="0,0,18,0"/><CheckBox Margin="0,0,18,0" x:Name="CustomBluesky" Content="Bluesky"/></WrapPanel>
       <Button Content="Сохранить отдельные тексты" Click="SaveCustomTextSettings" HorizontalAlignment="Left"/>
      </StackPanel></Border>
      <TextBlock Text="Настройки Telegram" FontSize="26" FontWeight="SemiBold" Margin="0,0,0,16"/>
@@ -184,7 +184,10 @@
    </ScrollViewer>
   </Grid>
   <Border Grid.Row="2" Background="{StaticResource Panel}" Padding="12" Margin="0,18,0,0">
+   <StackPanel>
+    <WrapPanel x:Name="ComposeActions" Margin="0,0,0,8"><Button Style="{StaticResource PrimaryButtonStyle}" x:Name="SendButton" Content="Опубликовать в выбранные" Click="SendPost"/><Button Content="В очередь" Click="QueueNow"/><Button Content="Сохранить черновик" Click="SaveDraftClick"/></WrapPanel>
    <DockPanel><Button x:Name="CancelButton" DockPanel.Dock="Right" Content="Отменить" Click="CancelOperation" Visibility="Collapsed"/><StackPanel><TextBlock x:Name="StatusLabel" Text="Загрузка…" TextWrapping="Wrap"/><ProgressBar x:Name="BusyBar" IsIndeterminate="True" Height="3" Visibility="Collapsed" Margin="0,8,0,0"/></StackPanel></DockPanel>
+   </StackPanel>
   </Border>
  </Grid>
 </Window>

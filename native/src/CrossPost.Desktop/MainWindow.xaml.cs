@@ -44,6 +44,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = this;
+        Title = "CrossPost Native — прототип " + NativeAppVersion;
+        SwitchView(ComposeView);
         InitializeQueueUi();
         var queueTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         queueTimer.Tick += async (_, _) => { if (_loaded && QueueView.Visibility == Visibility.Visible) await Guard(LoadQueueAsync); };
@@ -67,6 +69,8 @@ public partial class MainWindow : Window
             {
                 App.TraceSmoke("initialize");
                 await InitializeAsync();
+                App.TraceSmoke("appearance and contrast");
+                await RunAppearanceSmokeAsync();
                 App.TraceSmoke("telegram demo");
                 await RunSmokeChecksAsync();
                 await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
@@ -118,6 +122,7 @@ public partial class MainWindow : Window
         await RunBlueskySmokeAsync();
         App.TraceSmoke("library scenario");
         await RunLibrarySmokeAsync();
+        await CapturePopulatedViewsAsync();
         App.TraceSmoke("bilingual and custom text controls");
         await RunTextSmokeAsync();
         App.TraceSmoke("schedule linked batch after window exit");
@@ -194,6 +199,7 @@ public partial class MainWindow : Window
     {
         while (_alts.Count < _images.Count) _alts.Add("");
         if (_alts.Count > _images.Count) _alts.RemoveRange(_images.Count, _alts.Count - _images.Count);
+        ImageList.Visibility = _images.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         ImageList.ItemsSource = _images.Select(path => new ImageRow(path)).ToArray();
         ImageList.SelectedIndex = _images.Count == 0 ? -1 : Math.Clamp(selection, 0, _images.Count - 1);
         UpdateImagePreview();
@@ -202,14 +208,18 @@ public partial class MainWindow : Window
     private void UpdateImagePreview()
     {
         if (PreviewImage is null) return;
-        PreviewImage.Source = null;
+        PreviewImage.Source = null; PreviewImage.Visibility = Visibility.Collapsed;
+        var index = ImageList.SelectedIndex;
+        RemoveImageButton.IsEnabled = index >= 0;
+        MoveImageUpButton.IsEnabled = index > 0;
+        MoveImageDownButton.IsEnabled = index >= 0 && index < _images.Count - 1;
         if (ImageList.SelectedItem is not ImageRow row || !File.Exists(row.Path)) return;
         try
         {
             var bitmap = new BitmapImage();
             bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad;
             bitmap.DecodePixelWidth = 400; bitmap.UriSource = new Uri(Path.GetFullPath(row.Path)); bitmap.EndInit();
-            bitmap.Freeze(); PreviewImage.Source = bitmap;
+            bitmap.Freeze(); PreviewImage.Source = bitmap; PreviewImage.Visibility = Visibility.Visible;
         }
         catch (Exception error) when (error is IOException or NotSupportedException or FileFormatException)
         { StatusLabel.Text = "Предпросмотр выбранного изображения недоступен."; }
@@ -287,6 +297,9 @@ public partial class MainWindow : Window
         LibraryStatsView.Visibility = view == LibraryStatsView ? Visibility.Visible : Visibility.Collapsed;
         QueueView.Visibility = view == QueueView ? Visibility.Visible : Visibility.Collapsed;
         SettingsView.Visibility = view == SettingsView ? Visibility.Visible : Visibility.Collapsed;
+        ComposeActions.Visibility = view == ComposeView ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var (button, target) in new[] { (NavCompose,(UIElement)ComposeView), (NavLibrary,LibraryView), (NavStats,LibraryStatsView), (NavQueue,QueueView), (NavHistory,HistoryView), (NavSettings,SettingsView) })
+            button.Style = (Style)FindResource(view == target ? "SelectedNavigationStyle" : typeof(System.Windows.Controls.Button));
     }
     private async void SaveSettings(object sender, RoutedEventArgs e)
     {
@@ -313,6 +326,7 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         _busy = true; _operation = new CancellationTokenSource();
+        ComposeActions.IsEnabled = false;
         SendButton.IsEnabled = EditButton.IsEnabled = false;
         BusyBar.Visibility = CancelButton.Visibility = Visibility.Visible;
         try { await action(_operation.Token); }
@@ -322,7 +336,7 @@ public partial class MainWindow : Window
         {
             if (!_closing) MainContent.IsEnabled = true;
             _busy = false; _operation.Dispose(); _operation = null;
-            SendButton.IsEnabled = true;
+            SendButton.IsEnabled = true; ComposeActions.IsEnabled = true;
             EditButton.IsEnabled = CanEdit(_selected);
             BusyBar.Visibility = CancelButton.Visibility = Visibility.Collapsed;
         }
