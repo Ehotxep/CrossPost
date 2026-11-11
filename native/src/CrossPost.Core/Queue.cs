@@ -57,9 +57,9 @@ public sealed class QueuePlanner(Store store)
                         await input.CopyToAsync(output, ct);
                     copies.Add(copy);
                 }
-                var snapshot = draft with { ImagePath = copies.FirstOrDefault(), AdditionalImagePaths = copies.Skip(1).ToArray() };
+                var snapshot = draft.ForPlatform(target.Options.Platform) with { ImagePath = copies.FirstOrDefault(), AdditionalImagePaths = copies.Skip(1).ToArray() };
                 snapshot.Validate(target.Options.Platform);
-                jobs.Add(new(id, DateTimeOffset.UtcNow, due.ToUniversalTime(), snapshot, target.Options, target.CredentialId, WorkId: workId));
+                jobs.Add(new(id, DateTimeOffset.UtcNow, due.ToUniversalTime(), snapshot, target.Options with { TextLanguage = draft.LanguageFor(target.Options.Platform) }, target.CredentialId, WorkId: workId));
             }
             ct.ThrowIfCancellationRequested();
             await store.InsertQueueBatchAsync(jobs); return jobs.ToArray();

@@ -21,8 +21,27 @@
       <TextBlock x:Name="TargetSummary" TextWrapping="Wrap" Margin="0,4,0,6" Foreground="#65DBB2"/>
       <TextBlock Text="Отметьте назначения для общего запуска. Выбор площадки выше переключает предпросмотр и её параметры." TextWrapping="Wrap" Foreground="#ABB5CA"/>
      </StackPanel></Border>
-     <TextBlock Text="Заголовок"/><TextBox x:Name="TitleInput" TextChanged="DraftChanged"/>
-     <TextBlock Text="Описание"/><TextBox x:Name="BodyInput" Height="160" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged"/>
+     <TextBlock Text="Общий язык публикации" FontWeight="SemiBold"/>
+     <WrapPanel Margin="0,6,0,12"><RadioButton x:Name="MainLanguageRu" GroupName="MainTextLanguage" Content="Русский" IsChecked="True" Checked="TextLanguageChanged" Margin="0,0,18,0"/><RadioButton x:Name="MainLanguageBoth" GroupName="MainTextLanguage" Content="Оба" Checked="TextLanguageChanged" Margin="0,0,18,0"/><RadioButton x:Name="MainLanguageEnglish" GroupName="MainTextLanguage" Content="English" Checked="TextLanguageChanged"/></WrapPanel>
+     <TextBlock Text="Русский · заголовок"/><TextBox x:Name="TitleInput" TextChanged="DraftChanged"/>
+     <TextBlock Text="Русский · описание"/><TextBox x:Name="BodyInput" Height="120" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged"/>
+     <Expander x:Name="EnglishEditor" Header="English · название и описание" Margin="0,0,0,14"><StackPanel Margin="8">
+      <TextBlock Text="English · title"/><TextBox x:Name="EnglishTitleInput" TextChanged="DraftChanged"/>
+      <TextBlock Text="English · description"/><TextBox x:Name="EnglishBodyInput" Height="100" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged"/>
+      <TextBlock Text="Английский вариант вводится вручную. В режиме «Оба» русский текст идёт первым, затем английский." TextWrapping="Wrap" Foreground="#ABB5CA"/>
+     </StackPanel></Expander>
+     <Border Background="{StaticResource Panel}" Padding="12" Margin="0,0,0,14"><StackPanel>
+      <TextBlock x:Name="PlatformTextHeading" Text="Текст для Telegram" FontWeight="SemiBold"/>
+      <WrapPanel Margin="0,6,0,6"><TextBlock Text="Язык площадки" VerticalAlignment="Center" Margin="0,0,12,0"/><ComboBox x:Name="PlatformLanguage" Width="200" SelectedIndex="0" Foreground="#111827" Background="#F1F5F9" SelectionChanged="PlatformLanguageChanged"><ComboBoxItem Content="Как в общем тексте"/><ComboBoxItem Content="Русский"/><ComboBoxItem Content="Оба"/><ComboBoxItem Content="English"/></ComboBox></WrapPanel>
+      <CheckBox x:Name="CustomTextToggle" Content="Использовать отдельный текст для этой площадки" Visibility="Collapsed" Checked="CustomTextToggled" Unchecked="CustomTextToggled"/>
+      <Expander x:Name="PlatformTextEditor" Header="Отдельные заголовки и описания" Margin="0,8,0,0"><StackPanel x:Name="CustomTextFields" Visibility="Collapsed" Margin="8">
+       <TextBlock Text="Русский · заголовок"/><TextBox x:Name="CustomTitleInput" TextChanged="CustomTextChanged"/>
+       <TextBlock Text="Русский · описание"/><TextBox x:Name="CustomBodyInput" Height="90" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="CustomTextChanged"/>
+       <TextBlock Text="English · title"/><TextBox x:Name="CustomEnglishTitleInput" TextChanged="CustomTextChanged"/>
+       <TextBlock Text="English · description"/><TextBox x:Name="CustomEnglishBodyInput" Height="90" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="CustomTextChanged"/>
+      </StackPanel></Expander>
+      <TextBlock Text="Отдельные тексты включаются для каждой площадки в настройках. Язык можно выбрать независимо от отдельного текста." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,6,0,0"/>
+     </StackPanel></Border>
      <WrapPanel><Button Content="Добавить изображения" Click="PickImage"/><Button Content="Убрать выбранное" Click="RemoveImage"/><Button Content="Новый черновик" Click="ClearDraft"/></WrapPanel>
      <WrapPanel><Button Content="Выше" Click="MoveImageUp"/><Button Content="Ниже" Click="MoveImageDown"/></WrapPanel>
      <ListBox x:Name="ImageList" MaxHeight="130" Background="#242A36" Foreground="#EDF0F7" DisplayMemberPath="Label" SelectionChanged="ImageSelected"/>
@@ -128,6 +147,12 @@
       <WrapPanel><Button Content="Сохранить" Click="SaveUpdateOptions"/><Button Content="Проверить обновления" Click="CheckUpdates"/><Button x:Name="InstallUpdateButton" Content="Скачать и перезапустить" Click="InstallUpdate" IsEnabled="False"/><Button Content="Установить из ZIP…" Click="InstallLocalUpdate"/></WrapPanel>
       <ProgressBar x:Name="UpdateProgress" Minimum="0" Maximum="100" Height="6" Margin="0,8,0,8" Visibility="Collapsed"/>
       <TextBlock x:Name="UpdateStatus" Text="Обновления устанавливаются по кнопке; отправка перед перезапуском завершается." TextWrapping="Wrap" Foreground="#ABB5CA"/>
+     </StackPanel></Border>
+     <Border Background="{StaticResource Panel}" Padding="16" Margin="0,0,0,20"><StackPanel>
+      <TextBlock Text="Отдельные тексты площадок" FontSize="22" FontWeight="SemiBold"/>
+      <TextBlock Text="Включите нужные площадки. В редакторе появится переключатель отдельного текста; общий текст и сохранённые варианты останутся доступны." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,8,0,8"/>
+      <WrapPanel><CheckBox x:Name="CustomTelegram" Content="Telegram" Margin="0,0,18,0"/><CheckBox x:Name="CustomDiscord" Content="Discord" Margin="0,0,18,0"/><CheckBox x:Name="CustomBluesky" Content="Bluesky"/></WrapPanel>
+      <Button Content="Сохранить отдельные тексты" Click="SaveCustomTextSettings" HorizontalAlignment="Left"/>
      </StackPanel></Border>
      <TextBlock Text="Настройки Telegram" FontSize="26" FontWeight="SemiBold" Margin="0,0,0,16"/>
      <CheckBox x:Name="DemoInput" Content="Демонстрационный режим — без запросов в Telegram" IsChecked="True"/>

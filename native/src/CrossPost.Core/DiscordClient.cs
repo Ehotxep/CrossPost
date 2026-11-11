@@ -79,7 +79,7 @@ public sealed class DiscordClient(HttpClient http, DiscordEndpoint endpoint, str
     private static object Mentions => new { parse = Array.Empty<string>(), users = Array.Empty<string>(), roles = Array.Empty<string>(), replied_user = false };
     public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct, Func<Delivery, Task>? checkpoint = null)
     {
-        draft.Validate("discord");
+        draft = draft.ForPlatform("discord"); draft.Validate("discord");
         if (chat != expectedChannel) throw new InvalidOperationException("Назначение Discord не совпадает с сохранённым каналом.");
         DiscordWebhookInfo info;
         try { info = await CheckTargetAsync(ct); }
@@ -146,7 +146,7 @@ public sealed class DemoDiscord : IPublisher
     public Task<string> CheckAsync(CancellationToken ct) => Task.FromResult("ДЕМО Discord");
     public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct, Func<Delivery, Task>? checkpoint = null)
     {
-        draft.Validate("discord"); await Task.Delay(600, ct);
+        draft = draft.ForPlatform("discord"); draft.Validate("discord"); await Task.Delay(600, ct);
         var delivered = new Delivery(DeliveryState.Sent, "demo-discord-channel", Kind: "discord", RemoteMessageId: Interlocked.Increment(ref _next).ToString(),
             AttachmentIds: draft.Images.Select(_ => Interlocked.Increment(ref _next).ToString()).ToArray());
         if (checkpoint is not null) await checkpoint(delivered);

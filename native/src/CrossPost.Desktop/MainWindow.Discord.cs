@@ -20,7 +20,7 @@ public partial class MainWindow
         DiscordTargetLabel.Text = _discord.ChannelId.Length > 0 ? $"{_discord.Name} • канал {_discord.ChannelId}" : "Канал пока не проверен";
     }
     private void PlatformChanged(object sender, SelectionChangedEventArgs e)
-    { if (_loaded) { ApplyMode(); UpdatePreview(); UpdateBlueskyControls(); } }
+    { if (_loaded) { LoadPlatformTextEditor(); ApplyMode(); UpdatePreview(); UpdateBlueskyControls(); } }
     private async void SaveDiscordSettings(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
     {
         var demo = DiscordDemoInput.IsChecked != false;

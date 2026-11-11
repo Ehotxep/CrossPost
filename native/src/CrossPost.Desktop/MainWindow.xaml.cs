@@ -84,7 +84,7 @@ public partial class MainWindow : Window
         };
         Closing += OnClosing;
     }
-    private Draft CurrentDraft => new(TitleInput.Text, BodyInput.Text, _images.FirstOrDefault(), _images.Skip(1).ToArray(), _alts.ToArray(), SelectedBlueskyLabel);
+    private Draft CurrentDraft => new(TitleInput.Text, BodyInput.Text, _images.FirstOrDefault(), _images.Skip(1).ToArray(), _alts.ToArray(), SelectedBlueskyLabel, EnglishTitleInput.Text, EnglishBodyInput.Text, SelectedTextLanguage, new(_platformTexts));
     private async Task RunSmokeChecksAsync()
     {
         // Executed only with --smoke-test and an explicitly isolated data directory.
@@ -118,12 +118,15 @@ public partial class MainWindow : Window
         await RunBlueskySmokeAsync();
         App.TraceSmoke("library scenario");
         await RunLibrarySmokeAsync();
+        App.TraceSmoke("bilingual and custom text controls");
+        await RunTextSmokeAsync();
         App.TraceSmoke("schedule linked batch after window exit");
         TargetTelegram.IsChecked = TargetDiscord.IsChecked = TargetBluesky.IsChecked = true;
         await EnqueueTargetsAsync(DateTimeOffset.UtcNow.AddSeconds(20), false);
         var batch = (await _store.QueueAsync()).GroupBy(job => job.WorkId).Single(group => group.Count() == 3).Select(job => job.Id).ToArray();
         await _store.SaveDocumentAsync("batch-worker-smoke-ids", batch);
         TargetDiscord.IsChecked = TargetBluesky.IsChecked = false;
+        await RestoreTextSmokeAsync();
         App.TraceSmoke("schedule Telegram after window exit");
         var queued = await new QueuePlanner(_store).AddAsync(CurrentDraft, new(), "demo", DateTimeOffset.UtcNow.AddSeconds(20));
         await _store.SaveDocumentAsync("worker-smoke-id", queued.Id);
@@ -145,6 +148,7 @@ public partial class MainWindow : Window
         TokenInput.Password = SecretVault.Load();
         await InitializeDiscordAsync();
         await InitializeBlueskyAsync(draft);
+        await InitializeTextsAsync(draft);
         var targets = await _store.ReadDocumentAsync<string[]>("publish-targets") ?? ["telegram"];
         TargetTelegram.IsChecked = targets.Contains("telegram"); TargetDiscord.IsChecked = targets.Contains("discord"); TargetBluesky.IsChecked = targets.Contains("bluesky");
         _loaded = true;
@@ -170,11 +174,19 @@ public partial class MainWindow : Window
     }
     private void UpdatePreview()
     {
-        var draft = CurrentDraft;
-        var content = CurrentOptions.Platform == "bluesky" ? BlueskyText.Build(draft.PlainText).Text : draft.PlainText;
-        PreviewText.Text = content.Length > 0 ? content : "Без текста";
-        CountLabel.Text = $"{PublishLimits.Count(content, CurrentOptions.Platform)} / {PublishLimits.Text(CurrentOptions.Platform)} символов" +
-            (CurrentOptions.Platform == "telegram" && _images.Count > 0 && draft.PlainText.Length > 1024 ? " • Текст уйдёт отдельным сообщением перед фото" : "");
+        var source = CurrentDraft;
+        try
+        {
+            var draft = source.ForPlatform(CurrentOptions.Platform);
+            var content = CurrentOptions.Platform == "bluesky" ? BlueskyText.Build(draft.PlainText).Text : draft.PlainText;
+            PreviewText.Text = content.Length > 0 ? content : "Без текста";
+            var overLimit = PublishLimits.Count(content, CurrentOptions.Platform) > PublishLimits.Text(CurrentOptions.Platform)
+                || (CurrentOptions.Platform == "bluesky" && System.Text.Encoding.UTF8.GetByteCount(content) > 3000);
+            CountLabel.Foreground = overLimit ? System.Windows.Media.Brushes.Salmon : System.Windows.Media.Brushes.LightSlateGray;
+            CountLabel.Text = $"{PublishLimits.Count(content, CurrentOptions.Platform)} / {PublishLimits.Text(CurrentOptions.Platform)} символов • {Draft.LanguageName(source.LanguageFor(CurrentOptions.Platform))}" + (overLimit ? " • Превышен лимит текста" : "") +
+                (CurrentOptions.Platform == "telegram" && _images.Count > 0 && draft.PlainText.Length > 1024 ? " • Текст уйдёт отдельным сообщением перед фото" : "");
+        }
+        catch (InvalidOperationException error) { CountLabel.Foreground = System.Windows.Media.Brushes.Salmon; PreviewText.Text = "Текст для этой площадки ещё не готов."; CountLabel.Text = error.Message; }
         ImageLabel.Text = _images.Count == 0 ? "Изображения не выбраны"
             : $"{_images.Count} / {(CurrentOptions.Platform == "bluesky" ? 4 : 10)} • " + (CurrentOptions.Platform == "bluesky" ? "изображения Bluesky" : CurrentOptions.Platform == "discord" ? "вложения Discord" : _images.Count == 1 ? "одно фото" : "альбом, подпись под первым фото");
     }
@@ -220,7 +232,7 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         if (MessageBox.Show("Очистить текущий черновик?", "CrossPost", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
-        TitleInput.Clear(); BodyInput.Clear(); _images.Clear(); _alts.Clear(); BlueskyRating.SelectedIndex = 0; RefreshImages(); UpdatePreview();
+        TitleInput.Clear(); BodyInput.Clear(); ClearDraftTexts(); _images.Clear(); _alts.Clear(); BlueskyRating.SelectedIndex = 0; RefreshImages(); UpdatePreview();
         await Guard(SaveDraftAsync);
     }
     private void ValidateImages(Draft candidate, bool allowPreparation = false)
@@ -336,7 +348,7 @@ public partial class MainWindow : Window
         EditInput.IsReadOnly = _selected?.Platform == "bluesky";
         EditButton.IsEnabled = !_busy && CanEdit(_selected);
         HistoryDetails.Text = _selected is null ? "Выберите запись." :
-            $"{new HistoryRow(_selected).Mode} • {_selected.Delivery.ChatId} • {new HistoryRow(_selected).Status}\nИзображений: {(_selected.Platform is "discord" or "bluesky" ? _selected.Delivery.AttachmentIds?.Length ?? 0 : _selected.Delivery.AllMediaMessageIds.Length)} • ID сообщения: {_selected.Delivery.RemoteMessageId ?? _selected.Delivery.EditMessageId?.ToString()}\n{_selected.Delivery.Error}\n{_selected.EditState}" + (_selected.Platform == "bluesky" ? "\nBluesky не поддерживает редактирование опубликованного поста." : "");
+            $"{new HistoryRow(_selected).Mode} • {_selected.Delivery.ChatId} • {new HistoryRow(_selected).Status}\nИзображений: {(_selected.Platform is "discord" or "bluesky" ? _selected.Delivery.AttachmentIds?.Length ?? 0 : _selected.Delivery.AllMediaMessageIds.Length)} • ID сообщения: {_selected.Delivery.RemoteMessageId ?? _selected.Delivery.EditMessageId?.ToString()}\n{_selected.Delivery.Error}\n{_selected.EditState}\nЯзык: {Draft.LanguageName(_selected.Options?.TextLanguage ?? "ru")}" + (_selected.Platform == "bluesky" ? "\nBluesky не поддерживает редактирование опубликованного поста." : "");
     }
     private async void EditPost(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
     {

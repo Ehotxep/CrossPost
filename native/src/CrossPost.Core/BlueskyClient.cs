@@ -87,7 +87,7 @@ public sealed class BlueskyClient(HttpClient http, string identifier, string app
     { var info = await InspectAsync(ct); return $"{info.Handle} • {info.Did}"; }
     public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct, Func<Delivery, Task>? checkpoint = null)
     {
-        draft.Validate("bluesky");
+        draft = draft.ForPlatform("bluesky"); draft.Validate("bluesky");
         if (chat != expectedDid || !IsDid(expectedDid)) throw new InvalidOperationException("Не сохранён подтверждённый DID назначения Bluesky.");
         if (contentLabel is not ("sfw" or "erotic" or "explicit")) throw new InvalidOperationException("Выберите рейтинг Bluesky.");
         Session session;
@@ -146,7 +146,7 @@ public sealed class DemoBluesky : IPublisher
     public Task<string> CheckAsync(CancellationToken ct) => Task.FromResult("ДЕМО Bluesky");
     public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct, Func<Delivery, Task>? checkpoint = null)
     {
-        draft.Validate("bluesky"); await Task.Delay(300, ct);
+        draft = draft.ForPlatform("bluesky"); draft.Validate("bluesky"); await Task.Delay(300, ct);
         var key = Guid.NewGuid().ToString("N"); var rich = BlueskyText.Build(draft.PlainText);
         var sent = new Delivery(DeliveryState.Sent, Did, Kind: "bluesky", RemoteMessageId: $"at://{Did}/app.bsky.feed.post/{key}",
             SentText: rich.Text, ContentId: "demo", AttachmentIds: draft.Images.Select((_, index) => "demoBlob" + index).ToArray());

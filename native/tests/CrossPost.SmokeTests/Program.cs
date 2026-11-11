@@ -511,6 +511,7 @@ await ImportChecks.RunAsync(Run);
 await DiscordChecks.RunAsync(Run);
 await BlueskyChecks.RunAsync(Run);
 await BatchChecks.RunAsync(Run);
+await TextChecks.RunAsync(Run);
 await UpdateChecks.RunAsync(Run);
 Console.WriteLine($"Checks completed; failures: {failures}");
 return failures == 0 ? 0 : 1;

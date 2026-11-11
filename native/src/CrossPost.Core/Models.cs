@@ -3,14 +3,14 @@ using System.Text.Json.Serialization;
 
 namespace CrossPost.Core;
 
-public record Draft(string Title = "", string Text = "", string? ImagePath = null, string[]? AdditionalImagePaths = null, string[]? AltTexts = null, string ContentLabel = "sfw")
+public sealed partial record Draft(string Title = "", string Text = "", string? ImagePath = null, string[]? AdditionalImagePaths = null, string[]? AltTexts = null, string ContentLabel = "sfw", string EnglishTitle = "", string EnglishText = "", string Language = "ru", Dictionary<string, PlatformText>? PlatformTexts = null)
 {
     // Keep ImagePath for compatibility with the first prototype's saved documents.
     [JsonIgnore]
     public string[] Images => (ImagePath is null ? Array.Empty<string>() : new[] { ImagePath })
         .Concat(AdditionalImagePaths ?? []).ToArray();
     public bool SameContent(Draft other) => Title == other.Title && Text == other.Text
-        && Images.SequenceEqual(other.Images, StringComparer.OrdinalIgnoreCase) && Enumerable.Range(0, Images.Length).All(index => AltFor(index) == other.AltFor(index)) && ContentLabel == other.ContentLabel;
+        && Images.SequenceEqual(other.Images, StringComparer.OrdinalIgnoreCase) && Enumerable.Range(0, Images.Length).All(index => AltFor(index) == other.AltFor(index)) && ContentLabel == other.ContentLabel && SameTextVariants(other);
     public string AltFor(int index) => AltTexts is { } descriptions && index >= 0 && index < descriptions.Length ? descriptions[index] ?? "" : "";
     public string PlainText => string.Join("\n\n", new[] { Title.Trim(), Text.Trim() }.Where(x => x.Length > 0));
     public string Html => WebUtility.HtmlEncode(PlainText);
@@ -18,10 +18,11 @@ public record Draft(string Title = "", string Text = "", string? ImagePath = nul
     {
         if (platform is not ("telegram" or "discord" or "bluesky")) throw new InvalidOperationException("Эта площадка ещё не поддерживается.");
         var textLimit = PublishLimits.Text(platform);
-        var content = platform == "bluesky" ? BlueskyText.Build(PlainText).Text : PlainText;
+        var actual = ForPlatform(platform);
+        var content = platform == "bluesky" ? BlueskyText.Build(actual.PlainText).Text : actual.PlainText;
         var imageLimit = platform == "bluesky" ? (allowImagePreparation ? PublishLimits.DiscordImage : PublishLimits.BlueskyImage)
             : platform == "discord" ? PublishLimits.DiscordImage : PublishLimits.TelegramImage;
-        if (string.IsNullOrWhiteSpace(PlainText) && Images.Length == 0)
+        if (string.IsNullOrWhiteSpace(actual.PlainText) && Images.Length == 0)
             throw new InvalidOperationException("Добавьте текст или изображение.");
         if (PublishLimits.Count(content, platform) > textLimit)
             throw new InvalidOperationException($"{PublishLimits.Name(platform)}: текст должен содержать не более {textLimit} символов. Сократите текст перед отправкой.");
@@ -58,7 +59,7 @@ public record Delivery(DeliveryState State, string ChatId, long? EditMessageId =
 }
 public record Publication(Guid Id, DateTimeOffset Created, Draft Draft, bool Demo,
     string BotId, Delivery Delivery, string EditText, int Revision = 1, string EditState = "", Guid? QueueId = null, string Platform = "telegram", AppOptions? Options = null, Guid? WorkId = null);
-public record AppOptions(bool Demo = true, string Chat = "", string Platform = "telegram", bool Spoiler = false, bool SuppressEmbeds = true, string ContentLabel = "sfw");
+public record AppOptions(bool Demo = true, string Chat = "", string Platform = "telegram", bool Spoiler = false, bool SuppressEmbeds = true, string ContentLabel = "sfw", string TextLanguage = "ru");
 public record BlueskyOptions(bool Demo = true, string Handle = "", string Did = "", string Pds = "", string ContentLabel = "sfw")
 {
     public AppOptions PublishOptions => new(Demo, Did, "bluesky", ContentLabel: ContentLabel);

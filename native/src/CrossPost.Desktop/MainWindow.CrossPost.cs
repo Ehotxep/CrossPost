@@ -16,7 +16,7 @@ public partial class MainWindow
         if (TargetSummary is null) return;
         var targets = new[] { (TargetTelegram.IsChecked == true, _options), (TargetDiscord.IsChecked == true, _discord.PublishOptions), (TargetBluesky.IsChecked == true, _bluesky.PublishOptions) };
         TargetSummary.Text = string.Join(" • ", targets.Where(value => value.Item1).Select(value => PublishLimits.Name(value.Item2.Platform) + ": "
-            + (value.Item2.Demo ? "ДЕМО" : value.Item2.Chat.Length > 0 ? value.Item2.Chat : "не настроено")));
+            + (value.Item2.Demo ? "ДЕМО" : value.Item2.Chat.Length > 0 ? value.Item2.Chat : "не настроено") + " · " + Draft.LanguageName(CurrentDraft.LanguageFor(value.Item2.Platform))));
         if (TargetSummary.Text.Length == 0) TargetSummary.Text = "Выберите хотя бы одно назначение.";
     }
     private string[] SelectedPlatformNames() => new[] { (TargetTelegram.IsChecked == true,"telegram"), (TargetDiscord.IsChecked == true,"discord"), (TargetBluesky.IsChecked == true,"bluesky") }
@@ -36,7 +36,7 @@ public partial class MainWindow
         foreach (var target in targets) draft.Validate(target.Options.Platform);
         var details = string.Join("\n", targets.Select(target => $"{PublishLimits.Name(target.Options.Platform)} • {(target.Options.Demo ? "ДЕМО" : target.Options.Chat)}"));
         var uncertain = (await _store.HistoryAsync()).Where(post => post.Delivery.State is DeliveryState.Sending or DeliveryState.Unknown or DeliveryState.Partial)
-            .Any(post => post.Draft.PlainText == draft.PlainText && targets.Any(target => target.Options.Platform == post.Platform && target.Options.Demo == post.Demo && (post.Options?.Chat ?? post.Delivery.ChatId) == target.Options.Chat));
+            .Any(post => targets.Any(target => post.Draft.PlainText == draft.ForPlatform(target.Options.Platform).PlainText && target.Options.Platform == post.Platform && target.Options.Demo == post.Demo && (post.Options?.Chat ?? post.Delivery.ChatId) == target.Options.Chat));
         if (uncertain && MessageBox.Show("Есть неподтверждённая отправка этого текста. Проверьте историю и площадки. Повторить с риском дубликата?", "Проверка перед отправкой", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         if (targets.Any(target => !target.Options.Demo) && MessageBox.Show((immediate ? "Опубликовать сейчас?" : $"Запланировать на {due.ToLocalTime():dd.MM.yyyy HH:mm}?") + "\n\n" + details,
             "Публикация", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;

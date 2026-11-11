@@ -61,7 +61,7 @@ public sealed class TelegramClient(HttpClient http, string token) : IPublisher
     public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct,
         Func<Delivery, Task>? checkpoint = null)
     {
-        draft.Validate();
+        draft = draft.ForPlatform("telegram"); draft.Validate();
         if (string.IsNullOrWhiteSpace(chat)) throw new InvalidOperationException("Укажите канал Telegram.");
         BotId(token);
         ct.ThrowIfCancellationRequested();
@@ -172,7 +172,7 @@ public sealed class DemoTelegram : IPublisher
     public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct,
         Func<Delivery, Task>? checkpoint = null)
     {
-        draft.Validate();
+        draft = draft.ForPlatform("telegram"); draft.Validate();
         await Task.Delay(600, ct);
         var separateText = draft.Images.Length == 0 || draft.PlainText.Length > 1024;
         var textId = separateText ? (long?)Interlocked.Increment(ref _next) : null;

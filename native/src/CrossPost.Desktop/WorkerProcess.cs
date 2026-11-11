@@ -48,7 +48,7 @@ internal static class WorkerProcess
             {
                 Start(); nextLaunch = DateTimeOffset.UtcNow.AddSeconds(2);
             }
-            var reply = await RequestAsync("protocol|4", 1000);
+            var reply = await RequestAsync("protocol|5", 1000);
             if (reply == "ok") return;
             if (reply == "error")
                 throw new InvalidOperationException("Работает Worker предыдущей версии. Остановите очередь на вкладке «Очередь», затем нажмите «Запустить очередь». Новое задание ещё не добавлено.");
@@ -113,13 +113,13 @@ internal static class WorkerProcess
                     if (command.StartsWith("cancel|", StringComparison.Ordinal) && Guid.TryParse(command[7..], out var id) && id == activeId)
                     { active?.Cancel(); return true; }
                 }
-                return command is "ping" or "protocol|4";
+                return command is "ping" or "protocol|5";
             });
             try
             {
                 var store = new Store(App.DataFolder); await store.InitializeAsync(recoverUnfinished: false);
                 await store.RecoverQueueAsync();
-                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow, 4));
+                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow, 5));
                 var runner = new QueueRunner(store);
                 while (!stopping.IsCancellationRequested && !Volatile.Read(ref draining))
                 {
@@ -211,7 +211,14 @@ internal static class WorkerProcess
                 || bluesky.Draft.AltFor(0) != "Поворот" || bluesky.Draft.AltFor(1) != "Прозрачность")
                 throw new InvalidOperationException("Bluesky background routing, ALT or rating snapshot failed");
             var batch = await store.ReadDocumentAsync<Guid[]>("batch-worker-smoke-ids") ?? throw new InvalidOperationException("Linked batch missing");
-            foreach (var id in batch) { var post = await WaitFor(id); if (post.Created.UtcDateTime < closed) throw new InvalidOperationException("Batch sent before window exit"); }
+            var expectedTexts = await store.ReadDocumentAsync<Dictionary<string,string>>("batch-worker-smoke-texts") ?? throw new InvalidOperationException("Expected text variants missing");
+            foreach (var id in batch)
+            {
+                var post = await WaitFor(id);
+                if (post.Created.UtcDateTime < closed) throw new InvalidOperationException("Batch sent before window exit");
+                if (post.EditText != expectedTexts[post.Platform] || post.Options?.TextLanguage != (post.Platform == "telegram" ? "ru" : post.Platform == "discord" ? "both" : "en"))
+                    throw new InvalidOperationException("Worker changed frozen language/custom text: " + post.Platform);
+            }
             var linked = (await store.LibraryAsync()).Posts.Where(post => post.NativeId is { } id && batch.Contains(id)).ToArray();
             if (linked.Length != 3 || linked.Select(post => post.WorkId).Distinct().Count() != 1) throw new InvalidOperationException("Background crosspost did not form one work");
             var info = await store.ReadDocumentAsync<WorkerInfo>("worker-info");

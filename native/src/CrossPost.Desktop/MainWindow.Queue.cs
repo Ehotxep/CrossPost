@@ -71,7 +71,7 @@ public partial class MainWindow
         ResumeJobButton.IsEnabled = job?.State is QueueState.Pending or QueueState.Paused;
         CancelJobButton.IsEnabled = job?.State is QueueState.Pending or QueueState.Paused or QueueState.Running;
         JobHistoryButton.IsEnabled = job?.State is QueueState.Completed or QueueState.Refused or QueueState.Partial or QueueState.Unknown;
-        QueueDetails.Text = job is null ? "Выберите задание." : $"{new QueueRow(job).Title} • {new QueueRow(job).Destination}\n{job.Error}";
+        QueueDetails.Text = job is null ? "Выберите задание." : $"{new QueueRow(job).Title} • {new QueueRow(job).Destination} • {Draft.LanguageName(job.Options.TextLanguage)}\n{job.Error}";
         if (job is not null && !_refreshingQueue)
         { var due = job.Due.ToLocalTime(); QueueDate.SelectedDate = due.Date; QueueClock.Text = due.ToString("HH:mm"); }
     }

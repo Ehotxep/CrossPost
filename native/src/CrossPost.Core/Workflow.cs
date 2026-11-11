@@ -4,6 +4,8 @@ public sealed class Workflow(Store store)
 {
     public async Task<Publication> SendAsync(IPublisher publisher, string botId, AppOptions options, Draft draft, CancellationToken ct, Guid? queueId = null, Guid? workId = null)
     {
+        options = options with { TextLanguage = draft.PlatformTexts is not null || draft.Language != "ru" ? draft.LanguageFor(options.Platform) : options.TextLanguage };
+        draft = draft.ForPlatform(options.Platform);
         draft.Validate(options.Platform);
         var publication = new Publication(queueId ?? Guid.NewGuid(), DateTimeOffset.UtcNow, draft, options.Demo, botId,
             new(DeliveryState.Sending, options.Chat), draft.PlainText, QueueId: queueId, Platform: options.Platform, Options: options, WorkId: workId);
