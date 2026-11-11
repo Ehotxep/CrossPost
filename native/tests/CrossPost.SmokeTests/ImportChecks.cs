@@ -166,7 +166,7 @@ internal static class ImportChecks
                 using (var database = Open(Path.Combine(old, "prototype.db"))) Exec(database, "CREATE TABLE documents(key TEXT PRIMARY KEY,json TEXT NOT NULL); INSERT INTO documents VALUES('draft','{\"Title\":\"Keep\"}')");
                 var store = new Store(old); await store.InitializeAsync();
                 Check((await store.ReadDocumentAsync<Draft>("draft"))?.Title == "Keep" && Directory.GetFiles(Path.Combine(old, "backups")).Length == 1, "Migration lost old data or backup");
-                using (var database = Open(Path.Combine(old, "prototype.db"))) Exec(database, "PRAGMA user_version=2");
+                using (var database = Open(Path.Combine(old, "prototype.db"))) Exec(database, "PRAGMA user_version=" + (Store.SchemaVersion + 1));
                 var rejected = false; try { await store.InitializeAsync(); } catch (InvalidOperationException) { rejected = true; }
                 Check(rejected, "Newer schema was modified by an old binary");
             }

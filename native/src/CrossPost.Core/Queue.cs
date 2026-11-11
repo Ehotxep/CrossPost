@@ -24,7 +24,7 @@ public sealed class QueuePlanner(Store store)
 {
     public async Task<ScheduledPost> AddAsync(Draft draft, AppOptions options, string botId, DateTimeOffset due)
     {
-        draft.Validate();
+        draft.Validate(options.Platform);
         if (!options.Demo && (string.IsNullOrWhiteSpace(options.Chat) || string.IsNullOrWhiteSpace(botId)))
             throw new InvalidOperationException("Для задания нужны канал и бот.");
         var id = Guid.NewGuid();
@@ -43,7 +43,7 @@ public sealed class QueuePlanner(Store store)
                 copies.Add(copy);
             }
             var snapshot = draft with { ImagePath = copies.FirstOrDefault(), AdditionalImagePaths = copies.Skip(1).ToArray() };
-            snapshot.Validate();
+            snapshot.Validate(options.Platform);
             var job = new ScheduledPost(id, DateTimeOffset.UtcNow, due.ToUniversalTime(), snapshot, options, botId);
             await store.InsertQueueAsync(job);
             return job;
@@ -59,7 +59,7 @@ public sealed class QueuePlanner(Store store)
 public sealed class QueueRunner(Store store)
 {
     public static readonly TimeSpan OverdueGrace = TimeSpan.FromMinutes(15);
-    public async Task<bool> RunNextAsync(DateTimeOffset now, Func<ScheduledPost, Task<ITelegram>> client,
+    public async Task<bool> RunNextAsync(DateTimeOffset now, Func<ScheduledPost, Task<IPublisher>> client,
         CancellationToken ct, Action<Guid?>? active = null)
     {
         ct.ThrowIfCancellationRequested();
@@ -73,10 +73,10 @@ public sealed class QueueRunner(Store store)
                 await store.FinishQueueAsync(job with { State = QueueState.Paused, Error = "Время пропущено более чем на 15 минут. Перенесите задание и включите его вручную." });
                 return true;
             }
-            job.Draft.Validate();
-            var telegram = await client(job);
+            job.Draft.Validate(job.Options.Platform);
+            var publisher = await client(job);
             ct.ThrowIfCancellationRequested();
-            var sent = await new Workflow(store).SendAsync(telegram, job.BotId, job.Options, job.Draft, ct, job.Id);
+            var sent = await new Workflow(store).SendAsync(publisher, job.BotId, job.Options, job.Draft, ct, job.Id);
             await store.FinishQueueAsync(job with { State = StateFor(sent.Delivery.State), Error = sent.Delivery.Error });
         }
         catch (QueuePausedException error)

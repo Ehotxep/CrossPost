@@ -16,7 +16,7 @@ public record HistoryRow(Publication Record)
 {
     public string CreatedText => Record.Created.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
     public string Title => Record.EditText.Split('\n')[0] is { Length: > 0 } title ? title : "Изображение";
-    public string Mode => Record.Demo ? "ДЕМО" : "Telegram";
+    public string Mode => (Record.Demo ? "ДЕМО • " : "") + (Record.Platform == "discord" ? "Discord" : "Telegram");
     public string Status => Record.Delivery.State switch
     {
         DeliveryState.Sent => "Отправлено", DeliveryState.Refused => "Не отправлено",
@@ -30,7 +30,7 @@ public record ImageRow(string Path)
 public partial class MainWindow : Window
 {
     private readonly Store _store = new(App.DataFolder);
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(90) };
+    private readonly HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(90) };
     private readonly DispatcherTimer _draftTimer = new() { Interval = TimeSpan.FromMilliseconds(750) };
     private readonly SemaphoreSlim _draftLock = new(1, 1);
     private AppOptions _options = new();
@@ -100,6 +100,7 @@ public partial class MainWindow : Window
         var edited = await workflow.EditAsync(new DemoTelegram(), sent, "Изменённая подпись", CancellationToken.None);
         if (!edited.Result.Confirmed) throw new InvalidOperationException("WPF demo edit failed");
         SwitchView(HistoryView); UpdateLayout(); SwitchView(SettingsView); UpdateLayout(); SwitchView(QueueView); UpdateLayout(); SwitchView(ComposeView);
+        await RunDiscordSmokeAsync();
         await RunLibrarySmokeAsync();
         var queued = await new QueuePlanner(_store).AddAsync(CurrentDraft, new(), "demo", DateTimeOffset.UtcNow.AddSeconds(20));
         await _store.SaveDocumentAsync("worker-smoke-id", queued.Id);
@@ -118,11 +119,12 @@ public partial class MainWindow : Window
         RefreshImages();
         DemoInput.IsChecked = _options.Demo; ChatInput.Text = _options.Chat;
         TokenInput.Password = SecretVault.Load();
+        await InitializeDiscordAsync();
         _loaded = true;
         UpdatePreview(); ApplyMode();
         await LoadHistoryAsync();
         await LoadQueueAsync();
-        if (!App.SmokeTest && (await _store.QueueAsync()).Any(job => job.State is QueueState.Pending or QueueState.Running)) WorkerProcess.Start();
+        if (!App.SmokeTest && (await _store.QueueAsync()).Any(job => job.State is QueueState.Pending or QueueState.Running)) await WorkerProcess.EnsureStartedAsync();
         StatusLabel.Text = "Готово. Черновик сохраняется автоматически.";
     }
     private async Task Guard(Func<Task> action)
@@ -132,18 +134,20 @@ public partial class MainWindow : Window
     }
     private void ApplyMode()
     {
-        ModeLabel.Text = _options.Demo ? "ДЕМО • ничего не публикуется" : "TELEGRAM • реальная отправка";
-        SendButton.Content = _options.Demo ? "Выполнить демо-отправку" : "Отправить в Telegram";
-        DestinationLabel.Text = _options.Demo ? "Назначение: демонстрационный канал" : "Назначение: " + _options.Chat;
+        var options = CurrentOptions;
+        ModeLabel.Text = options.Demo ? $"{CurrentPlatformLabel} • ДЕМО" : $"{CurrentPlatformLabel} • реальная отправка";
+        SendButton.Content = options.Demo ? "Выполнить демо-отправку" : "Отправить в " + CurrentPlatformLabel;
+        DestinationLabel.Text = options.Demo ? "Назначение: демонстрационный канал" : "Назначение: " + options.Chat;
+        PreviewHeading.Text = "Предпросмотр текста " + CurrentPlatformLabel;
     }
     private void UpdatePreview()
     {
         var draft = CurrentDraft;
         PreviewText.Text = draft.PlainText.Length > 0 ? draft.PlainText : "Без текста";
-        CountLabel.Text = $"{draft.PlainText.Length} / 4096 символов" +
-            (_images.Count > 0 && draft.PlainText.Length > 1024 ? " • Текст уйдёт отдельным сообщением перед фото" : "");
+        CountLabel.Text = $"{draft.PlainText.Length} / {PublishLimits.Text(CurrentOptions.Platform)} символов" +
+            (CurrentOptions.Platform == "telegram" && _images.Count > 0 && draft.PlainText.Length > 1024 ? " • Текст уйдёт отдельным сообщением перед фото" : "");
         ImageLabel.Text = _images.Count == 0 ? "Изображения не выбраны"
-            : $"{_images.Count} / 10 • " + (_images.Count == 1 ? "одно фото" : "альбом, подпись под первым фото");
+            : $"{_images.Count} / 10 • " + (CurrentOptions.Platform == "discord" ? "вложения Discord" : _images.Count == 1 ? "одно фото" : "альбом, подпись под первым фото");
     }
     private void RefreshImages(int selection = 0)
     {
@@ -188,14 +192,14 @@ public partial class MainWindow : Window
         TitleInput.Clear(); BodyInput.Clear(); _images.Clear(); RefreshImages(); UpdatePreview();
         await Guard(SaveDraftAsync);
     }
-    private static void ValidateImages(Draft candidate)
+    private void ValidateImages(Draft candidate)
     {
-        candidate.Validate();
+        candidate.Validate(CurrentOptions.Platform);
         foreach (var path in candidate.Images)
         {
             using var stream = File.OpenRead(path);
             var frame = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None).Frames[0];
-            if (frame.PixelWidth + frame.PixelHeight > 10000 || (double)Math.Max(frame.PixelWidth, frame.PixelHeight) / Math.Min(frame.PixelWidth, frame.PixelHeight) > 20)
+            if (CurrentOptions.Platform == "telegram" && (frame.PixelWidth + frame.PixelHeight > 10000 || (double)Math.Max(frame.PixelWidth, frame.PixelHeight) / Math.Min(frame.PixelWidth, frame.PixelHeight) > 20))
                 throw new InvalidOperationException("Telegram: сумма сторон не больше 10000 пикселей, соотношение сторон не больше 20.");
         }
     }
@@ -256,7 +260,9 @@ public partial class MainWindow : Window
             _options = options; ApplyMode(); StatusLabel.Text = "Настройки сохранены.";
         });
     }
-    private ITelegram Client(bool demo) => demo ? new DemoTelegram() : new TelegramClient(_http, SecretVault.Load());
+    private IPublisher Client(bool demo, string platform = "telegram", string? channel = null) => platform == "discord"
+        ? demo ? new DemoDiscord() : new DiscordClient(_http, DiscordEndpoint.Parse(SecretVault.Load("discord")), channel ?? _discord.ChannelId, _discord.Spoiler, _discord.SuppressEmbeds)
+        : demo ? new DemoTelegram() : new TelegramClient(_http, SecretVault.Load());
     private async Task RunOperation(Func<CancellationToken, Task> action)
     {
         if (_busy) return;
@@ -270,7 +276,7 @@ public partial class MainWindow : Window
         {
             _busy = false; _operation.Dispose(); _operation = null;
             SendButton.IsEnabled = true;
-            EditButton.IsEnabled = _selected?.Delivery.EditMessageId is not null;
+            EditButton.IsEnabled = CanEdit(_selected);
             BusyBar.Visibility = CancelButton.Visibility = Visibility.Collapsed;
         }
     }
@@ -281,14 +287,15 @@ public partial class MainWindow : Window
     });
     private async void SendPost(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
     {
+        var options = CurrentOptions;
         var draft = CurrentDraft; ValidateImages(draft); await SaveDraftAsync();
-        var uncertain = (await _store.HistoryAsync()).Any(p => p.Draft.SameContent(draft) && p.Demo == _options.Demo
+        var uncertain = (await _store.HistoryAsync()).Any(p => p.Draft.SameContent(draft) && p.Demo == options.Demo && p.Platform == options.Platform
             && p.Delivery.State is DeliveryState.Sending or DeliveryState.Unknown or DeliveryState.Partial);
         if (uncertain && MessageBox.Show("У этого черновика есть неподтверждённая или частичная отправка. Сначала проверьте канал. Отправить ещё раз с риском дубликата?", "CrossPost", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        if (!_options.Demo && MessageBox.Show("Отправить пост в " + _options.Chat + "?", "Реальная публикация", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        StatusLabel.Text = _options.Demo ? "Демонстрационная отправка…" : "Отправляю в Telegram…";
-        var botId = _options.Demo ? "demo" : TelegramClient.BotId(SecretVault.Load());
-        var sent = await new Workflow(_store).SendAsync(Client(_options.Demo), botId, _options, draft, ct);
+        if (!options.Demo && MessageBox.Show("Отправить пост в " + options.Chat + "?", "Реальная публикация", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        StatusLabel.Text = options.Demo ? "Демонстрационная отправка…" : "Отправляю в " + CurrentPlatformLabel + "…";
+        var botId = options.Demo ? "demo" : CurrentCredentialId;
+        var sent = await new Workflow(_store).SendAsync(Client(options.Demo, options.Platform, options.Chat), botId, options, draft, ct);
         await LoadHistoryAsync();
         StatusLabel.Text = (sent.Demo ? "ДЕМО: " : "") + new HistoryRow(sent).Status +
             (sent.Delivery.Error.Length > 0 ? ". " + sent.Delivery.Error : "");
@@ -305,23 +312,23 @@ public partial class MainWindow : Window
     {
         _selected = (HistoryList.SelectedItem as HistoryRow)?.Record;
         EditInput.Text = _selected?.EditText ?? "";
-        EditButton.IsEnabled = !_busy && _selected?.Delivery.EditMessageId is not null;
+        EditButton.IsEnabled = !_busy && CanEdit(_selected);
         HistoryDetails.Text = _selected is null ? "Выберите запись." :
-            $"{new HistoryRow(_selected).Mode} • {_selected.Delivery.ChatId} • {new HistoryRow(_selected).Status}\nИзображений: {_selected.Delivery.AllMediaMessageIds.Length} • ID медиа: {string.Join(", ", _selected.Delivery.AllMediaMessageIds)}\n{_selected.Delivery.Error}\n{_selected.EditState}";
+            $"{new HistoryRow(_selected).Mode} • {_selected.Delivery.ChatId} • {new HistoryRow(_selected).Status}\nИзображений: {(_selected.Platform == "discord" ? _selected.Delivery.AttachmentIds?.Length ?? 0 : _selected.Delivery.AllMediaMessageIds.Length)} • ID сообщения: {_selected.Delivery.RemoteMessageId ?? _selected.Delivery.EditMessageId?.ToString()}\n{_selected.Delivery.Error}\n{_selected.EditState}";
     }
     private async void EditPost(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
     {
         if (_selected is not { } selected) return;
-        if (!selected.Demo && MessageBox.Show("Изменить это сообщение в Telegram?", "Редактирование", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
-        StatusLabel.Text = selected.Demo ? "Демонстрационное изменение…" : "Сохраняю в Telegram…";
-        var updated = await new Workflow(_store).EditAsync(Client(selected.Demo), selected, EditInput.Text, ct);
+        if (!selected.Demo && MessageBox.Show("Изменить это сообщение в " + (selected.Platform == "discord" ? "Discord" : "Telegram") + "?", "Редактирование", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        StatusLabel.Text = selected.Demo ? "Демонстрационное изменение…" : "Сохраняю на площадке…";
+        var updated = await new Workflow(_store).EditAsync(Client(selected.Demo, selected.Platform, selected.Delivery.ChatId), selected, EditInput.Text, ct);
         await LoadHistoryAsync();
-        StatusLabel.Text = updated.Result.Confirmed ? (selected.Demo ? "ДЕМО: изменение сохранено." : "Изменение сохранено в Telegram.") : updated.Result.Error;
+        StatusLabel.Text = updated.Result.Confirmed ? (selected.Demo ? "ДЕМО: изменение сохранено." : "Изменение сохранено на площадке.") : updated.Result.Error;
     });
     private void CancelOperation(object sender, RoutedEventArgs e) => _operation?.Cancel();
     private void OpenPost(object sender, RoutedEventArgs e)
     {
-        if (_selected?.Delivery.Link is { } link && Uri.TryCreate(link, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.Host == "t.me")
+        if (_selected?.Delivery.Link is { } link && Uri.TryCreate(link, UriKind.Absolute, out var uri) && uri.Scheme == "https" && (uri.Host == "t.me" || uri.Host == "discord.com"))
             Process.Start(new ProcessStartInfo(link) { UseShellExecute = true });
     }
     private void OpenData(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo(App.DataFolder) { UseShellExecute = true });

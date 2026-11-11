@@ -9,7 +9,7 @@ public record QueueRow(ScheduledPost Record)
 {
     public string DueText => Record.Due.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
     public string Title => Record.Draft.Title.Length > 0 ? Record.Draft.Title : (Record.Draft.PlainText.Length > 0 ? Record.Draft.PlainText.Split('\n')[0] : "Изображения");
-    public string Destination => Record.Options.Demo ? "ДЕМО" : Record.Options.Chat;
+    public string Destination => (Record.Options.Platform == "discord" ? "Discord • " : "Telegram • ") + (Record.Options.Demo ? "ДЕМО" : Record.Options.Chat);
     public string Status => Record.State switch
     {
         QueueState.Pending => "Ожидает", QueueState.Paused => "Приостановлено", QueueState.Running => "Отправляется",
@@ -46,7 +46,7 @@ public partial class MainWindow
     { SwitchView(QueueView); await Guard(LoadQueueAsync); }
     private async void RefreshQueue(object sender, RoutedEventArgs e) => await Guard(LoadQueueAsync);
     private async void StartWorker(object sender, RoutedEventArgs e) => await Guard(async () =>
-    { WorkerProcess.Start(); StatusLabel.Text = "Запущен фоновый процесс очереди."; await LoadQueueAsync(); });
+    { await WorkerProcess.EnsureStartedAsync(); StatusLabel.Text = "Запущен фоновый процесс очереди."; await LoadQueueAsync(); });
     private async void StopWorker(object sender, RoutedEventArgs e) => await Guard(async () =>
     {
         if (WorkerProcess.IsRunning && MessageBox.Show(
@@ -65,13 +65,14 @@ public partial class MainWindow
     });
     private async Task EnqueueAsync(DateTimeOffset due) => await RunOperation(async _ =>
     {
+        var options = CurrentOptions;
         var draft = CurrentDraft; ValidateImages(draft);
-        if (!_options.Demo && MessageBox.Show($"Разрешить автоматическую отправку в {_options.Chat} в {due.ToLocalTime():dd.MM.yyyy HH:mm}? Очередь продолжит работу после закрытия окна.",
+        if (!options.Demo && MessageBox.Show($"Разрешить автоматическую отправку в {options.Chat} в {due.ToLocalTime():dd.MM.yyyy HH:mm}? Очередь продолжит работу после закрытия окна.",
             "Запланированная публикация", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        var botId = _options.Demo ? "demo" : TelegramClient.BotId(SecretVault.Load());
+        var botId = options.Demo ? "demo" : CurrentCredentialId;
         await SaveDraftAsync();
-        await new QueuePlanner(_store).AddAsync(draft, _options, botId, due);
-        WorkerProcess.Start(); SwitchView(QueueView); await LoadQueueAsync();
+        await WorkerProcess.EnsureStartedAsync();
+        await new QueuePlanner(_store).AddAsync(draft, options, botId, due); SwitchView(QueueView); await LoadQueueAsync();
         StatusLabel.Text = "Задание сохранено. Текст и файлы скопированы; дальнейшие правки черновика его не изменят.";
     });
     private void QueueSelected(object sender, SelectionChangedEventArgs e)
@@ -96,7 +97,8 @@ public partial class MainWindow
         if (SelectedJob is not { } job || QueueDate.SelectedDate is not { } date) return;
         var due = ScheduleTime.FromLocal(date, QueueClock.Text, TimeZoneInfo.Local);
         if (due <= DateTimeOffset.UtcNow) throw new InvalidOperationException("Для продолжения выберите новое время в будущем.");
-        if (await _store.ChangeQueueAsync(job.Id, QueueState.Pending, due)) WorkerProcess.Start();
+        await WorkerProcess.EnsureStartedAsync();
+        await _store.ChangeQueueAsync(job.Id, QueueState.Pending, due);
         await LoadQueueAsync();
     });
     private async void CancelJob(object sender, RoutedEventArgs e) => await Guard(async () =>

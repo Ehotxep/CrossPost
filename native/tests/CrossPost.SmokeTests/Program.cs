@@ -383,7 +383,7 @@ await Run("queue runner executes once and links the result to publication histor
         var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
         var job = await new QueuePlanner(store).AddAsync(new("Queue demo"), new(), "demo", now);
         var runner = new QueueRunner(store); var calls = 0;
-        Task<ITelegram> Client(ScheduledPost _) { calls++; return Task.FromResult<ITelegram>(new DemoTelegram()); }
+        Task<IPublisher> Client(ScheduledPost _) { calls++; return Task.FromResult<IPublisher>(new DemoTelegram()); }
         Check(!await runner.RunNextAsync(now.AddSeconds(-1), Client, CancellationToken.None) && calls == 0, "Job ran early");
         Check(await runner.RunNextAsync(now, Client, CancellationToken.None), "Due job did not run");
         Check(!await runner.RunNextAsync(now.AddSeconds(1), Client, CancellationToken.None) && calls == 1, "Job repeated");
@@ -470,7 +470,7 @@ await Run("an unknown queued send remains unknown across restart without a retry
         var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
         var handler = new ScriptedHandler((_, _) => throw new HttpRequestException()); using var http = new HttpClient(handler);
         await new QueuePlanner(store).AddAsync(new("Uncertain"), new(false, "@saved_target"), "123", now);
-        await new QueueRunner(store).RunNextAsync(now, _ => Task.FromResult<ITelegram>(new TelegramClient(http, token)), CancellationToken.None);
+        await new QueueRunner(store).RunNextAsync(now, _ => Task.FromResult<IPublisher>(new TelegramClient(http, token)), CancellationToken.None);
         await new Store(folder).InitializeAsync(); await store.RecoverQueueAsync();
         Check((await store.QueueAsync()).Single().State == QueueState.Unknown && handler.Calls == 1, "Unknown queued send retried");
         Check(await store.ClaimDueAsync(now) is null && (await store.HistoryAsync()).Single().Delivery.State == DeliveryState.Unknown, "Unknown result lost");
@@ -508,6 +508,7 @@ await Run("schedule converts local time to UTC and rejects invalid or ambiguous 
     return Task.CompletedTask;
 });
 await ImportChecks.RunAsync(Run);
+await DiscordChecks.RunAsync(Run);
 Console.WriteLine($"Checks completed; failures: {failures}");
 return failures == 0 ? 0 : 1;
 

@@ -5,7 +5,7 @@ namespace CrossPost.Core;
 
 public sealed partial class Store
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2;
     internal Task<SqliteConnection> OpenForImportAsync() => OpenAsync();
     public async Task<string> BackupAsync(string reason)
     {
@@ -37,14 +37,23 @@ public sealed partial class Store
             CREATE TABLE IF NOT EXISTS library_group_events(id TEXT PRIMARY KEY,at TEXT,kind TEXT,posts TEXT);
             CREATE TABLE IF NOT EXISTS legacy_rules_applied(id TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS legacy_imports(id TEXT PRIMARY KEY,json TEXT NOT NULL);
-            PRAGMA user_version=1;
+            PRAGMA user_version=2;
             """;
-        await create.ExecuteNonQueryAsync(); transaction.Commit();
+        await create.ExecuteNonQueryAsync();
+        using var hasPublications = connection.CreateCommand(); hasPublications.Transaction = transaction;
+        hasPublications.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='publications'";
+        if (current == 1 && Convert.ToInt32(await hasPublications.ExecuteScalarAsync()) > 0)
+        {
+            using var demo = connection.CreateCommand(); demo.Transaction = transaction;
+            demo.CommandText = "DELETE FROM native_projection WHERE native_id IN (SELECT id FROM publications WHERE json_extract(json,'$.Demo')=1)";
+            await demo.ExecuteNonQueryAsync();
+        }
+        transaction.Commit();
     }
     internal static async Task<LibraryPost> UpsertLibraryAsync(SqliteConnection connection, SqliteTransaction transaction, LibraryPost incoming)
     {
         var matches = new HashSet<string>();
-        foreach (var externalId in incoming.ExternalIds)
+        foreach (var externalId in incoming.Platform.StartsWith("demo.", StringComparison.Ordinal) ? Array.Empty<string>() : incoming.ExternalIds)
         {
             using var lookup = connection.CreateCommand(); lookup.Transaction = transaction;
             lookup.CommandText = "SELECT post_id FROM library_refs WHERE platform=$platform AND target=$target AND external_id=$external";
@@ -73,7 +82,7 @@ public sealed partial class Store
         save.CommandText = "INSERT INTO library_posts(id,work_id,json) VALUES($id,$work,$json) ON CONFLICT(id) DO UPDATE SET json=excluded.json";
         save.Parameters.AddWithValue("$id", post.Id.ToString()); save.Parameters.AddWithValue("$work", post.WorkId.ToString());
         save.Parameters.AddWithValue("$json", JsonSerializer.Serialize(post)); await save.ExecuteNonQueryAsync();
-        foreach (var externalId in post.ExternalIds)
+        foreach (var externalId in post.Platform.StartsWith("demo.", StringComparison.Ordinal) ? Array.Empty<string>() : post.ExternalIds)
         {
             using var reference = connection.CreateCommand(); reference.Transaction = transaction;
             reference.CommandText = "INSERT OR IGNORE INTO library_refs(platform,target,external_id,post_id) VALUES($platform,$target,$external,$post)";
@@ -97,9 +106,10 @@ public sealed partial class Store
     private static async Task ProjectNativeAsync(SqliteConnection connection, SqliteTransaction transaction, Publication publication, string? sourceJson = null)
     {
         var ids = publication.Delivery.AllMediaMessageIds.Concat(publication.Delivery.EditMessageId is { } id ? [id] : Array.Empty<long>())
-            .Distinct().Select(value => value.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+            .Distinct().Select(value => value.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .Concat(publication.Delivery.RemoteMessageId is { } remote ? [remote] : Array.Empty<string>()).ToArray();
         await UpsertLibraryAsync(connection, transaction, new(publication.Id, publication.Id,
-            publication.Demo ? "demo.telegram" : "telegram", publication.Delivery.ChatId, ids,
+            publication.Demo ? "demo." + publication.Platform : publication.Platform, publication.Delivery.ChatId, ids,
             publication.Created, publication.EditText.Split('\n')[0], publication.EditText, publication.Delivery.State,
             publication.Delivery.Link ?? "", publication.Demo, publication.Id, "native"));
         using var marker = connection.CreateCommand(); marker.Transaction = transaction;

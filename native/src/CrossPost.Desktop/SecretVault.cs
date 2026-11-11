@@ -6,19 +6,22 @@ namespace CrossPost.Desktop;
 
 internal static class SecretVault
 {
-    private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("CrossPost.Native.Prototype.Telegram.v1");
-    private static string FilePath => Path.Combine(App.DataFolder, "telegram-token.dpapi");
-    public static string Load()
+    private static byte[] Entropy(string platform) => Encoding.UTF8.GetBytes(platform == "discord" ? "CrossPost.Native.Prototype.Discord.v1" : "CrossPost.Native.Prototype.Telegram.v1");
+    private static string PathFor(string platform) => Path.Combine(App.DataFolder, platform switch
+    { "telegram" => "telegram-token.dpapi", "discord" => "discord-webhook.dpapi", _ => throw new ArgumentOutOfRangeException(nameof(platform)) });
+    public static string Load(string platform = "telegram")
     {
+        var FilePath = PathFor(platform);
         if (!File.Exists(FilePath)) return "";
-        try { return Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(FilePath), Entropy, DataProtectionScope.CurrentUser)); }
+        try { return Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(FilePath), Entropy(platform), DataProtectionScope.CurrentUser)); }
         catch (CryptographicException) { return ""; }
     }
-    public static void Save(string token)
+    public static void Save(string token, string platform = "telegram")
     {
+        var FilePath = PathFor(platform);
         Directory.CreateDirectory(App.DataFolder);
         if (string.IsNullOrWhiteSpace(token)) { File.Delete(FilePath); return; }
-        var bytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(token), Entropy, DataProtectionScope.CurrentUser);
+        var bytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(token), Entropy(platform), DataProtectionScope.CurrentUser);
         var temp = FilePath + ".tmp";
         File.WriteAllBytes(temp, bytes);
         File.Move(temp, FilePath, true);

@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace CrossPost.Core;
 
-public sealed class TelegramClient(HttpClient http, string token) : ITelegram
+public sealed class TelegramClient(HttpClient http, string token) : IPublisher
 {
     private sealed class ApiFailure(string message, bool unknown) : Exception(message)
     { public bool Unknown { get; } = unknown; }
@@ -165,7 +165,7 @@ public sealed class TelegramClient(HttpClient http, string token) : ITelegram
     }
 }
 
-public sealed class DemoTelegram : ITelegram
+public sealed class DemoTelegram : IPublisher
 {
     private static int _next = 100;
     public Task<string> CheckAsync(CancellationToken ct) => Task.FromResult("@CrossPostDemo");

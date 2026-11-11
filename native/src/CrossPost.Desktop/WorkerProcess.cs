@@ -8,7 +8,7 @@ using CrossPost.Core;
 
 namespace CrossPost.Desktop;
 
-public record WorkerInfo(int ProcessId, DateTimeOffset Started);
+public record WorkerInfo(int ProcessId, DateTimeOffset Started, int ProtocolVersion = 1);
 internal static class WorkerProcess
 {
     private static string LockPath => Path.Combine(App.DataFolder, "worker.lock");
@@ -37,11 +37,23 @@ internal static class WorkerProcess
         start.ArgumentList.Add("--worker");
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Не удалось запустить фоновую очередь.");
     }
-    public static async Task<bool> CommandAsync(string command)
+    public static async Task EnsureStartedAsync()
+    {
+        if (!IsRunning) Start();
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            if (await CommandAsync("protocol|2", 300)) return;
+            if (await CommandAsync("ping", 300))
+                throw new InvalidOperationException("Работает Worker предыдущей версии. Остановите очередь на вкладке «Очередь», затем нажмите «Запустить очередь». Новое задание ещё не добавлено.");
+            await Task.Delay(100);
+        }
+        throw new InvalidOperationException("Фоновый процесс не подтвердил запуск. Проверьте worker-error.log в папке данных.");
+    }
+    public static async Task<bool> CommandAsync(string command, int timeoutMilliseconds = 2000)
     {
         try
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMilliseconds));
             using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             await pipe.ConnectAsync(timeout.Token);
             using var writer = new StreamWriter(pipe, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
@@ -65,7 +77,7 @@ internal static class WorkerProcess
         if (owner is null) return 0;
         using (owner)
         using (var stopping = new CancellationTokenSource())
-        using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) })
+        using (var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(90) })
         {
             var gate = new object();
             Guid? activeId = null; CancellationTokenSource? active = null;
@@ -77,13 +89,13 @@ internal static class WorkerProcess
                     if (command.StartsWith("cancel|", StringComparison.Ordinal) && Guid.TryParse(command[7..], out var id) && id == activeId)
                     { active?.Cancel(); return true; }
                 }
-                return command == "ping";
+                return command is "ping" or "protocol|2";
             });
             try
             {
                 var store = new Store(App.DataFolder); await store.InitializeAsync(recoverUnfinished: false);
                 await store.RecoverQueueAsync();
-                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow));
+                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow, 2));
                 var runner = new QueueRunner(store);
                 while (!stopping.IsCancellationRequested)
                 {
@@ -93,13 +105,23 @@ internal static class WorkerProcess
                     {
                         var ran = await runner.RunNextAsync(DateTimeOffset.UtcNow, async job =>
                         {
+                            if (job.Options.Platform == "discord")
+                            {
+                                if (job.Options.Demo) return (IPublisher)new DemoDiscord();
+                                var discord = await store.ReadDocumentAsync<DiscordOptions>("discord-options") ?? new();
+                                if (discord.Demo) throw new QueuePausedException("Включён деморежим Discord. Задание приостановлено.");
+                                var endpoint = DiscordEndpoint.Parse(SecretVault.Load("discord"));
+                                if (endpoint.Id != job.BotId) throw new QueuePausedException("Выбран другой webhook Discord. Проверьте задание вручную.");
+                                return new DiscordClient(http, endpoint, job.Options.Chat, job.Options.Spoiler, job.Options.SuppressEmbeds);
+                            }
+                            if (job.Options.Platform != "telegram") throw new QueuePausedException("Площадка задания не поддерживается этой версией.");
                             if (job.Options.Demo) return new DemoTelegram();
                             var options = await store.ReadDocumentAsync<AppOptions>("options") ?? new();
                             if (options.Demo) throw new QueuePausedException("Включён деморежим. Реальное задание приостановлено.");
                             var token = SecretVault.Load();
                             if (TelegramClient.BotId(token) != job.BotId)
                                 throw new QueuePausedException("Выбран другой бот. Верните нужного бота и включите задание вручную.");
-                            return (ITelegram)new TelegramClient(http, token);
+                            return (IPublisher)new TelegramClient(http, token);
                         }, operation.Token, id => { lock (gate) { activeId = id; } });
                         if (!ran)
                         {
@@ -146,6 +168,10 @@ internal static class WorkerProcess
             var closed = File.GetLastWriteTimeUtc(Path.Combine(App.DataFolder, "window-closed.txt"));
             if (sent.Created.UtcDateTime < closed || sent.Delivery.AllMediaMessageIds.Length != 2)
                 throw new InvalidOperationException("Job did not execute after the window closed");
+            var discordId = await store.ReadDocumentAsync<Guid?>("discord-worker-smoke-id") ?? throw new InvalidOperationException("Discord smoke queue job missing");
+            var discord = await WaitFor(discordId);
+            if (discord.Platform != "discord" || discord.Delivery.Kind != "discord" || discord.Created.UtcDateTime < closed || discord.Delivery.AttachmentIds?.Length != 2)
+                throw new InvalidOperationException("Discord queue was routed incorrectly or did not run after window exit");
             var info = await store.ReadDocumentAsync<WorkerInfo>("worker-info");
             if (info?.ProcessId == Environment.ProcessId || !await CommandAsync("ping"))
                 throw new InvalidOperationException("Independent worker IPC failed");
