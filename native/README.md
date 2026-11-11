@@ -3,6 +3,9 @@
 Нативное приложение C# / WPF для Windows x64, без WebView2 и системного Python.
 Это отдельный прототип, а не замена стабильному CrossPost.
 
+Готовый Windows-архив публикуется отдельно от Python-версий:
+[релиз native-v0.1.0](https://github.com/Ehotxep/CrossPost/releases/tag/native-v0.1.0).
+
 ## Запуск
 
 1. Распакуйте **весь архив** в отдельную папку.

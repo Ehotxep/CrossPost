@@ -2,6 +2,7 @@ name: Windows native prototype
 on:
   push:
     branches: [windows-native]
+    tags: ['native-v0.1.0']
     paths: ['native/**', '.github/workflows/windows-native.yml']
   workflow_dispatch:
 permissions:
@@ -58,3 +59,20 @@ jobs:
             native/artifacts/*.zip
             native/artifacts/*.sha256
           retention-days: 30
+  release:
+    if: github.ref == 'refs/tags/native-v0.1.0'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: CrossPost-Native-Prototype-0.1.0-win-x64
+          path: native-release
+      - name: Publish the requested native prototype prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create native-v0.1.0 native-release/*.zip native-release/*.sha256 --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false --title "CrossPost Native 0.1.0 — C# / WPF prototype" --notes-file native/RELEASE-NOTES.md
