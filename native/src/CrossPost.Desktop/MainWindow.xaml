@@ -7,7 +7,7 @@
    <TextBlock Text="crosspost / native" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,10"/>
    <TextBlock x:Name="ModeLabel" Text="ДЕМО • ничего не публикуется" Foreground="#65DBB2" HorizontalAlignment="Right" VerticalAlignment="Top"/>
    <WrapPanel Grid.Row="1">
-    <Button Content="Новый пост" Click="ShowCompose"/><Button Content="Публикации" Click="ShowLibrary"/><Button Content="Статистика" Click="ShowLibraryStats"/><Button Content="Очередь" Click="ShowQueue"/><Button Content="История • правки" Click="ShowHistory"/><Button Content="Настройки" Click="ShowSettings"/>
+    <Button Content="Новый пост" Click="ShowCompose"/><Button Content="Публикации" Click="ShowLibrary"/><Button Content="Статистика" Click="ShowLibraryStats"/><Button Content="Очередь" Click="ShowQueue"/><Button Content="История • правки" Click="ShowHistory"/><Button Content="Настройки" Click="ShowSettings"/><Button x:Name="UpdateNotice" Content="Доступно обновление" Click="ShowSettings" Visibility="Collapsed" Background="#16815C"/>
    </WrapPanel>
   </Grid>
   <Grid x:Name="MainContent" Grid.Row="1">

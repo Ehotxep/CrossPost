@@ -92,7 +92,7 @@ public sealed class UpdateFeed(HttpClient http)
                 }
                 if (count != release.Size) throw new InvalidOperationException("Пакет скачан не полностью.");
             }
-            await UpdatePackage.VerifyAsync(path, sum, release.Version, ct: ct); return (path, sum);
+            await Task.Run(() => UpdatePackage.VerifyAsync(path, sum, release.Version, ct: ct), ct); return (path, sum);
         }
         catch { if (File.Exists(path)) File.Delete(path); throw; }
     }

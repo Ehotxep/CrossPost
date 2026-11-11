@@ -22,10 +22,15 @@ public static class UpdateTransaction
     public static async Task WriteResultAsync(string folder, UpdateResult result)
     {
         var path = Path.Combine(folder, "result.json"); var temp = path + ".tmp";
-        await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(result)); File.Move(temp, path, true);
+        await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(result));
+        for (var attempt = 0; ; attempt++)
+        {
+            try { File.Move(temp, path, true); return; }
+            catch (IOException) when (attempt < 10) { await Task.Delay(50); }
+        }
     }
     public static async Task ApplyAsync(UpdateRequest request, string transactionFolder, Func<Task> waitForParent,
-        Func<string, Task<bool>> launchAndVerify)
+        Func<string, Task<bool>> launchAndVerify, Func<Task>? stopCandidate = null)
     {
         Validate(request);
         var parent = Path.GetDirectoryName(Path.GetFullPath(request.InstallDirectory))!;
@@ -48,9 +53,12 @@ public static class UpdateTransaction
             if (!await launchAndVerify(Path.Combine(request.InstallDirectory, "CrossPost.Native.exe")))
                 throw new InvalidOperationException("Новая версия не подтвердила готовность. Восстановлена предыдущая версия.");
             await WriteResultAsync(transactionFolder, new("committed", "Обновление установлено", backup));
+            var commit = Path.Combine(transactionFolder, "commit");
+            await File.WriteAllTextAsync(commit + ".tmp", request.Token); File.Move(commit + ".tmp", commit);
         }
         catch (Exception error)
         {
+            if (stopCandidate is not null) await stopCandidate();
             if (newMoved) Directory.Move(request.InstallDirectory, stage);
             if (oldMoved) Directory.Move(backup, request.InstallDirectory);
             if (snapshot)

@@ -13,6 +13,7 @@ public partial class MainWindow
 {
     public static string NativeAppVersion => typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0];
     private NativeRelease? _availableUpdate;
+    private int _updateCheckGeneration;
     private UpdateOptions _updateOptions = new();
     private async Task InitializeUpdatesAsync()
     {
@@ -30,16 +31,26 @@ public partial class MainWindow
     private async Task CheckForUpdateAsync(CancellationToken ct)
     {
         UpdateStatus.Text = "Проверяю нативные выпуски на GitHub…"; InstallUpdateButton.IsEnabled = false;
-        _availableUpdate = await new UpdateFeed(_http).CheckAsync(NativeAppVersion, _updateOptions.Preview, ct);
+        var generation = Interlocked.Increment(ref _updateCheckGeneration); var preview = _updateOptions.Preview;
+        var available = await new UpdateFeed(_http).CheckAsync(NativeAppVersion, preview, ct);
+        if (generation != _updateCheckGeneration) return;
+        _availableUpdate = available;
         UpdateStatus.Text = _availableUpdate is null ? "Более новой нативной версии в выбранном канале нет."
             : "Доступна " + _availableUpdate.Version + "\n" + _availableUpdate.Notes;
         InstallUpdateButton.IsEnabled = _availableUpdate is not null;
+        UpdateNotice.Visibility = _availableUpdate is null ? Visibility.Collapsed : Visibility.Visible;
+        UpdateNotice.Content = "Обновление " + _availableUpdate?.Version;
     }
-    private async void CheckUpdates(object sender, RoutedEventArgs e) => await RunOperation(CheckForUpdateAsync);
+    private async void CheckUpdates(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
+    {
+        try { await CheckForUpdateAsync(ct); }
+        catch (Exception error) { UpdateStatus.Text = "Проверка не завершена: " + error.Message; throw; }
+    });
     private async void SaveUpdateOptions(object sender, RoutedEventArgs e) => await RunOperation(async _ =>
     {
+        Interlocked.Increment(ref _updateCheckGeneration);
         _updateOptions = new(UpdateChannel.SelectedIndex == 0, AutoCheckUpdates.IsChecked == true);
-        await _store.SaveDocumentAsync("update-options", _updateOptions); _availableUpdate = null; InstallUpdateButton.IsEnabled = false;
+        await _store.SaveDocumentAsync("update-options", _updateOptions); _availableUpdate = null; InstallUpdateButton.IsEnabled = false; UpdateNotice.Visibility = Visibility.Collapsed;
         UpdateStatus.Text = "Канал обновлений сохранён. Нажмите «Проверить обновления».";
     });
     private async void InstallUpdate(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
@@ -67,9 +78,12 @@ public partial class MainWindow
             if (NativeVersion.Parse(manifest.Version).CompareTo(NativeVersion.Parse(NativeAppVersion)) < 0) throw new InvalidOperationException("Понижение версии отключено: старая программа может не прочитать новую базу.");
             if (MessageBox.Show($"Установить {manifest.Version} из выбранного ZIP? Используйте архив и .sha256 из доверенного выпуска CrossPost. Приложение будет перезапущено.", "Обновление из файла", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
             var sum = (await File.ReadAllTextAsync(picker.FileName + ".sha256", ct)).Trim().TrimStart('\uFEFF');
-            await UpdatePackage.VerifyAsync(picker.FileName, sum, manifest.Version, ct: ct);
+            await Task.Run(() => UpdatePackage.VerifyAsync(picker.FileName, sum, manifest.Version, ct: ct), ct);
             var folder = Path.Combine(App.DataFolder, "updates", "downloads", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder);
-            var copy = Path.Combine(folder, "package.zip"); File.Copy(picker.FileName, copy);
+            var copy = Path.Combine(folder, "package.zip");
+            await using (var input = new FileStream(picker.FileName, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true))
+            await using (var output = new FileStream(copy, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+                await input.CopyToAsync(output, ct);
             await StartUpdateAsync(copy, sum, manifest.Version, ct);
         });
     }
@@ -95,6 +109,7 @@ public partial class MainWindow
         var requestPath = Path.Combine(folder, "request.json"); await File.WriteAllTextAsync(requestPath, JsonSerializer.Serialize(request), ct);
         var helper = Path.Combine(folder, "CrossPost.Updater.exe"); File.Copy(exe, helper);
         var start = new ProcessStartInfo(helper) { UseShellExecute = false, WorkingDirectory = folder }; start.ArgumentList.Add(requestPath);
+        ct.ThrowIfCancellationRequested();
         using var updater = Process.Start(start) ?? throw new InvalidOperationException("Не удалось запустить обновлятор.");
         // After the helper owns the update gate it must be allowed to complete; no half-cancelled handoff.
         for (var attempt = 0; attempt < 100 && !updater.HasExited; attempt++)

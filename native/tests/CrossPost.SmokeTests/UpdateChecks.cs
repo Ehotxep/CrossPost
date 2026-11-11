@@ -64,6 +64,46 @@ internal static class UpdateChecks
             }
             finally { Directory.Delete(folder, true); }
         });
+        await run("updater stops the candidate before rolling back a failed final commit", async () =>
+        {
+            var folder = Path.Combine(Path.GetTempPath(), "crosspost-update-" + Guid.NewGuid()); Directory.CreateDirectory(folder);
+            try
+            {
+                var install = Path.Combine(folder, "install"); var data = Path.Combine(folder, "data"); var transaction = Path.Combine(data,"transaction");
+                Directory.CreateDirectory(install); Directory.CreateDirectory(Path.Combine(transaction,"commit"));
+                await File.WriteAllTextAsync(Path.Combine(install,"CrossPost.Native.exe"), "OLD");
+                var package = await Package(folder); var request = new UpdateRequest(install,data,package.Path,package.Sum,"0.8.0-dev",1,0,false,Guid.NewGuid().ToString("N"));
+                FileStream? candidate = null; var stopped = false; var failed = false;
+                try { await UpdateTransaction.ApplyAsync(request,transaction,() => Task.CompletedTask, exe => { candidate = new FileStream(exe,FileMode.Open,FileAccess.Read,FileShare.None); return Task.FromResult(true); },
+                    () => { candidate?.Dispose(); stopped = true; return Task.CompletedTask; }); }
+                catch (IOException) { failed = true; }
+                Check(failed && stopped && await File.ReadAllTextAsync(Path.Combine(install,"CrossPost.Native.exe")) == "OLD", "Failed commit left candidate running or lost old program");
+            }
+            finally { Directory.Delete(folder,true); }
+        });
+        await run("update download validates checksum and refuses foreign redirects without forwarding", async () =>
+        {
+            var folder = Path.Combine(Path.GetTempPath(), "crosspost-update-" + Guid.NewGuid()); Directory.CreateDirectory(folder);
+            try
+            {
+                var package = await Package(folder); var bytes = await File.ReadAllBytesAsync(package.Path);
+                var release = new NativeRelease("0.8.0-dev","native-v0.8.0-dev","",new Uri("https://github.com/Ehotxep/CrossPost/releases/download/native-v0.8.0-dev/package.zip"),new Uri("https://github.com/Ehotxep/CrossPost/releases/download/native-v0.8.0-dev/package.zip.sha256"),bytes.Length);
+                var handler = new ScriptedHandler((_,_) => Task.FromResult(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new System.Net.Http.StringContent(package.Sum) }),
+                    (_,_) => Task.FromResult(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new System.Net.Http.ByteArrayContent(bytes) }));
+                using (var http = new System.Net.Http.HttpClient(handler))
+                {
+                    var downloaded = await new UpdateFeed(http).DownloadAsync(release,Path.Combine(folder,"download"),null,CancellationToken.None);
+                    Check(downloaded.Sha256 == package.Sum && handler.Calls == 2,"Verified download did not finish");
+                }
+                var redirect = new ScriptedHandler((_,_) => { var response = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Redirect); response.Headers.Location = new Uri("https://evil.test/payload"); return Task.FromResult(response); });
+                using (var http = new System.Net.Http.HttpClient(redirect))
+                {
+                    var rejected = false; try { await new UpdateFeed(http).DownloadAsync(release,Path.Combine(folder,"bad"),null,CancellationToken.None); } catch (InvalidOperationException) { rejected = true; }
+                    Check(rejected && redirect.Calls == 1 && !File.Exists(Path.Combine(folder,"bad","package.zip")),"Foreign update redirect was followed");
+                }
+            }
+            finally { Directory.Delete(folder,true); }
+        });
         await run("update gate prevents simultaneous installers and stale lock files do not block restarts", () =>
         {
             var folder = Path.Combine(Path.GetTempPath(), "crosspost-update-" + Guid.NewGuid());

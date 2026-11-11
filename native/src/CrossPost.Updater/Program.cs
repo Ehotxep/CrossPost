@@ -32,11 +32,17 @@ internal static class Program
                 // The window drained the queue first. Never replace files while a Worker owns the database.
                 using var worker = new FileStream(Path.Combine(request.DataDirectory, "worker.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
+            Process? candidate = null;
+            async Task StopCandidate()
+            {
+                if (candidate is not null && !candidate.HasExited) { candidate.Kill(entireProcessTree: true); await candidate.WaitForExitAsync(); }
+            }
             async Task<bool> Launch(string exe)
             {
                 var start = new ProcessStartInfo(exe) { WorkingDirectory = request.InstallDirectory, UseShellExecute = false };
                 start.ArgumentList.Add("--updated"); start.ArgumentList.Add(path);
-                using var child = Process.Start(start) ?? throw new InvalidOperationException("Не удалось запустить новую версию.");
+                var child = Process.Start(start) ?? throw new InvalidOperationException("Не удалось запустить новую версию."); candidate = child;
+                var verified = false;
                 try
                 {
                     for (var attempt = 0; attempt < 900 && !child.HasExited; attempt++)
@@ -44,15 +50,16 @@ internal static class Program
                         var ready = Path.Combine(transaction, "ready");
                         if (File.Exists(ready) && await File.ReadAllTextAsync(ready) == $"{request.Token}|{child.Id}|{request.Version}")
                         {
-                            await File.WriteAllTextAsync(Path.Combine(transaction, "commit"), request.Token); return true;
+                            verified = true; return true;
                         }
                         await Task.Delay(100);
                     }
                     return false;
                 }
-                finally { if (!File.Exists(Path.Combine(transaction, "commit")) && !child.HasExited) { child.Kill(entireProcessTree: true); await child.WaitForExitAsync(); } }
+                finally { if (!verified) await StopCandidate(); }
             }
-            await UpdateTransaction.ApplyAsync(request, transaction, WaitForParent, Launch);
+            try { await UpdateTransaction.ApplyAsync(request, transaction, WaitForParent, Launch, StopCandidate); }
+            finally { candidate?.Dispose(); }
             return 0;
         }
         catch (Exception error)
