@@ -15,7 +15,9 @@
      <TextBlock Text="Новый пост" FontSize="26" FontWeight="SemiBold" Margin="0,0,0,18"/>
      <TextBlock Text="Заголовок"/><TextBox x:Name="TitleInput" TextChanged="DraftChanged"/>
      <TextBlock Text="Описание"/><TextBox x:Name="BodyInput" Height="160" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged"/>
-     <WrapPanel><Button Content="Добавить изображение" Click="PickImage"/><Button Content="Убрать изображение" Click="RemoveImage"/><Button Content="Новый черновик" Click="ClearDraft"/></WrapPanel>
+     <WrapPanel><Button Content="Добавить изображения" Click="PickImage"/><Button Content="Убрать выбранное" Click="RemoveImage"/><Button Content="Новый черновик" Click="ClearDraft"/></WrapPanel>
+     <WrapPanel><Button Content="Выше" Click="MoveImageUp"/><Button Content="Ниже" Click="MoveImageDown"/></WrapPanel>
+     <ListBox x:Name="ImageList" MaxHeight="130" Background="#242A36" Foreground="#EDF0F7" DisplayMemberPath="Label" SelectionChanged="ImageSelected"/>
      <TextBlock x:Name="ImageLabel" TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,8,0,8"/>
      <Image x:Name="PreviewImage" Height="130" Stretch="Uniform" HorizontalAlignment="Left"/>
      <Border Background="{StaticResource Panel}" Padding="16" Margin="0,14,0,14">
@@ -51,7 +53,7 @@
      <TextBlock Text="Токен бота из @BotFather"/><PasswordBox x:Name="TokenInput"/>
      <TextBlock Text="Токен сохраняется с защитой Windows для текущего пользователя. Бот должен быть администратором выбранного канала." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,0,0,12"/>
      <WrapPanel><Button Content="Сохранить настройки" Click="SaveSettings"/><Button Content="Проверить бота" Click="CheckBot"/><Button Content="Открыть папку данных" Click="OpenData"/></WrapPanel>
-     <TextBlock Text="В прототипе: текст, одно изображение JPEG/PNG, история и редактирование. Альбомы, MTProto, расписание, импорт Python-данных и другие площадки ещё не подключены." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,20,0,12"/>
+     <TextBlock Text="В прототипе: текст, до 10 изображений JPEG/PNG одним альбомом, история и редактирование. Альбомы, MTProto, расписание, импорт Python-данных и другие площадки ещё не подключены." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,20,0,12"/>
     </StackPanel>
    </ScrollViewer>
   </Grid>

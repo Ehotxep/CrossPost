@@ -23,6 +23,10 @@ public record HistoryRow(Publication Record)
         DeliveryState.Partial => "Отправлено частично", DeliveryState.Unknown => "Результат неизвестен", _ => "Отправляется"
     };
 }
+public record ImageRow(string Path)
+{
+    public string Label => System.IO.Path.GetFileName(Path);
+}
 public partial class MainWindow : Window
 {
     private readonly Store _store = new(App.DataFolder);
@@ -30,7 +34,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _draftTimer = new() { Interval = TimeSpan.FromMilliseconds(750) };
     private readonly SemaphoreSlim _draftLock = new(1, 1);
     private AppOptions _options = new();
-    private string? _imagePath;
+    private readonly List<string> _images = [];
     private bool _loaded, _busy, _closing;
     private CancellationTokenSource? _operation;
     private Publication? _selected;
@@ -48,8 +52,9 @@ public partial class MainWindow : Window
             try
             {
                 await InitializeAsync();
+                await RunSmokeChecksAsync();
                 await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
-                await File.WriteAllTextAsync(Path.Combine(App.DataFolder, "smoke-ready.txt"), "WPF initialized; demo mode; SQLite ready");
+                await File.WriteAllTextAsync(Path.Combine(App.DataFolder, "smoke-ready.txt"), "WPF initialized; demo album, reordering, persistence and editing checked");
             }
             catch (Exception error)
             {
@@ -62,14 +67,44 @@ public partial class MainWindow : Window
         };
         Closing += OnClosing;
     }
-    private Draft CurrentDraft => new(TitleInput.Text, BodyInput.Text, _imagePath);
+    private Draft CurrentDraft => new(TitleInput.Text, BodyInput.Text, _images.FirstOrDefault(), _images.Skip(1).ToArray());
+    private async Task RunSmokeChecksAsync()
+    {
+        // Executed only with --smoke-test and an explicitly isolated data directory.
+        var paths = new[] { Path.Combine(App.DataFolder, "first.png"), Path.Combine(App.DataFolder, "second.png") };
+        var bitmap = BitmapSource.Create(2, 2, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null, new byte[16], 8);
+        foreach (var path in paths)
+        {
+            var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using var stream = File.Create(path); encoder.Save(stream);
+        }
+        TitleInput.Text = "Демо-альбом"; BodyInput.Text = "Проверка окна без публикации";
+        _images.Clear(); _images.AddRange(paths); RefreshImages(); UpdatePreview();
+        ValidateImages(CurrentDraft);
+        await MoveImage(1);
+        if (CurrentDraft.Images[0] != paths[1] || PreviewImage.Source is null)
+            throw new InvalidOperationException("WPF album ordering or preview failed");
+        var restored = await _store.ReadDocumentAsync<Draft>("draft");
+        if (restored is null || !restored.SameContent(CurrentDraft))
+            throw new InvalidOperationException("WPF draft persistence failed");
+        var workflow = new Workflow(_store);
+        var sent = await workflow.SendAsync(new DemoTelegram(), "demo", new(), CurrentDraft, CancellationToken.None);
+        await LoadHistoryAsync(); HistoryList.SelectedItem = History.Single(row => row.Record.Id == sent.Id);
+        if (!EditButton.IsEnabled || _selected?.Delivery.AllMediaMessageIds.Length != 2)
+            throw new InvalidOperationException("WPF album history selection failed");
+        var edited = await workflow.EditAsync(new DemoTelegram(), sent, "Изменённая подпись", CancellationToken.None);
+        if (!edited.Result.Confirmed) throw new InvalidOperationException("WPF demo edit failed");
+        SwitchView(HistoryView); UpdateLayout(); SwitchView(SettingsView); UpdateLayout(); SwitchView(ComposeView);
+        _draftTimer.Stop();
+    }
     private async Task InitializeAsync()
     {
         await _store.InitializeAsync();
         _options = await _store.ReadDocumentAsync<AppOptions>("options") ?? new();
         if (App.SmokeTest) _options = _options with { Demo = true };
         var draft = await _store.ReadDocumentAsync<Draft>("draft") ?? new();
-        TitleInput.Text = draft.Title; BodyInput.Text = draft.Text; _imagePath = draft.ImagePath;
+        TitleInput.Text = draft.Title; BodyInput.Text = draft.Text; _images.AddRange(draft.Images);
+        RefreshImages();
         DemoInput.IsChecked = _options.Demo; ChatInput.Text = _options.Chat;
         TokenInput.Password = SecretVault.Load();
         _loaded = true;
@@ -93,21 +128,31 @@ public partial class MainWindow : Window
         var draft = CurrentDraft;
         PreviewText.Text = draft.PlainText.Length > 0 ? draft.PlainText : "Без текста";
         CountLabel.Text = $"{draft.PlainText.Length} / 4096 символов" +
-            (_imagePath is not null && draft.PlainText.Length > 1024 ? " • Текст уйдёт отдельным сообщением перед фото" : "");
-        ImageLabel.Text = _imagePath is null ? "Изображение не выбрано" : Path.GetFileName(_imagePath);
+            (_images.Count > 0 && draft.PlainText.Length > 1024 ? " • Текст уйдёт отдельным сообщением перед фото" : "");
+        ImageLabel.Text = _images.Count == 0 ? "Изображения не выбраны"
+            : $"{_images.Count} / 10 • " + (_images.Count == 1 ? "одно фото" : "альбом, подпись под первым фото");
+    }
+    private void RefreshImages(int selection = 0)
+    {
+        ImageList.ItemsSource = _images.Select(path => new ImageRow(path)).ToArray();
+        ImageList.SelectedIndex = _images.Count == 0 ? -1 : Math.Clamp(selection, 0, _images.Count - 1);
+        UpdateImagePreview();
+    }
+    private void ImageSelected(object sender, SelectionChangedEventArgs e) => UpdateImagePreview();
+    private void UpdateImagePreview()
+    {
+        if (PreviewImage is null) return;
         PreviewImage.Source = null;
-        if (_imagePath is not null && File.Exists(_imagePath))
+        if (ImageList.SelectedItem is not ImageRow row || !File.Exists(row.Path)) return;
+        try
         {
-            try
-            {
-                var bitmap = new BitmapImage();
-                bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.DecodePixelWidth = 400; bitmap.UriSource = new Uri(Path.GetFullPath(_imagePath)); bitmap.EndInit();
-                bitmap.Freeze(); PreviewImage.Source = bitmap;
-            }
-            catch (Exception error) when (error is IOException or NotSupportedException or FileFormatException)
-            { ImageLabel.Text += " — предпросмотр недоступен"; }
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.DecodePixelWidth = 400; bitmap.UriSource = new Uri(Path.GetFullPath(row.Path)); bitmap.EndInit();
+            bitmap.Freeze(); PreviewImage.Source = bitmap;
         }
+        catch (Exception error) when (error is IOException or NotSupportedException or FileFormatException)
+        { StatusLabel.Text = "Предпросмотр выбранного изображения недоступен."; }
     }
     private void DraftChanged(object sender, TextChangedEventArgs e)
     {
@@ -127,26 +172,48 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         if (MessageBox.Show("Очистить текущий черновик?", "CrossPost", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
-        TitleInput.Clear(); BodyInput.Clear(); _imagePath = null; UpdatePreview();
+        TitleInput.Clear(); BodyInput.Clear(); _images.Clear(); RefreshImages(); UpdatePreview();
         await Guard(SaveDraftAsync);
+    }
+    private static void ValidateImages(Draft candidate)
+    {
+        candidate.Validate();
+        foreach (var path in candidate.Images)
+        {
+            using var stream = File.OpenRead(path);
+            var frame = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None).Frames[0];
+            if (frame.PixelWidth + frame.PixelHeight > 10000 || (double)Math.Max(frame.PixelWidth, frame.PixelHeight) / Math.Min(frame.PixelWidth, frame.PixelHeight) > 20)
+                throw new InvalidOperationException("Telegram: сумма сторон не больше 10000 пикселей, соотношение сторон не больше 20.");
+        }
     }
     private async void PickImage(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        var picker = new OpenFileDialog { Filter = "Изображения|*.jpg;*.jpeg;*.png", Multiselect = false };
+        var picker = new OpenFileDialog { Filter = "Изображения|*.jpg;*.jpeg;*.png", Multiselect = true };
         if (picker.ShowDialog(this) != true) return;
         await Guard(async () =>
         {
-            var candidate = CurrentDraft with { ImagePath = picker.FileName }; candidate.Validate();
-            using var stream = File.OpenRead(picker.FileName);
-            var frame = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None).Frames[0];
-            if (frame.PixelWidth + frame.PixelHeight > 10000 || (double)Math.Max(frame.PixelWidth, frame.PixelHeight) / Math.Min(frame.PixelWidth, frame.PixelHeight) > 20)
-                throw new InvalidOperationException("Telegram: сумма сторон не больше 10000 пикселей, соотношение сторон не больше 20.");
-            _imagePath = picker.FileName; UpdatePreview(); await SaveDraftAsync();
+            var paths = _images.Concat(picker.FileNames).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var candidate = CurrentDraft with { ImagePath = paths.FirstOrDefault(), AdditionalImagePaths = paths.Skip(1).ToArray() };
+            ValidateImages(candidate);
+            _images.Clear(); _images.AddRange(paths); RefreshImages(paths.Length - 1); UpdatePreview(); await SaveDraftAsync();
         });
     }
     private async void RemoveImage(object sender, RoutedEventArgs e)
-    { if (_busy) return; _imagePath = null; UpdatePreview(); await Guard(SaveDraftAsync); }
+    {
+        if (_busy || ImageList.SelectedIndex < 0) return;
+        var index = ImageList.SelectedIndex;
+        _images.RemoveAt(index); RefreshImages(index); UpdatePreview(); await Guard(SaveDraftAsync);
+    }
+    private async Task MoveImage(int offset)
+    {
+        var index = ImageList.SelectedIndex;
+        if (_busy || index < 0 || index + offset < 0 || index + offset >= _images.Count) return;
+        (_images[index], _images[index + offset]) = (_images[index + offset], _images[index]);
+        RefreshImages(index + offset); await SaveDraftAsync();
+    }
+    private async void MoveImageUp(object sender, RoutedEventArgs e) => await Guard(() => MoveImage(-1));
+    private async void MoveImageDown(object sender, RoutedEventArgs e) => await Guard(() => MoveImage(1));
     private void ShowCompose(object sender, RoutedEventArgs e) => SwitchView(ComposeView);
     private async void ShowHistory(object sender, RoutedEventArgs e)
     { SwitchView(HistoryView); await Guard(LoadHistoryAsync); }
@@ -198,8 +265,8 @@ public partial class MainWindow : Window
     });
     private async void SendPost(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
     {
-        var draft = CurrentDraft; draft.Validate(); await SaveDraftAsync();
-        var uncertain = (await _store.HistoryAsync()).Any(p => p.Draft == draft && p.Demo == _options.Demo
+        var draft = CurrentDraft; ValidateImages(draft); await SaveDraftAsync();
+        var uncertain = (await _store.HistoryAsync()).Any(p => p.Draft.SameContent(draft) && p.Demo == _options.Demo
             && p.Delivery.State is DeliveryState.Sending or DeliveryState.Unknown or DeliveryState.Partial);
         if (uncertain && MessageBox.Show("У этого черновика есть неподтверждённая или частичная отправка. Сначала проверьте канал. Отправить ещё раз с риском дубликата?", "CrossPost", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         if (!_options.Demo && MessageBox.Show("Отправить пост в " + _options.Chat + "?", "Реальная публикация", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
@@ -224,7 +291,7 @@ public partial class MainWindow : Window
         EditInput.Text = _selected?.EditText ?? "";
         EditButton.IsEnabled = !_busy && _selected?.Delivery.EditMessageId is not null;
         HistoryDetails.Text = _selected is null ? "Выберите запись." :
-            $"{new HistoryRow(_selected).Mode} • {_selected.Delivery.ChatId} • {new HistoryRow(_selected).Status}\n{_selected.Delivery.Error}\n{_selected.EditState}";
+            $"{new HistoryRow(_selected).Mode} • {_selected.Delivery.ChatId} • {new HistoryRow(_selected).Status}\nИзображений: {_selected.Delivery.AllMediaMessageIds.Length} • ID медиа: {string.Join(", ", _selected.Delivery.AllMediaMessageIds)}\n{_selected.Delivery.Error}\n{_selected.EditState}";
     }
     private async void EditPost(object sender, RoutedEventArgs e) => await RunOperation(async ct =>
     {

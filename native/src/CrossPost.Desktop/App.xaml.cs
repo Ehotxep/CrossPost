@@ -11,6 +11,8 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (SmokeTest && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CROSSPOST_NATIVE_DATA")))
+        { Shutdown(1); return; }
         _mutex = new Mutex(true, @"Local\CrossPost.Native.Prototype", out var created);
         if (!created) { MessageBox.Show("Прототип CrossPost уже запущен."); Shutdown(); return; }
         DispatcherUnhandledException += (_, args) =>

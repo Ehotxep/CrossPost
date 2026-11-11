@@ -8,12 +8,21 @@ public sealed class Workflow(Store store)
         var publication = new Publication(Guid.NewGuid(), DateTimeOffset.UtcNow, draft, options.Demo, botId,
             new(DeliveryState.Sending, options.Chat), draft.PlainText);
         await store.SavePublicationAsync(publication);
+        var latest = publication.Delivery;
         Delivery result;
-        try { result = await telegram.SendAsync(options.Chat, draft, ct); }
+        try
+        {
+            result = await telegram.SendAsync(options.Chat, draft, ct, async confirmed =>
+            {
+                latest = confirmed;
+                try { await store.SavePublicationAsync(publication with { Delivery = confirmed }); }
+                catch (Exception error) { throw new CheckpointFailure(error); }
+            });
+        }
         catch (OperationCanceledException)
-        { result = new(DeliveryState.Unknown, options.Chat, Error: "Отправка прервана. Проверьте канал перед повтором."); }
+        { result = latest with { State = DeliveryState.Unknown, Error = "Отправка прервана. Проверьте канал перед повтором." }; }
         catch (Exception)
-        { result = new(DeliveryState.Unknown, options.Chat, Error: "Результат отправки неизвестен. Проверьте канал перед повтором."); }
+        { result = latest with { State = DeliveryState.Unknown, Error = "Результат отправки неизвестен. Проверьте канал перед повтором." }; }
         publication = publication with { Delivery = result };
         try { await store.SavePublicationAsync(publication); }
         catch (Exception error)
@@ -35,3 +44,6 @@ public sealed class Workflow(Store store)
         return (updated, result);
     }
 }
+
+// A failed durable checkpoint must stop the adapter before its next network request.
+internal sealed class CheckpointFailure(Exception inner) : Exception("Не удалось сохранить подтверждение отправки.", inner);

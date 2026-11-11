@@ -58,47 +58,90 @@ public sealed class TelegramClient(HttpClient http, string token) : ITelegram
             : chatId.StartsWith("-100", StringComparison.Ordinal) ? $"https://t.me/c/{chatId[4..]}/{id}" : null;
         return (chatId, id, link);
     }
-    public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct)
+    public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct,
+        Func<Delivery, Task>? checkpoint = null)
     {
         draft.Validate();
         if (string.IsNullOrWhiteSpace(chat)) throw new InvalidOperationException("Укажите канал Telegram.");
         BotId(token);
         ct.ThrowIfCancellationRequested();
-        long? textId = null;
-        string resolvedChat = chat;
-        string? link = null;
+        var images = draft.Images;
+        var confirmed = new Delivery(DeliveryState.Sending, chat);
         try
         {
-            if (draft.ImagePath is null || draft.PlainText.Length > 1024)
+            if (images.Length == 0 || draft.PlainText.Length > 1024)
             {
                 using var body = Form(("chat_id", chat), ("text", draft.Html), ("parse_mode", "HTML"));
                 var message = Message(await CallAsync("sendMessage", body, ct));
-                textId = message.Id; resolvedChat = message.Chat; link = message.Link;
-                if (draft.ImagePath is null) return new(DeliveryState.Sent, resolvedChat, textId, Kind: "text", Link: link);
+                confirmed = new(images.Length == 0 ? DeliveryState.Sent : DeliveryState.Sending,
+                    message.Chat, message.Id, Kind: "text", Link: message.Link);
+                if (checkpoint is not null) await checkpoint(confirmed);
+                if (images.Length == 0) return confirmed;
             }
-            // Once a separate text is confirmed, preserve it even if the photo fails.
-            using var image = File.OpenRead(draft.ImagePath!);
+            // Every confirmed text is durably checkpointed before uploading any photos.
+            ct.ThrowIfCancellationRequested();
             using var photo = new MultipartFormDataContent();
-            photo.Add(new StringContent(resolvedChat), "chat_id");
-            photo.Add(new StreamContent(image), "photo", Path.GetFileName(draft.ImagePath!));
-            if (textId is null)
+            photo.Add(new StringContent(confirmed.ChatId), "chat_id");
+            var separateText = confirmed.EditMessageId.HasValue;
+            for (var index = 0; index < images.Length; index++)
             {
-                photo.Add(new StringContent(draft.Html), "caption");
-                photo.Add(new StringContent("HTML"), "parse_mode");
+                var stream = new StreamContent(File.OpenRead(images[index]));
+                photo.Add(stream, images.Length == 1 ? "photo" : "photo" + index,
+                    Path.GetFileName(images[index]));
             }
-            var posted = Message(await CallAsync("sendPhoto", photo, ct));
-            return new(DeliveryState.Sent, posted.Chat, textId ?? posted.Id, posted.Id,
-                textId is null ? "caption" : "text", Link: posted.Link);
+            if (images.Length == 1)
+            {
+                if (!separateText)
+                {
+                    photo.Add(new StringContent(draft.Html), "caption");
+                    photo.Add(new StringContent("HTML"), "parse_mode");
+                }
+            }
+            else
+            {
+                var media = images.Select((_, index) =>
+                {
+                    var item = new Dictionary<string, string>
+                    { ["type"] = "photo", ["media"] = "attach://photo" + index };
+                    if (index == 0 && !separateText)
+                    { item["caption"] = draft.Html; item["parse_mode"] = "HTML"; }
+                    return item;
+                });
+                photo.Add(new StringContent(JsonSerializer.Serialize(media)), "media");
+            }
+            var response = await CallAsync(images.Length == 1 ? "sendPhoto" : "sendMediaGroup", photo, ct);
+            var posted = images.Length == 1 ? new[] { Message(response) }
+                : response.EnumerateArray().Select(Message).ToArray();
+            if (posted.Length > 0)
+                confirmed = new(DeliveryState.Sending, posted[0].Chat, confirmed.EditMessageId ?? posted[0].Id,
+                    posted[0].Id, separateText ? "text" : "caption", Link: posted[0].Link,
+                    MediaMessageIds: posted.Select(p => p.Id).ToArray());
+            if (posted.Length != images.Length || posted.Select(p => p.Id).Distinct().Count() != posted.Length
+                || posted.Any(p => p.Chat != posted[0].Chat))
+                throw new ApiFailure("Telegram вернул неполное подтверждение альбома. Проверьте канал перед повтором.", true);
+            confirmed = confirmed with { State = DeliveryState.Sent };
+            if (checkpoint is not null) await checkpoint(confirmed);
+            return confirmed;
         }
         catch (ApiFailure error)
         {
-            return new(error.Unknown ? DeliveryState.Unknown : textId.HasValue ? DeliveryState.Partial : DeliveryState.Refused,
-                resolvedChat, textId, Kind: "text", Error: error.Message, Link: link);
+            return confirmed with
+            {
+                State = error.Unknown ? DeliveryState.Unknown : confirmed.EditMessageId.HasValue
+                    ? DeliveryState.Partial : DeliveryState.Refused,
+                Error = error.Message
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation between requests cannot undo already confirmed text.
+            return confirmed with { State = confirmed.EditMessageId.HasValue ? DeliveryState.Partial : DeliveryState.Refused,
+                Error = "Отправка отменена до загрузки медиа." };
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            return new(textId.HasValue ? DeliveryState.Partial : DeliveryState.Refused, resolvedChat, textId,
-                Kind: "text", Error: "Не удалось прочитать изображение.", Link: link);
+            return confirmed with { State = confirmed.EditMessageId.HasValue ? DeliveryState.Partial : DeliveryState.Refused,
+                Error = "Не удалось прочитать изображение." };
         }
     }
     public async Task<EditResult> EditAsync(Publication publication, string text, CancellationToken ct)
@@ -126,13 +169,19 @@ public sealed class DemoTelegram : ITelegram
 {
     private static int _next = 100;
     public Task<string> CheckAsync(CancellationToken ct) => Task.FromResult("@CrossPostDemo");
-    public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct)
+    public async Task<Delivery> SendAsync(string chat, Draft draft, CancellationToken ct,
+        Func<Delivery, Task>? checkpoint = null)
     {
         draft.Validate();
         await Task.Delay(600, ct);
-        var id = Interlocked.Increment(ref _next);
-        return new(DeliveryState.Sent, "demo-channel", id, draft.ImagePath is null ? null : id,
-            draft.ImagePath is null || draft.PlainText.Length > 1024 ? "text" : "caption");
+        var separateText = draft.Images.Length == 0 || draft.PlainText.Length > 1024;
+        var textId = separateText ? (long?)Interlocked.Increment(ref _next) : null;
+        var ids = draft.Images.Select(_ => (long)Interlocked.Increment(ref _next)).ToArray();
+        var editId = textId ?? ids[0];
+        var delivery = new Delivery(DeliveryState.Sent, "demo-channel", editId,
+            ids.Length == 0 ? null : ids[0], separateText ? "text" : "caption", MediaMessageIds: ids);
+        if (checkpoint is not null) await checkpoint(delivery);
+        return delivery;
     }
     public async Task<EditResult> EditAsync(Publication publication, string text, CancellationToken ct)
     {
