@@ -9,6 +9,5 @@
   <ItemGroup>
     <ProjectReference Include="../CrossPost.Core/CrossPost.Core.csproj"/>
     <Resource Include="../../../app/web/crosspost.ico" Link="Assets/CrossPost.ico"/>
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.11"/>
   </ItemGroup>
 </Project>

@@ -51,7 +51,11 @@ public partial class MainWindow : Window
                 await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
                 await File.WriteAllTextAsync(Path.Combine(App.DataFolder, "smoke-ready.txt"), "WPF initialized; demo mode; SQLite ready");
             }
-            catch (Exception) { exit = 1; }
+            catch (Exception error)
+            {
+                exit = 1;
+                await File.AppendAllTextAsync(Path.Combine(App.DataFolder, "error.log"), error + Environment.NewLine);
+            }
             Closing -= OnClosing;
             _http.Dispose();
             Application.Current.Shutdown(exit);
