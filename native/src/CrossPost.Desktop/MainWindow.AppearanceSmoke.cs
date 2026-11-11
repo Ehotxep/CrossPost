@@ -23,8 +23,28 @@ public partial class MainWindow
     private async Task CaptureWindowAsync(string name)
     {
         await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
-        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(ActualWidth), (int)Math.Ceiling(ActualHeight), 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(this);
+        var root = (FrameworkElement)Content;
+        var width = (int)Math.Ceiling(root.ActualWidth+root.Margin.Left+root.Margin.Right);
+        var height = (int)Math.Ceiling(root.ActualHeight+root.Margin.Top+root.Margin.Bottom);
+        var visual = new DrawingVisual();
+        using (var drawing = visual.RenderOpen())
+        {
+            // HWND backgrounds are not guaranteed to participate in RenderTargetBitmap.
+            drawing.DrawRectangle(Background,null,new Rect(0,0,width,height));
+            drawing.DrawRectangle(new VisualBrush(root) { ViewboxUnits=BrushMappingMode.Absolute, Viewbox=new Rect(0,0,root.ActualWidth,root.ActualHeight) },null,new Rect(root.Margin.Left,root.Margin.Top,root.ActualWidth,root.ActualHeight));
+        }
+        var bitmap = new RenderTargetBitmap(width,height,96,96,PixelFormats.Pbgra32); bitmap.Render(visual);
+        var corner = new byte[4]; bitmap.CopyPixels(new Int32Rect(2,2,1,1),corner,4,0);
+        var expected = OpaqueColor(Background);
+        if (corner[3]!=255 || corner[0]!=expected.B || corner[1]!=expected.G || corner[2]!=expected.R)
+            throw new InvalidOperationException("UI screenshot did not preserve the actual opaque window background");
+        if (name=="01-compose-empty-1100x800")
+        {
+            var sample=ComposeView.TranslatePoint(new Point(3,30),root);
+            bitmap.CopyPixels(new Int32Rect((int)(sample.X+root.Margin.Left),(int)(sample.Y+root.Margin.Top),1,1),corner,4,0);
+            if (corner[0]!=expected.B || corner[1]!=expected.G || corner[2]!=expected.R)
+                throw new InvalidOperationException("The compose canvas rendered a different background from the dark window");
+        }
         var folder = Path.Combine(App.DataFolder,"screenshots"); Directory.CreateDirectory(folder);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var output = File.Create(Path.Combine(folder,name+".png")); encoder.Save(output);
