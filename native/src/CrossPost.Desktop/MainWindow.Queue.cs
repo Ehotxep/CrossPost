@@ -34,6 +34,7 @@ public partial class MainWindow
         _refreshingQueue = true;
         try
         {
+            RefreshWorkerBadge();
             var selected = SelectedJob?.Id;
             Queue.Clear(); foreach (var job in await _store.QueueAsync()) Queue.Add(new(job));
             if (selected is not null) QueueList.SelectedItem = Queue.FirstOrDefault(row => row.Record.Id == selected);

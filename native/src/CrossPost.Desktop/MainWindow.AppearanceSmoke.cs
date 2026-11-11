@@ -40,10 +40,10 @@ public partial class MainWindow
             throw new InvalidOperationException("UI screenshot did not preserve the actual opaque window background");
         if (name=="01-compose-empty-1100x800")
         {
-            var sample=ComposeView.TranslatePoint(new Point(3,30),root);
+            var sample=PublicationSidebar.TranslatePoint(new Point(-8,40),root);
             bitmap.CopyPixels(new Int32Rect((int)(sample.X+root.Margin.Left),(int)(sample.Y+root.Margin.Top),1,1),corner,4,0);
             if (corner[0]!=expected.B || corner[1]!=expected.G || corner[2]!=expected.R)
-                throw new InvalidOperationException("The compose canvas rendered a different background from the dark window");
+                throw new InvalidOperationException("The gap between the editor and publication sidebar has the wrong background");
         }
         var folder = Path.Combine(App.DataFolder,"screenshots"); Directory.CreateDirectory(folder);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
@@ -55,6 +55,12 @@ public partial class MainWindow
         await CaptureWindowAsync("01-compose-empty-1100x800");
         if (Style != FindResource("AppWindowStyle") || OpaqueColor(Background) != OpaqueColor((Brush)FindResource("CanvasBrush")) || FontSize < 14)
             throw new InvalidOperationException("MainWindow did not receive its explicit dark window style");
+        var typeface=new Typeface(FontFamily,FontStyles.Normal,FontWeights.Normal,FontStretches.Normal);
+        if (!typeface.TryGetGlyphTypeface(out var glyph) || !glyph.FamilyNames.Values.Any(name=>name.Contains("Inter",StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Embedded Inter font failed to load");
+        if (MediaCard.TranslatePoint(new Point(),this).Y>=TextCard.TranslatePoint(new Point(),this).Y
+            || PublicationSidebar.TranslatePoint(new Point(),this).X<=ComposeView.TranslatePoint(new Point(),this).X)
+            throw new InvalidOperationException("Files-first editor and adjacent publication panel layout changed");
         Readable(Foreground,Background,"window"); Readable(TitleInput.Foreground,TitleInput.Background,"title input");
         Readable(BodyInput.Foreground,BodyInput.Background,"body input");
         Readable(StatusLabel.Foreground,(Brush)FindResource("Panel"),"status footer");
@@ -74,16 +80,26 @@ public partial class MainWindow
         PlatformPicker.SelectedIndex=0;
         foreach (var (view,name) in new[] {((UIElement)QueueView,"02-queue-empty"), (HistoryView,"03-history-empty"), (SettingsView,"04-settings")})
         { SwitchView(view); await CaptureWindowAsync(name); if (ComposeActions.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Publish footer leaked into another screen"); }
+        SwitchView(SettingsView);
+        foreach (var (category,panel) in new[] { ("telegram",SettingsTelegramPanel), ("discord",SettingsDiscordPanel), ("bluesky",SettingsBlueskyPanel), ("texts",SettingsTextsPanel) })
+        {
+            SelectSettingsCategory(category); UpdateLayout();
+            if (!panel.IsVisible || SettingsGeneralPanel.IsVisible) throw new InvalidOperationException("Settings category navigation failed");
+            await CaptureWindowAsync("settings-"+category);
+        }
+        SelectSettingsCategory("general");
         Width=850; Height=650; SwitchView(ComposeView); await CaptureWindowAsync("05-compose-minimum-850x650");
         var before=SendButton.TranslatePoint(new Point(),this);
         ComposeView.ScrollToEnd(); UpdateLayout(); var after=SendButton.TranslatePoint(new Point(),this);
         if (Math.Abs(before.Y-after.Y)>.1 || before.Y<0 || after.Y+SendButton.ActualHeight>ActualHeight || !SendButton.IsVisible)
             throw new InvalidOperationException("Publish action is clipped or scrolls away at minimum window size");
+        if (Grid.GetRow(EnglishEditor)!=1) throw new InvalidOperationException("Bilingual editor did not stack in a narrow window");
         ComposeView.ScrollToTop(); Width=1400; Height=900; await CaptureWindowAsync("06-compose-wide-1400x900");
         Width=1100;Height=800;SwitchView(ComposeView);
     }
     private async Task CapturePopulatedViewsAsync()
     {
+        await CaptureWindowAsync("10-compose-with-files");
         SwitchView(LibraryView); await CaptureWindowAsync("07-publications-with-data");
         SwitchView(LibraryStatsView); await CaptureWindowAsync("08-statistics-with-data");
         SwitchView(HistoryView); await CaptureWindowAsync("09-history-with-data");

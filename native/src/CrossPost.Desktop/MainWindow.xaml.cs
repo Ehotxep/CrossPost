@@ -23,7 +23,7 @@ public record HistoryRow(Publication Record)
         DeliveryState.Partial => "Отправлено частично", DeliveryState.Unknown => "Результат неизвестен", _ => "Отправляется"
     };
 }
-public record ImageRow(string Path)
+public record ImageRow(string Path, BitmapSource? Thumbnail = null)
 {
     public string Label => System.IO.Path.GetFileName(Path);
 }
@@ -47,8 +47,9 @@ public partial class MainWindow : Window
         Title = "CrossPost Native — прототип " + NativeAppVersion;
         SwitchView(ComposeView);
         InitializeQueueUi();
+        InitializePythonLayout();
         var queueTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        queueTimer.Tick += async (_, _) => { if (_loaded && QueueView.Visibility == Visibility.Visible) await Guard(LoadQueueAsync); };
+        queueTimer.Tick += async (_, _) => { if (_loaded) await Guard(async () => { RefreshWorkerBadge(); if (QueueView.Visibility == Visibility.Visible) await LoadQueueAsync(); }); };
         queueTimer.Start();
         Closed += (_, _) => queueTimer.Stop();
         _draftTimer.Tick += async (_, _) => { _draftTimer.Stop(); await Guard(SaveDraftAsync); };
@@ -100,7 +101,8 @@ public partial class MainWindow : Window
             using var stream = File.Create(path); encoder.Save(stream);
         }
         TitleInput.Text = "Демо-альбом"; BodyInput.Text = "Проверка окна без публикации";
-        _images.Clear(); _images.AddRange(paths); RefreshImages(); UpdatePreview();
+        _images.Clear(); _alts.Clear(); await AddImagePathsAsync(paths); ImageList.SelectedIndex=0;
+        if (ImageList.Items.Cast<ImageRow>().Any(row=>row.Thumbnail is null)) throw new InvalidOperationException("Media gallery thumbnails failed");
         ValidateImages(CurrentDraft);
         await MoveImage(1);
         if (CurrentDraft.Images[0] != paths[1] || PreviewImage.Source is null)
@@ -173,7 +175,7 @@ public partial class MainWindow : Window
         var options = CurrentOptions;
         RenderTargetSummary();
         ModeLabel.Text = options.Demo ? $"{CurrentPlatformLabel} • ДЕМО" : $"{CurrentPlatformLabel} • реальная отправка";
-        SendButton.Content = "Опубликовать в выбранные";
+        SendButton.Content = "Опубликовать сейчас";
         DestinationLabel.Text = options.Demo ? "Назначение: демонстрационный канал" : "Назначение: " + options.Chat;
         PreviewHeading.Text = "Предпросмотр текста " + CurrentPlatformLabel;
     }
@@ -200,7 +202,10 @@ public partial class MainWindow : Window
         while (_alts.Count < _images.Count) _alts.Add("");
         if (_alts.Count > _images.Count) _alts.RemoveRange(_images.Count, _alts.Count - _images.Count);
         ImageList.Visibility = _images.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        ImageList.ItemsSource = _images.Select(path => new ImageRow(path)).ToArray();
+        FileDropButton.Visibility = _images.Count==0 ? Visibility.Visible : Visibility.Collapsed;
+        MediaManageBar.Visibility = MediaPreviewExpander.Visibility = _images.Count==0 ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var key in _thumbnails.Keys.Where(key=>!_images.Contains(key,StringComparer.OrdinalIgnoreCase)).ToArray()) _thumbnails.Remove(key);
+        ImageList.ItemsSource = _images.Select(path => new ImageRow(path,ThumbnailFor(path))).ToArray();
         ImageList.SelectedIndex = _images.Count == 0 ? -1 : Math.Clamp(selection, 0, _images.Count - 1);
         UpdateImagePreview();
     }
@@ -261,14 +266,9 @@ public partial class MainWindow : Window
         if (_busy) return;
         var picker = new OpenFileDialog { Filter = "Изображения|*.jpg;*.jpeg;*.png", Multiselect = true };
         if (picker.ShowDialog(this) != true) return;
-        await Guard(async () =>
-        {
-            var paths = _images.Concat(picker.FileNames).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            var candidate = CurrentDraft with { ImagePath = paths.FirstOrDefault(), AdditionalImagePaths = paths.Skip(1).ToArray() };
-            ValidateImages(candidate, allowPreparation: CurrentOptions.Platform == "bluesky");
-            _images.Clear(); _images.AddRange(paths); RefreshImages(paths.Length - 1); UpdatePreview(); await SaveDraftAsync();
-        });
+        await Guard(() => AddImagePathsAsync(picker.FileNames));
     }
+
     private async void RemoveImage(object sender, RoutedEventArgs e)
     {
         if (_busy || ImageList.SelectedIndex < 0) return;
@@ -288,18 +288,20 @@ public partial class MainWindow : Window
     private void ShowCompose(object sender, RoutedEventArgs e) => SwitchView(ComposeView);
     private async void ShowHistory(object sender, RoutedEventArgs e)
     { SwitchView(HistoryView); await Guard(LoadHistoryAsync); }
-    private void ShowSettings(object sender, RoutedEventArgs e) => SwitchView(SettingsView);
+    private void ShowSettings(object sender, RoutedEventArgs e) { SelectSettingsCategory("general"); SwitchView(SettingsView); }
     private void SwitchView(UIElement view)
     {
-        ComposeView.Visibility = view == ComposeView ? Visibility.Visible : Visibility.Collapsed;
+        if (view == ComposeView) view = ComposeScreen;
+        ComposeScreen.Visibility = view == ComposeScreen ? Visibility.Visible : Visibility.Collapsed;
         HistoryView.Visibility = view == HistoryView ? Visibility.Visible : Visibility.Collapsed;
         LibraryView.Visibility = view == LibraryView ? Visibility.Visible : Visibility.Collapsed;
         LibraryStatsView.Visibility = view == LibraryStatsView ? Visibility.Visible : Visibility.Collapsed;
         QueueView.Visibility = view == QueueView ? Visibility.Visible : Visibility.Collapsed;
         SettingsView.Visibility = view == SettingsView ? Visibility.Visible : Visibility.Collapsed;
-        ComposeActions.Visibility = view == ComposeView ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var (button, target) in new[] { (NavCompose,(UIElement)ComposeView), (NavLibrary,LibraryView), (NavStats,LibraryStatsView), (NavQueue,QueueView), (NavHistory,HistoryView), (NavSettings,SettingsView) })
-            button.Style = (Style)FindResource(view == target ? "SelectedNavigationStyle" : typeof(System.Windows.Controls.Button));
+        ComposeActions.Visibility = view == ComposeScreen ? Visibility.Visible : Visibility.Collapsed;
+        var active = view==QueueView || view==HistoryView ? LibraryView : view;
+        foreach (var (button, target) in new[] { (NavCompose,(UIElement)ComposeScreen), (NavLibrary,LibraryView), (NavStats,LibraryStatsView), (NavSettings,SettingsView) })
+            button.Style = (Style)FindResource(active == target ? "SelectedNavigationStyle" : "NavigationStyle");
     }
     private async void SaveSettings(object sender, RoutedEventArgs e)
     {

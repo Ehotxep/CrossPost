@@ -17,7 +17,7 @@ public partial class MainWindow
         {
             EnglishTitleInput.Text = draft.EnglishTitle; EnglishBodyInput.Text = draft.EnglishText;
             MainLanguageRu.IsChecked = draft.Language == "ru"; MainLanguageBoth.IsChecked = draft.Language == "both"; MainLanguageEnglish.IsChecked = draft.Language == "en";
-            EnglishEditor.IsExpanded = draft.Language != "ru" || draft.EnglishTitle.Length > 0 || draft.EnglishText.Length > 0;
+            EnglishEditor.IsExpanded = true;
             _platformTexts.Clear(); foreach (var pair in draft.PlatformTexts ?? []) _platformTexts[pair.Key] = pair.Value;
             // Restore availability from the draft too, so saved custom text is never silently discarded.
             _customTextPlatforms = (await _store.ReadDocumentAsync<string[]>("custom-text-platforms") ?? []).ToHashSet();
@@ -94,7 +94,7 @@ public partial class MainWindow
     private void ClearDraftTexts()
     {
         _settingTexts = true;
-        try { EnglishTitleInput.Clear(); EnglishBodyInput.Clear(); MainLanguageRu.IsChecked = true; _platformTexts.Clear(); EnglishEditor.IsExpanded = false; }
+        try { EnglishTitleInput.Clear(); EnglishBodyInput.Clear(); MainLanguageRu.IsChecked = true; _platformTexts.Clear(); EnglishEditor.IsExpanded = true; }
         finally { _settingTexts = false; }
         LoadPlatformTextEditor();
     }

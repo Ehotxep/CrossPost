@@ -14,10 +14,7 @@ public partial class MainWindow
     private void RenderTargetSummary()
     {
         if (TargetSummary is null) return;
-        var targets = new[] { (TargetTelegram.IsChecked == true, _options), (TargetDiscord.IsChecked == true, _discord.PublishOptions), (TargetBluesky.IsChecked == true, _bluesky.PublishOptions) };
-        TargetSummary.Text = string.Join(" • ", targets.Where(value => value.Item1).Select(value => PublishLimits.Name(value.Item2.Platform) + ": "
-            + (value.Item2.Demo ? "ДЕМО" : value.Item2.Chat.Length > 0 ? value.Item2.Chat : "не настроено") + " · " + Draft.LanguageName(CurrentDraft.LanguageFor(value.Item2.Platform))));
-        if (TargetSummary.Text.Length == 0) TargetSummary.Text = "Выберите хотя бы одно назначение.";
+        UpdateDestinationRows();
     }
     private string[] SelectedPlatformNames() => new[] { (TargetTelegram.IsChecked == true,"telegram"), (TargetDiscord.IsChecked == true,"discord"), (TargetBluesky.IsChecked == true,"bluesky") }
         .Where(value => value.Item1).Select(value => value.Item2).ToArray();
