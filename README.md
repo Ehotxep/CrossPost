@@ -1,6 +1,6 @@
-> Ветка `windows-native`: подготовка перехода CrossPost на C# / WPF (.NET 10 LTS).
-> Сейчас здесь находится исходная Python-версия 0.2.16 и [план миграции](docs/windows-native-migration.md).
-> C#-приложение пока не реализовано. Стабильная Python-версия развивается в `main`.
+> Ветка windows-native: рабочий прототип CrossPost на C# / WPF (.NET 10 LTS).
+> Инструкции по запуску и сборке — в [native/README.md](native/README.md).
+> По умолчанию включён ДЕМО-режим; Python-версия и её данные не изменяются.
 
 # Crosspost
 
