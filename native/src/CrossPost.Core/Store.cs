@@ -3,12 +3,14 @@ using Microsoft.Data.Sqlite;
 
 namespace CrossPost.Core;
 
-public sealed class Store
+public sealed partial class Store
 {
     private readonly string _connectionString;
+    public string Folder { get; }
     public Store(string folder)
     {
-        Directory.CreateDirectory(folder);
+        Folder = Path.GetFullPath(folder);
+        Directory.CreateDirectory(Folder);
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = Path.Combine(folder, "prototype.db"), Pooling = false, DefaultTimeout = 5
@@ -20,7 +22,7 @@ public sealed class Store
         try { await connection.OpenAsync(); return connection; }
         catch { connection.Dispose(); throw; }
     }
-    public async Task InitializeAsync()
+    public async Task InitializeAsync(bool recoverUnfinished = true)
     {
         using var connection = await OpenAsync();
         using var command = connection.CreateCommand();
@@ -30,9 +32,11 @@ public sealed class Store
             CREATE TABLE IF NOT EXISTS publications(id TEXT PRIMARY KEY, created TEXT NOT NULL, json TEXT NOT NULL, revision INTEGER NOT NULL);
             """;
         await command.ExecuteNonQueryAsync();
-        // A process interrupted during submission must never automatically resend.
+        await InitializeQueueAsync();
+        if (!recoverUnfinished) return;
+        // Queue-owned publications are recovered only by the exclusive worker owner.
         foreach (var publication in await HistoryAsync())
-            if (publication.Delivery.State == DeliveryState.Sending)
+            if (publication.QueueId is null && publication.Delivery.State == DeliveryState.Sending)
                 await SavePublicationAsync(publication with
                 {
                     Delivery = publication.Delivery with { State = DeliveryState.Unknown,

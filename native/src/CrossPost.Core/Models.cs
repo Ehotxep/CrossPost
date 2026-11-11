@@ -42,7 +42,7 @@ public record Delivery(DeliveryState State, string ChatId, long? EditMessageId =
     public long[] AllMediaMessageIds => MediaMessageIds ?? (MediaMessageId is { } id ? [id] : []);
 }
 public record Publication(Guid Id, DateTimeOffset Created, Draft Draft, bool Demo,
-    string BotId, Delivery Delivery, string EditText, int Revision = 1, string EditState = "");
+    string BotId, Delivery Delivery, string EditText, int Revision = 1, string EditState = "", Guid? QueueId = null);
 public record AppOptions(bool Demo = true, string Chat = "");
 public record EditResult(bool Confirmed, bool Unknown = false, string Error = "");
 

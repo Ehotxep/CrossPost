@@ -326,6 +326,187 @@ await Run("cancellation after confirmed text stops before album and keeps editab
     }
     finally { Directory.Delete(folder, true); }
 });
+await Run("queue snapshots media and destination independently of the current draft/settings", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var paths = await MakeImages(folder, 2); var store = new Store(folder); await store.InitializeAsync();
+        var draft = new Draft("Scheduled", "Body", paths[1], [paths[0]]);
+        var job = await new QueuePlanner(store).AddAsync(draft, new(false, "@original_channel"), "123", DateTimeOffset.UtcNow.AddHours(1));
+        await File.WriteAllTextAsync(paths[1], "changed"); File.Delete(paths[0]);
+        await store.SaveDocumentAsync("options", new AppOptions(false, "@different_channel"));
+        var restored = (await new Store(folder).QueueAsync()).Single();
+        Check(restored.Draft.Images.All(File.Exists) && await File.ReadAllTextAsync(restored.Draft.Images[0]) == "image 1", "Queued media changed with originals");
+        Check(restored.Options.Chat == "@original_channel" && restored.BotId == "123" && restored.Draft.Title == "Scheduled", "Destination snapshot changed");
+        Check(job.Id == restored.Id && restored.Due.Offset == TimeSpan.Zero, "Queue identity/time changed");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("atomic claiming allows only one owner and never claims a future job", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        var job = await new QueuePlanner(store).AddAsync(new("Due"), new(), "demo", now);
+        var future = await new QueuePlanner(store).AddAsync(new("Future"), new(), "demo", now.AddHours(1));
+        var claims = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(() => new Store(folder).ClaimDueAsync(now))));
+        Check(claims.Count(value => value?.Id == job.Id) == 1 && claims.Count(value => value is not null) == 1, "Job claimed twice or too early");
+        Check((await store.QueueAsync()).Single(value => value.Id == future.Id).State == QueueState.Pending, "Future job changed state");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("paused and cancelled jobs do not run; terminal jobs cannot be resumed", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        var planner = new QueuePlanner(store);
+        var paused = await planner.AddAsync(new("Pause"), new(), "demo", now);
+        var cancelled = await planner.AddAsync(new("Cancel"), new(), "demo", now);
+        Check(await store.ChangeQueueAsync(paused.Id, QueueState.Paused), "Pause failed");
+        Check(await store.ChangeQueueAsync(cancelled.Id, QueueState.Cancelled), "Cancel failed");
+        Check(await store.ClaimDueAsync(now) is null, "Paused/cancelled job was claimed");
+        Check(!await store.ChangeQueueAsync(cancelled.Id, QueueState.Pending), "Cancelled job could be silently retried");
+        Check(await store.ChangeQueueAsync(paused.Id, QueueState.Pending, now.AddMinutes(5)), "Resume failed");
+        Check(await store.ClaimDueAsync(now) is null, "Resumed job ignored new time");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("queue runner executes once and links the result to publication history", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        var job = await new QueuePlanner(store).AddAsync(new("Queue demo"), new(), "demo", now);
+        var runner = new QueueRunner(store); var calls = 0;
+        Task<ITelegram> Client(ScheduledPost _) { calls++; return Task.FromResult<ITelegram>(new DemoTelegram()); }
+        Check(!await runner.RunNextAsync(now.AddSeconds(-1), Client, CancellationToken.None) && calls == 0, "Job ran early");
+        Check(await runner.RunNextAsync(now, Client, CancellationToken.None), "Due job did not run");
+        Check(!await runner.RunNextAsync(now.AddSeconds(1), Client, CancellationToken.None) && calls == 1, "Job repeated");
+        var publication = (await store.HistoryAsync()).Single();
+        Check(publication.Id == job.Id && publication.QueueId == job.Id && publication.Delivery.State == DeliveryState.Sent, "Queue/history link lost");
+        Check((await store.QueueAsync()).Single().State == QueueState.Completed, "Queue completion not stored");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("opening the window does not recover an active worker publication", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        var job = await new QueuePlanner(store).AddAsync(new("Active"), new(), "demo", now);
+        await store.ClaimDueAsync(now);
+        var publication = new Publication(job.Id, now, job.Draft, true, "demo", new(DeliveryState.Sending, "demo", 700), "Active", QueueId: job.Id);
+        await store.SavePublicationAsync(publication);
+        await new Store(folder).InitializeAsync();
+        Check((await store.PublicationAsync(job.Id))!.Delivery.State == DeliveryState.Sending, "Window modified active worker publication");
+        await store.RecoverQueueAsync();
+        Check((await store.PublicationAsync(job.Id))!.Delivery is { State: DeliveryState.Unknown, EditMessageId: 700 }, "Worker recovery lost confirmed identity");
+        Check((await store.QueueAsync()).Single().State == QueueState.Unknown && await store.ClaimDueAsync(now) is null, "Interrupted queue was retried");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("recovery recognizes confirmed sends even if queue completion was interrupted", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        var job = await new QueuePlanner(store).AddAsync(new("Confirmed"), new(), "demo", now);
+        await store.ClaimDueAsync(now);
+        await new Workflow(store).SendAsync(new DemoTelegram(), "demo", new(), job.Draft, CancellationToken.None, job.Id);
+        await store.RecoverQueueAsync();
+        Check((await store.QueueAsync()).Single().State == QueueState.Completed && (await store.HistoryAsync()).Count == 1, "Confirmed send not recovered");
+        Check(await store.ClaimDueAsync(now) is null, "Confirmed send retried");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("interruption after claim without a publication is never silently retried", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        await new QueuePlanner(store).AddAsync(new("Claimed"), new(), "demo", now); await store.ClaimDueAsync(now);
+        await store.RecoverQueueAsync();
+        Check((await store.QueueAsync()).Single().State == QueueState.Unknown && await store.ClaimDueAsync(now) is null, "Claim-only interruption retried");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("long overdue jobs pause before any client/network creation", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        await new QueuePlanner(store).AddAsync(new("Missed"), new(), "demo", now.AddHours(-1));
+        await new QueueRunner(store).RunNextAsync(now, _ => throw new Exception("Client must not be created"), CancellationToken.None);
+        Check((await store.QueueAsync()).Single().State == QueueState.Paused && (await store.HistoryAsync()).Count == 0, "Overdue job did not pause");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("changed bot or enabled demo pauses a real job before sending", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        await new QueuePlanner(store).AddAsync(new("Real"), new(false, "@saved_target"), "123", now);
+        await new QueueRunner(store).RunNextAsync(now, _ => throw new QueuePausedException("Different bot"), CancellationToken.None);
+        Check((await store.QueueAsync()).Single().State == QueueState.Paused && (await store.HistoryAsync()).Count == 0, "Preflight pause failed");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("an unknown queued send remains unknown across restart without a retry", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        var handler = new ScriptedHandler((_, _) => throw new HttpRequestException()); using var http = new HttpClient(handler);
+        await new QueuePlanner(store).AddAsync(new("Uncertain"), new(false, "@saved_target"), "123", now);
+        await new QueueRunner(store).RunNextAsync(now, _ => Task.FromResult<ITelegram>(new TelegramClient(http, token)), CancellationToken.None);
+        await new Store(folder).InitializeAsync(); await store.RecoverQueueAsync();
+        Check((await store.QueueAsync()).Single().State == QueueState.Unknown && handler.Calls == 1, "Unknown queued send retried");
+        Check(await store.ClaimDueAsync(now) is null && (await store.HistoryAsync()).Single().Delivery.State == DeliveryState.Unknown, "Unknown result lost");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("invalid queued media is refused before constructing a client", async () =>
+{
+    var folder = TemporaryFolder();
+    try
+    {
+        var store = new Store(folder); await store.InitializeAsync(); var now = DateTimeOffset.UtcNow;
+        var paths = await MakeImages(folder, 1);
+        var job = await new QueuePlanner(store).AddAsync(new("Missing", ImagePath: paths[0]), new(), "demo", now);
+        File.Delete(job.Draft.Images[0]);
+        await new QueueRunner(store).RunNextAsync(now, _ => throw new Exception("Unexpected client creation"), CancellationToken.None);
+        Check((await store.QueueAsync()).Single().State == QueueState.Refused, "Missing queued media not refused");
+    }
+    finally { Directory.Delete(folder, true); }
+});
+await Run("schedule converts local time to UTC and rejects invalid or ambiguous clock times", () =>
+{
+    var zone = TimeZoneInfo.CreateCustomTimeZone("test+10", TimeSpan.FromHours(10), "test", "test");
+    var due = ScheduleTime.FromLocal(new DateTime(2026, 11, 11), "12:30", zone);
+    Check(due == new DateTimeOffset(2026, 11, 11, 2, 30, 0, TimeSpan.Zero), "Local timezone ignored");
+    var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(new DateTime(2020, 1, 1), new DateTime(2040, 12, 31), TimeSpan.FromHours(1),
+        TimeZoneInfo.TransitionTime.CreateFloatingDateRule(new DateTime(1, 1, 1, 2, 0, 0), 3, 2, DayOfWeek.Sunday),
+        TimeZoneInfo.TransitionTime.CreateFloatingDateRule(new DateTime(1, 1, 1, 2, 0, 0), 11, 1, DayOfWeek.Sunday));
+    var dst = TimeZoneInfo.CreateCustomTimeZone("test-dst", TimeSpan.FromHours(-5), "dst", "std", "summer", [rule]);
+    foreach (var (date, time) in new[] { (new DateTime(2026, 11, 11), "24:00"), (new DateTime(2026, 3, 8), "02:30"), (new DateTime(2026, 11, 1), "01:30") })
+    {
+        var rejected = false; try { ScheduleTime.FromLocal(date, time, dst); } catch (InvalidOperationException) { rejected = true; }
+        Check(rejected, "Invalid/ambiguous local time accepted");
+    }
+    return Task.CompletedTask;
+});
 Console.WriteLine($"Checks completed; failures: {failures}");
 return failures == 0 ? 0 : 1;
 

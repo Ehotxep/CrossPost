@@ -2,11 +2,11 @@ namespace CrossPost.Core;
 
 public sealed class Workflow(Store store)
 {
-    public async Task<Publication> SendAsync(ITelegram telegram, string botId, AppOptions options, Draft draft, CancellationToken ct)
+    public async Task<Publication> SendAsync(ITelegram telegram, string botId, AppOptions options, Draft draft, CancellationToken ct, Guid? queueId = null)
     {
         draft.Validate();
-        var publication = new Publication(Guid.NewGuid(), DateTimeOffset.UtcNow, draft, options.Demo, botId,
-            new(DeliveryState.Sending, options.Chat), draft.PlainText);
+        var publication = new Publication(queueId ?? Guid.NewGuid(), DateTimeOffset.UtcNow, draft, options.Demo, botId,
+            new(DeliveryState.Sending, options.Chat), draft.PlainText, QueueId: queueId);
         await store.SavePublicationAsync(publication);
         var latest = publication.Delivery;
         Delivery result;

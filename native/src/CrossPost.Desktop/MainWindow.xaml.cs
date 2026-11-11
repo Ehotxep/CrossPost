@@ -44,6 +44,11 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = this;
+        InitializeQueueUi();
+        var queueTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        queueTimer.Tick += async (_, _) => { if (_loaded && QueueView.Visibility == Visibility.Visible) await Guard(LoadQueueAsync); };
+        queueTimer.Start();
+        Closed += (_, _) => queueTimer.Stop();
         _draftTimer.Tick += async (_, _) => { _draftTimer.Stop(); await Guard(SaveDraftAsync); };
         Loaded += async (_, _) =>
         {
@@ -94,7 +99,12 @@ public partial class MainWindow : Window
             throw new InvalidOperationException("WPF album history selection failed");
         var edited = await workflow.EditAsync(new DemoTelegram(), sent, "Изменённая подпись", CancellationToken.None);
         if (!edited.Result.Confirmed) throw new InvalidOperationException("WPF demo edit failed");
-        SwitchView(HistoryView); UpdateLayout(); SwitchView(SettingsView); UpdateLayout(); SwitchView(ComposeView);
+        SwitchView(HistoryView); UpdateLayout(); SwitchView(SettingsView); UpdateLayout(); SwitchView(QueueView); UpdateLayout(); SwitchView(ComposeView);
+        var queued = await new QueuePlanner(_store).AddAsync(CurrentDraft, new(), "demo", DateTimeOffset.UtcNow.AddSeconds(20));
+        await _store.SaveDocumentAsync("worker-smoke-id", queued.Id);
+        WorkerProcess.Start();
+        for (var attempt = 0; attempt < 100 && !WorkerProcess.IsRunning; attempt++) await Task.Delay(100);
+        if (!WorkerProcess.IsRunning) throw new InvalidOperationException("Background worker failed to start");
         _draftTimer.Stop();
     }
     private async Task InitializeAsync()
@@ -110,6 +120,8 @@ public partial class MainWindow : Window
         _loaded = true;
         UpdatePreview(); ApplyMode();
         await LoadHistoryAsync();
+        await LoadQueueAsync();
+        if (!App.SmokeTest && (await _store.QueueAsync()).Any(job => job.State is QueueState.Pending or QueueState.Running)) WorkerProcess.Start();
         StatusLabel.Text = "Готово. Черновик сохраняется автоматически.";
     }
     private async Task Guard(Func<Task> action)
@@ -222,6 +234,7 @@ public partial class MainWindow : Window
     {
         ComposeView.Visibility = view == ComposeView ? Visibility.Visible : Visibility.Collapsed;
         HistoryView.Visibility = view == HistoryView ? Visibility.Visible : Visibility.Collapsed;
+        QueueView.Visibility = view == QueueView ? Visibility.Visible : Visibility.Collapsed;
         SettingsView.Visibility = view == SettingsView ? Visibility.Visible : Visibility.Collapsed;
     }
     private async void SaveSettings(object sender, RoutedEventArgs e)

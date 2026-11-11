@@ -8,9 +8,33 @@ public partial class App : Application
 {
     private Mutex? _mutex;
     public static bool SmokeTest => Environment.GetCommandLineArgs().Contains("--smoke-test");
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.Contains("--verify-worker-smoke"))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CROSSPOST_NATIVE_DATA"))) { Shutdown(1); return; }
+            Shutdown(await WorkerProcess.VerifySmokeAsync());
+            return;
+        }
+        if (e.Args.Contains("--worker"))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            try { Shutdown(await WorkerProcess.RunAsync()); }
+            catch (Exception error)
+            {
+                try
+                {
+                    Directory.CreateDirectory(DataFolder);
+                    await File.AppendAllTextAsync(Path.Combine(DataFolder, "worker-error.log"),
+                        $"{DateTimeOffset.UtcNow:O} {error.GetType().Name}\n");
+                }
+                catch (Exception logError) when (logError is IOException or UnauthorizedAccessException) { }
+                Shutdown(1);
+            }
+            return;
+        }
         if (SmokeTest && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CROSSPOST_NATIVE_DATA")))
         { Shutdown(1); return; }
         _mutex = new Mutex(true, @"Local\CrossPost.Native.Prototype", out var created);

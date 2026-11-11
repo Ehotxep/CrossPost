@@ -5,7 +5,7 @@
   <DockPanel Margin="0,0,0,20">
    <TextBlock Text="crosspost / native" FontSize="24" FontWeight="SemiBold" Margin="0,0,30,0" VerticalAlignment="Center"/>
    <StackPanel Orientation="Horizontal">
-    <Button Content="Новый пост" Click="ShowCompose"/><Button Content="История" Click="ShowHistory"/><Button Content="Настройки" Click="ShowSettings"/>
+    <Button Content="Новый пост" Click="ShowCompose"/><Button Content="История" Click="ShowHistory"/><Button Content="Очередь" Click="ShowQueue"/><Button Content="Настройки" Click="ShowSettings"/>
    </StackPanel>
    <TextBlock x:Name="ModeLabel" Text="ДЕМО • ничего не публикуется" Foreground="#65DBB2" HorizontalAlignment="Right" VerticalAlignment="Center"/>
   </DockPanel>
@@ -24,7 +24,10 @@
       <StackPanel><TextBlock Text="Предпросмотр текста Telegram" FontWeight="SemiBold"/><TextBlock x:Name="PreviewText" TextWrapping="Wrap" Margin="0,8,0,0"/><TextBlock x:Name="CountLabel" Foreground="#ABB5CA" Margin="0,10,0,0"/></StackPanel>
      </Border>
      <TextBlock x:Name="DestinationLabel" TextWrapping="Wrap"/>
-     <WrapPanel Margin="0,10,0,12"><Button x:Name="SendButton" Content="Выполнить демо-отправку" Click="SendPost"/><Button Content="Сохранить черновик" Click="SaveDraftClick"/></WrapPanel>
+     <WrapPanel Margin="0,10,0,12"><Button x:Name="SendButton" Content="Выполнить демо-отправку" Click="SendPost"/><Button Content="В очередь" Click="QueueNow"/><Button Content="Сохранить черновик" Click="SaveDraftClick"/></WrapPanel>
+     <TextBlock x:Name="ScheduleZoneLabel" Text="Публикация по расписанию"/>
+     <WrapPanel Margin="0,5,0,8"><DatePicker x:Name="ScheduleDate" Width="145" Margin="0,4,10,4"/><TextBox x:Name="ScheduleClock" Text="12:00" Width="85" Margin="0,4,10,4"/><Button Content="Запланировать" Click="SchedulePost"/></WrapPanel>
+     <TextBlock Text="Очередь работает после закрытия окна, пока включён компьютер. Текст, файлы и канал сохраняются в задании." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,0,0,14"/>
     </StackPanel>
    </ScrollViewer>
    <Grid x:Name="HistoryView" Visibility="Collapsed">
@@ -45,6 +48,28 @@
      <WrapPanel><Button x:Name="EditButton" Content="Сохранить изменение" Click="EditPost" IsEnabled="False"/><Button Content="Открыть сообщение" Click="OpenPost"/></WrapPanel>
     </StackPanel>
    </Grid>
+   <Grid x:Name="QueueView" Visibility="Collapsed">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TextBlock Text="Очередь публикаций" FontSize="26" FontWeight="SemiBold"/>
+    <StackPanel Grid.Row="1" Margin="0,10,0,10">
+     <TextBlock x:Name="WorkerLabel" TextWrapping="Wrap"/>
+     <WrapPanel><Button Content="Запустить очередь" Click="StartWorker"/><Button Content="Остановить очередь" Click="StopWorker"/><Button Content="Обновить" Click="RefreshQueue"/></WrapPanel>
+    </StackPanel>
+    <ListView Grid.Row="2" x:Name="QueueList" ItemsSource="{Binding Queue}" SelectionChanged="QueueSelected" Background="#1A1E27" Foreground="#EDF0F7">
+     <ListView.View><GridView>
+      <GridViewColumn Header="Когда (местное время)" Width="160" DisplayMemberBinding="{Binding DueText}"/>
+      <GridViewColumn Header="Пост" Width="220" DisplayMemberBinding="{Binding Title}"/>
+      <GridViewColumn Header="Назначение" Width="180" DisplayMemberBinding="{Binding Destination}"/>
+      <GridViewColumn Header="Состояние" Width="200" DisplayMemberBinding="{Binding Status}"/>
+     </GridView></ListView.View>
+    </ListView>
+    <StackPanel Grid.Row="3" Margin="0,12,0,0">
+     <TextBlock x:Name="QueueDetails" TextWrapping="Wrap"/>
+     <WrapPanel><Button x:Name="PauseJobButton" Content="Приостановить" Click="PauseJob" IsEnabled="False"/><Button x:Name="ResumeJobButton" Content="Продолжить / перенести" Click="ResumeJob" IsEnabled="False"/><Button x:Name="CancelJobButton" Content="Отменить задание" Click="CancelJob" IsEnabled="False"/><Button x:Name="JobHistoryButton" Content="Результат в истории" Click="OpenJobHistory" IsEnabled="False"/></WrapPanel>
+     <TextBlock Text="Для переноса выберите дату и время ниже. Повтор неизвестной или частичной отправки автоматически не выполняется." TextWrapping="Wrap" Foreground="#ABB5CA"/>
+     <WrapPanel Margin="0,5,0,0"><DatePicker x:Name="QueueDate" Width="145" Margin="0,4,10,4"/><TextBox x:Name="QueueClock" Width="85" Margin="0,4,10,4"/></WrapPanel>
+    </StackPanel>
+   </Grid>
    <ScrollViewer x:Name="SettingsView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
     <StackPanel MaxWidth="720" HorizontalAlignment="Left">
      <TextBlock Text="Настройки Telegram" FontSize="26" FontWeight="SemiBold" Margin="0,0,0,16"/>
@@ -53,7 +78,7 @@
      <TextBlock Text="Токен бота из @BotFather"/><PasswordBox x:Name="TokenInput"/>
      <TextBlock Text="Токен сохраняется с защитой Windows для текущего пользователя. Бот должен быть администратором выбранного канала." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,0,0,12"/>
      <WrapPanel><Button Content="Сохранить настройки" Click="SaveSettings"/><Button Content="Проверить бота" Click="CheckBot"/><Button Content="Открыть папку данных" Click="OpenData"/></WrapPanel>
-     <TextBlock Text="В прототипе: текст, до 10 изображений JPEG/PNG одним альбомом, история и редактирование. Альбомы, MTProto, расписание, импорт Python-данных и другие площадки ещё не подключены." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,20,0,12"/>
+     <TextBlock Text="В прототипе: текст, до 10 изображений JPEG/PNG одним альбомом, история и редактирование. MTProto, импорт Python-данных и другие площадки ещё не подключены." TextWrapping="Wrap" Foreground="#ABB5CA" Margin="0,20,0,12"/>
     </StackPanel>
    </ScrollViewer>
   </Grid>
