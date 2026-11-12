@@ -487,6 +487,7 @@
      <StackPanel Margin="0,0,20,0">
       <TextBlock Text="ПРИЛОЖЕНИЕ" Style="{StaticResource EyebrowStyle}" Margin="10,0,0,8" />
       <Button x:Name="SettingsGeneralNav" Style="{StaticResource SettingsNavigationStyle}" Content="Общие" Tag="general" Click="ShowSettingsCategory" />
+      <Button x:Name="SettingsMigrationNav" Style="{StaticResource SettingsNavigationStyle}" Content="Переход с Python" Tag="migration" Click="ShowSettingsCategory" />
       <Button x:Name="SettingsTextsNav" Style="{StaticResource SettingsNavigationStyle}" Content="Тексты площадок" Tag="texts" Click="ShowSettingsCategory" />
       <TextBlock Text="ПЛОЩАДКИ" Style="{StaticResource EyebrowStyle}" Margin="10,22,0,8" />
       <Button x:Name="SettingsTelegramNav" Style="{StaticResource SettingsNavigationStyle}" Content="Telegram" Tag="telegram" Click="ShowSettingsCategory" />
@@ -514,6 +515,34 @@
          <TextBlock x:Name="UpdateStatus" Text="Обновления устанавливаются по кнопке; отправка перед перезапуском завершается." TextWrapping="Wrap" Foreground="#B4B9C6" />
          <TextBlock Text="Данные хранятся отдельно от Python-версии. Настройки и история сохраняются при обновлении." Style="{StaticResource MutedTextStyle}" Margin="0,18,0,8" />
          <Button Content="Открыть папку данных" Click="OpenData" HorizontalAlignment="Left" />
+        </StackPanel>
+       </Border>
+       <Border x:Name="SettingsMigrationPanel" Style="{StaticResource CardStyle}" Visibility="Collapsed">
+        <StackPanel>
+         <TextBlock Text="Переход с Python" Style="{StaticResource SectionTitleStyle}" />
+         <TextBlock Text="Выберите папку данных: обычно %LOCALAPPDATA%\Crosspost. Все её файлы будут сохранены в защищённой копии. Исходная версия останется без изменений." Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,10,0,12" />
+         <TextBox x:Name="MigrationSource" IsReadOnly="True" />
+         <Button Content="Выбрать папку данных Python…" Click="ChooseMigrationSource" HorizontalAlignment="Left" />
+         <CheckBox x:Name="MigrationPythonClosed" Content="Python-версия, её фоновая очередь и браузеры закрыты" Margin="0,10,0,10" />
+         <Button Content="Создать защищённую копию и прочитать данные" Click="ImportPythonProfile" HorizontalAlignment="Left" />
+         <TextBlock x:Name="MigrationSummary" TextWrapping="Wrap" Foreground="#B4B9C6" Margin="0,12,0,12" />
+         <TextBlock Text="Настройки подключений" Style="{StaticResource SectionTitleStyle}" />
+         <TextBlock Text="Выберите назначения для переноса. В этой версии можно подключить один канал Telegram и один webhook Discord. Остальные сохранены в копии. Настройки применяются в деморежиме; сетевых запросов при импорте нет." Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,8,0,8" />
+         <CheckBox x:Name="MigrationTelegram" Content="Перенести Telegram и токен бота" />
+         <ComboBox x:Name="MigrationChannels" Margin="0,6,0,10" />
+         <CheckBox x:Name="MigrationDiscord" Content="Перенести Discord и секрет webhook" />
+         <ComboBox x:Name="MigrationWebhooks" Margin="0,6,0,10" />
+         <CheckBox x:Name="MigrationBluesky" Content="Перенести имя Bluesky (пароль приложения потребуется указать заново)" />
+         <CheckBox x:Name="MigrationReplace" Content="Разрешить замену существующих настроек выбранных площадок" Margin="0,12,0,8" />
+         <Button Content="Применить выбранные настройки" Click="ApplyMigrationSettings" HorizontalAlignment="Left" />
+         <TextBlock Text="Черновики, шаблоны и задания для проверки" Style="{StaticResource SectionTitleStyle}" Margin="0,20,0,8" />
+         <TextBlock Text="Расписание здесь на паузе: откройте запись в редакторе, проверьте текст и назначения, затем назначьте время заново. Неподдерживаемые поля остаются в защищённой копии." Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" />
+         <ListBox x:Name="MigrationItems" MaxHeight="230" Margin="0,10,0,8" />
+         <Button Content="Открыть выбранное в редакторе…" Click="OpenMigrationDraft" HorizontalAlignment="Left" />
+         <Button Content="Импортировать историю и статистику из копии" Click="ImportMigrationHistory" HorizontalAlignment="Left" />
+         <Button Content="Открыть существующую защищённую копию…" Click="OpenMigrationArchive" HorizontalAlignment="Left" />
+         <Button Content="Восстановить исходные файлы из копии…" Click="RestoreMigrationArchive" HorizontalAlignment="Left" />
+         <TextBlock Text="Защищённая копия открывается только текущим пользователем Windows на этом ПК. При восстановлении исходные файлы, включая API-ключи, будут записаны в выбранную новую папку в исходном виде. Внешние папки моделей/экспортов не включены." Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,12,0,0" />
         </StackPanel>
        </Border>
        <Border x:Name="SettingsTextsPanel" Style="{StaticResource CardStyle}" Visibility="Collapsed">

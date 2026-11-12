@@ -28,7 +28,7 @@ public partial class MainWindow
     }
     private void SelectSettingsCategory(string category)
     {
-        var pages = new[] { ("general",SettingsGeneralPanel,SettingsGeneralNav), ("texts",SettingsTextsPanel,SettingsTextsNav),
+        var pages = new[] { ("general",SettingsGeneralPanel,SettingsGeneralNav), ("texts",SettingsTextsPanel,SettingsTextsNav), ("migration",SettingsMigrationPanel,SettingsMigrationNav),
             ("telegram",SettingsTelegramPanel,SettingsTelegramNav), ("discord",SettingsDiscordPanel,SettingsDiscordNav), ("bluesky",SettingsBlueskyPanel,SettingsBlueskyNav) };
         foreach (var (key,panel,button) in pages)
         {

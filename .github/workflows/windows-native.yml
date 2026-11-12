@@ -81,6 +81,7 @@ jobs:
           }
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "smoke-ready.txt"))) { throw "WPF readiness marker missing" }
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "close-smoke-ready.txt"))) { throw "Window did not confirm normal single-request close" }
+          if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "migration-smoke-ready.txt"))) { throw "Python profile migration and DPAPI check missing" }
           Set-Content (Join-Path $env:CROSSPOST_NATIVE_DATA "window-closed.txt") "Window process exited"
           $verify = Start-Process -FilePath (Resolve-Path artifacts/win-x64/CrossPost.Native.exe) -ArgumentList "--verify-worker-smoke" -PassThru
           if (-not $verify.WaitForExit(90000)) { $verify.Kill(); throw "Background worker test timed out" }

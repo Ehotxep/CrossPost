@@ -508,6 +508,7 @@ await Run("schedule converts local time to UTC and rejects invalid or ambiguous 
     return Task.CompletedTask;
 });
 await ImportChecks.RunAsync(Run);
+await MigrationChecks.RunAsync(Run);
 await DiscordChecks.RunAsync(Run);
 await BlueskyChecks.RunAsync(Run);
 await BatchChecks.RunAsync(Run);

@@ -81,7 +81,7 @@ public partial class MainWindow
         foreach (var (view,name) in new[] {((UIElement)QueueView,"02-queue-empty"), (HistoryView,"03-history-empty"), (SettingsView,"04-settings")})
         { SwitchView(view); await CaptureWindowAsync(name); if (ComposeActions.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Publish footer leaked into another screen"); }
         SwitchView(SettingsView);
-        foreach (var (category,panel) in new[] { ("telegram",SettingsTelegramPanel), ("discord",SettingsDiscordPanel), ("bluesky",SettingsBlueskyPanel), ("texts",SettingsTextsPanel) })
+        foreach (var (category,panel) in new[] { ("telegram",SettingsTelegramPanel), ("discord",SettingsDiscordPanel), ("bluesky",SettingsBlueskyPanel), ("texts",SettingsTextsPanel), ("migration",SettingsMigrationPanel) })
         {
             SelectSettingsCategory(category); UpdateLayout();
             if (!panel.IsVisible || SettingsGeneralPanel.IsVisible) throw new InvalidOperationException("Settings category navigation failed");

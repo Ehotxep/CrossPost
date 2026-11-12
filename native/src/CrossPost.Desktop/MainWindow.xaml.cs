@@ -128,6 +128,8 @@ public partial class MainWindow : Window
         var edited = await workflow.EditAsync(new DemoTelegram(), sent, "Изменённая подпись", CancellationToken.None);
         if (!edited.Result.Confirmed) throw new InvalidOperationException("WPF demo edit failed");
         SwitchView(HistoryView); UpdateLayout(); SwitchView(SettingsView); UpdateLayout(); SwitchView(QueueView); UpdateLayout(); SwitchView(ComposeView);
+        App.TraceSmoke("Python profile migration and DPAPI recovery");
+        await RunMigrationSmokeAsync();
         App.TraceSmoke("discord scenario");
         await RunDiscordSmokeAsync();
         App.TraceSmoke("bluesky media and queue scenario");
@@ -155,6 +157,8 @@ public partial class MainWindow : Window
     private async Task InitializeAsync()
     {
         await _store.InitializeAsync();
+        MigrationSettingsCommit.CleanTemporaryDatabases();
+        await MigrationSettingsCommit.RecoverAsync(_store);
         _options = await _store.ReadDocumentAsync<AppOptions>("options") ?? new();
         if (App.SmokeTest) _options = _options with { Demo = true };
         var draft = await _store.ReadDocumentAsync<Draft>("draft") ?? new();
@@ -166,6 +170,7 @@ public partial class MainWindow : Window
         await InitializeDiscordAsync();
         await InitializeBlueskyAsync(draft);
         await InitializeTextsAsync(draft);
+        await InitializeMigrationAsync();
         var targets = await _store.ReadDocumentAsync<string[]>("publish-targets") ?? ["telegram"];
         TargetTelegram.IsChecked = targets.Contains("telegram"); TargetDiscord.IsChecked = targets.Contains("discord"); TargetBluesky.IsChecked = targets.Contains("bluesky");
         _loaded = true;
