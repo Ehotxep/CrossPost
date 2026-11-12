@@ -92,7 +92,7 @@ internal static class MigrationChecks
                 var source = Path.Combine(root, "python"); Directory.CreateDirectory(Path.Combine(source, "uploads", "0123456789abcdef"));
                 await File.WriteAllBytesAsync(Path.Combine(source, "uploads", "0123456789abcdef", "original.png"), [1, 2, 3]);
                 await File.WriteAllTextAsync(Path.Combine(source, "publish.json"), """
-                    {"modules":{"translation":true},"telegram":{"bot_token":"123:private-token","spoiler_nsfw":true,"channels":[{"id":"-1001","title":"One"},{"id":"-1002","title":"Two"}]},"discord":{"webhooks":[{"url":"private-webhook","name":"Art"}]},"bluesky":{"handle":"test.bsky.social"},"text_lang":{"discord":"en"},"platform_texts_enabled":{"telegram":true,"discord":true},"unknown":{"api_key":"unknown-secret"}}
+                    {"modules":{"translation":true},"telegram":{"bot_token":"123:private-token","spoiler_nsfw":true,"channels":[{"id":"-1001","title":"One","rating":"sfw"},{"id":"-1002","title":"Two"}]},"discord":{"webhooks":[{"url":"private-webhook","name":"Art"}]},"bluesky":{"handle":"test.bsky.social"},"text_lang":{"discord":"en"},"platform_texts_enabled":{"telegram":true,"discord":true},"unknown":{"api_key":"unknown-secret"}}
                     """);
                 const string draft = """{"title":"Русское название","text":"Текст","rating":"explicit","variants":{"en":{"title":"English","text":"Body"}},"platform_texts":{"telegram":{"enabled":true,"title":"Telegram","text":"Custom"},"discord":{"enabled":true,"title":"Custom English","text":"Custom body"}},"files":["0123456789abcdef","fedcba9876543210"],"alts":{"0123456789abcdef":"Accessible description"}}""";
                 await File.WriteAllTextAsync(Path.Combine(source, "ui.json"), "{\"draft\":" + draft + "}");
@@ -105,7 +105,7 @@ internal static class MigrationChecks
                 }
                 using var archive = await EncryptedProfileArchive.CreateAsync(source, Path.Combine(root, "archive"), Wrap);
                 var settings = await PythonProfile.SettingsAsync(archive);
-                Check(settings.Channels.Length == 2 && settings.TelegramToken == "123:private-token" && settings.Telegram.Demo && settings.Discord.Demo && settings.Bluesky.Demo, "Settings lost or real mode enabled");
+                Check(settings.Channels.Length == 2 && settings.Channels[0].RatingRule == "sfw" && settings.TelegramToken == "123:private-token" && settings.Telegram.Demo && settings.Discord.Demo && settings.Bluesky.Demo, "Settings lost or real mode enabled");
                 Check(settings.Webhooks.Single() == "private-webhook" && settings.DiscordDestinations.Single().Name == "Art", "Webhook selection lost");
                 var record = await PythonProfile.PrepareAsync(archive, source, Path.Combine(root, "media"));
                 Check(record.Items.Length == 4 && record.Items.Single(i => i.Kind == "Шаблон").Draft.Title == "Русское название", "Draft/template import incomplete");

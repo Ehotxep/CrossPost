@@ -3,7 +3,7 @@ using Microsoft.Data.Sqlite;
 
 namespace CrossPost.Core;
 
-public record MigrationDestination(string Id, string Name) { public override string ToString() => Name; }
+public record MigrationDestination(string Id, string Name, string RatingRule = "all") { public override string ToString() => Name; }
 public record MigrationItem(string Key, string Kind, string Name, Draft Draft, string[] Warnings)
 {
     public override string ToString() => $"{Kind}: {Name}";
@@ -24,17 +24,18 @@ public static class PythonProfile
         using var document = JsonDocument.Parse(await archive.ReadAsync(path, ct: ct));
         return document.RootElement.Clone();
     }
+    private static string DestinationRating(JsonElement value) => Text(value, "rating") switch { "sfw" => "sfw", "nsfw" => "nsfw", _ => "all" };
     public static async Task<MigrationSettings> SettingsAsync(EncryptedProfileArchive archive, CancellationToken ct = default)
     {
         var settings = await JsonAsync(archive, "publish.json", ct);
         var telegram = Property(settings, "telegram"); var discord = Property(settings, "discord"); var bluesky = Property(settings, "bluesky");
         var channels = Array(Property(telegram, "channels")).Where(c => Text(c, "id").Length > 0)
-            .Select(c => new MigrationDestination(Text(c, "id"), Text(c, "title") + " · " + Text(c, "id"))).ToList();
+            .Select(c => new MigrationDestination(Text(c, "id"), Text(c, "title") + " · " + Text(c, "id"), DestinationRating(c))).ToList();
         var group = Property(telegram, "group");
         if (Text(group, "id").Length > 0) channels.Add(new(Text(group, "id"), Text(group, "title") + " · " + Text(group, "id") + " (темы требуют настройки)"));
         var hooks = Array(Property(discord, "webhooks"));
         var urls = hooks.Select(h => Text(h, "url")).ToArray();
-        var destinations = hooks.Select((h, i) => new MigrationDestination(i.ToString(), Text(h, "name") is { Length: > 0 } name ? name : $"Webhook {i + 1}")).ToArray();
+        var destinations = hooks.Select((h, i) => new MigrationDestination(i.ToString(), Text(h, "name") is { Length: > 0 } name ? name : $"Webhook {i + 1}", DestinationRating(h))).ToArray();
         // Python OAuth/JWT sessions are preserved in the archive, never treated as app passwords.
         return new(new(Demo: true, Spoiler: Flag(telegram, "spoiler_nsfw", true)), Text(telegram, "bot_token"), channels.ToArray(),
             new(Demo: true, Spoiler: Flag(discord, "blur_nsfw", true), SuppressEmbeds: Flag(discord, "no_previews", true)),

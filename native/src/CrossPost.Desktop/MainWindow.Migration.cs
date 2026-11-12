@@ -101,14 +101,14 @@ public partial class MainWindow
             if (MigrationChannels.SelectedItem is not MigrationDestination channel) throw new InvalidOperationException("Выберите канал Telegram.");
             if (!replace && (_options.Chat.Length > 0 || SecretVault.Exists("telegram"))) throw new InvalidOperationException("Telegram уже настроен. Для замены установите флажок разрешения.");
             _ = TelegramClient.BotId(settings.TelegramToken);
-            documents["options"] = settings.Telegram with { Chat = channel.Id }; secrets["telegram"] = settings.TelegramToken;
+            documents["options"] = settings.Telegram with { Chat = channel.Id, RatingRule = channel.RatingRule }; secrets["telegram"] = settings.TelegramToken;
         }
         if (MigrationDiscord.IsChecked == true)
         {
             if (MigrationWebhooks.SelectedItem is not MigrationDestination selected || !int.TryParse(selected.Id, out var index)) throw new InvalidOperationException("Выберите webhook Discord.");
             if (!replace && (_discord.WebhookId.Length > 0 || SecretVault.Exists("discord"))) throw new InvalidOperationException("Discord уже настроен. Для замены установите флажок разрешения.");
             var secret = settings.Webhooks[index]; var endpoint = DiscordEndpoint.Parse(secret);
-            documents["discord-options"] = settings.Discord with { WebhookId = endpoint.Id, Name = selected.Name }; secrets["discord"] = secret;
+            documents["discord-options"] = settings.Discord with { WebhookId = endpoint.Id, Name = selected.Name, RatingRule = selected.RatingRule }; secrets["discord"] = secret;
         }
         if (MigrationBluesky.IsChecked == true)
         {
@@ -120,6 +120,7 @@ public partial class MainWindow
         await _store.BackupAsync("before-python-settings");
         await MigrationSettingsCommit.ApplyAsync(_store, documents, secrets);
         _options = await _store.ReadDocumentAsync<AppOptions>("options") ?? new();
+        PrimaryTelegramRating.SelectedIndex = RatingIndex(_options.RatingRule);
         DemoInput.IsChecked = _options.Demo; ChatInput.Text = _options.Chat; TokenInput.Password = SecretVault.Load();
         await InitializeDiscordAsync(); await InitializeBlueskyAsync(CurrentDraft);
         TargetTelegram.IsChecked = TargetDiscord.IsChecked = TargetBluesky.IsChecked = false;
