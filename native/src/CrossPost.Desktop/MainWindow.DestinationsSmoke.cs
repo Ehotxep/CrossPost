@@ -34,6 +34,11 @@ public partial class MainWindow
         await _store.SaveDocumentAsync("destination-worker-smoke-ids", jobs.Select(j => j.Id).ToArray());
         BlueskyRating.SelectedIndex = 0; RefreshDestinations();
         if (SelectedTargets().Length != 2 || SelectedTargets().Any(t => t.Options.Chat == "-100222")) throw new InvalidOperationException("SFW filter selected adult channel");
+        var originalProfiles = _destinations;
+        _destinations = _destinations.Select(p => p.Id == discord.Id ? p with { Options = p.Options with { Demo = false } } : p).ToArray();
+        RenderTargetSummary();
+        if (!ModeLabel.Text.Contains("реал")) throw new InvalidOperationException("A real additional destination was labelled as demo");
+        _destinations = originalProfiles; RenderTargetSummary();
         MainContent.IsEnabled = true; await CaptureWindowAsync("10-destination-settings");
         _extraSelected.Clear(); RefreshDestinations(); ResetDestinationEditor(); TargetTelegram.IsChecked = true;
         await SaveDraftAsync(); ApplyMode(); SwitchView(ComposeView); SelectSettingsCategory("general");

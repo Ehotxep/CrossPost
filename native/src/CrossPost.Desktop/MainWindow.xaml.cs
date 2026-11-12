@@ -192,9 +192,9 @@ public partial class MainWindow : Window
     {
         var options = CurrentOptions;
         RenderTargetSummary();
-        ModeLabel.Text = options.Demo ? $"{CurrentPlatformLabel} • ДЕМО" : $"{CurrentPlatformLabel} • реальная отправка";
+
         SendButton.Content = "Опубликовать сейчас";
-        DestinationLabel.Text = options.Demo ? "Назначение: демонстрационный канал" : "Назначение: " + options.Chat;
+        DestinationLabel.Text = options.Demo ? "Основное подключение: демонстрационный канал" : "Основное подключение: " + options.Chat;
         PreviewHeading.Text = "Предпросмотр текста " + CurrentPlatformLabel;
     }
     private void UpdatePreview()

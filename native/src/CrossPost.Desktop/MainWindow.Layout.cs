@@ -65,6 +65,9 @@ public partial class MainWindow
         }
         TargetSummary.Text = count==0 ? "Выберите, куда отправить пост." : "У каждого назначения будет свой результат в истории.";
         if (selected > count) TargetSummary.Text += $" Исключено по рейтингу или отключено: {selected-count}.";
+        var modes = rows.Where(r => r.Item1.IsChecked == true && DestinationRouting.Accepts(r.Item3.RatingRule, SelectedBlueskyLabel)).Select(r => r.Item3.Demo)
+            .Concat(DestinationRouting.Select(_destinations, _extraSelected, SelectedBlueskyLabel).Select(t => t.Options.Demo)).ToArray();
+        ModeLabel.Text = CurrentPlatformLabel + " • " + (modes.Length == 0 ? "назначения не выбраны" : modes.All(d => d) ? "выбранные назначения: ДЕМО" : modes.All(d => !d) ? "реальная отправка" : "есть реальные отправки и ДЕМО");
     }
     private BitmapSource? ThumbnailFor(string path)
     {
