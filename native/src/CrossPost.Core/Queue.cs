@@ -37,6 +37,7 @@ public sealed class QueuePlanner(Store store)
         foreach (var target in targets)
         {
             draft.Validate(target.Options.Platform);
+            if (!DestinationRouting.Accepts(target.Options.RatingRule, draft.ContentLabel)) throw new InvalidOperationException("Рейтинг поста не подходит выбранному назначению.");
             if (!target.Options.Demo && (string.IsNullOrWhiteSpace(target.Options.Chat) || string.IsNullOrWhiteSpace(target.CredentialId)))
                 throw new InvalidOperationException($"{PublishLimits.Name(target.Options.Platform)}: сохраните настройки назначения.");
         }

@@ -59,15 +59,15 @@ public record Delivery(DeliveryState State, string ChatId, long? EditMessageId =
 }
 public record Publication(Guid Id, DateTimeOffset Created, Draft Draft, bool Demo,
     string BotId, Delivery Delivery, string EditText, int Revision = 1, string EditState = "", Guid? QueueId = null, string Platform = "telegram", AppOptions? Options = null, Guid? WorkId = null);
-public record AppOptions(bool Demo = true, string Chat = "", string Platform = "telegram", bool Spoiler = false, bool SuppressEmbeds = true, string ContentLabel = "sfw", string TextLanguage = "ru");
+public record AppOptions(bool Demo = true, string Chat = "", string Platform = "telegram", bool Spoiler = false, bool SuppressEmbeds = true, string ContentLabel = "sfw", string TextLanguage = "ru", string DestinationId = "", string RatingRule = "all", string DestinationName = "");
 public record BlueskyOptions(bool Demo = true, string Handle = "", string Did = "", string Pds = "", string ContentLabel = "sfw")
 {
     public AppOptions PublishOptions => new(Demo, Did, "bluesky", ContentLabel: ContentLabel);
 }
 public record DiscordOptions(bool Demo = true, string WebhookId = "", string ChannelId = "", string GuildId = "", string Name = "Discord",
-    bool Spoiler = false, bool SuppressEmbeds = true)
+    bool Spoiler = false, bool SuppressEmbeds = true, string RatingRule = "all")
 {
-    public AppOptions PublishOptions => new(Demo, ChannelId, "discord", Spoiler, SuppressEmbeds);
+    public AppOptions PublishOptions => new(Demo, ChannelId, "discord", Spoiler, SuppressEmbeds, RatingRule: RatingRule);
 }
 public record EditResult(bool Confirmed, bool Unknown = false, string Error = "");
 

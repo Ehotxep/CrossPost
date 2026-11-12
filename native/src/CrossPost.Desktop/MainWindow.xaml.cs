@@ -16,7 +16,7 @@ public record HistoryRow(Publication Record)
 {
     public string CreatedText => Record.Created.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
     public string Title => Record.EditText.Split('\n')[0] is { Length: > 0 } title ? title : "Изображение";
-    public string Mode => (Record.Demo ? "ДЕМО • " : "") + PublishLimits.Name(Record.Platform);
+    public string Mode => (Record.Demo ? "ДЕМО • " : "") + PublishLimits.Name(Record.Platform) + (Record.Options?.DestinationName is { Length: > 0 } name ? " • " + name : "");
     public string Status => Record.Delivery.State switch
     {
         DeliveryState.Sent => "Отправлено", DeliveryState.Refused => "Не отправлено",
@@ -130,6 +130,8 @@ public partial class MainWindow : Window
         SwitchView(HistoryView); UpdateLayout(); SwitchView(SettingsView); UpdateLayout(); SwitchView(QueueView); UpdateLayout(); SwitchView(ComposeView);
         App.TraceSmoke("Python profile migration and DPAPI recovery");
         await RunMigrationSmokeAsync();
+        App.TraceSmoke("multiple destinations and rating rules");
+        await RunDestinationsSmokeAsync();
         App.TraceSmoke("discord scenario");
         await RunDiscordSmokeAsync();
         App.TraceSmoke("bluesky media and queue scenario");
@@ -171,6 +173,7 @@ public partial class MainWindow : Window
         await InitializeBlueskyAsync(draft);
         await InitializeTextsAsync(draft);
         await InitializeMigrationAsync();
+        await InitializeDestinationsAsync();
         var targets = await _store.ReadDocumentAsync<string[]>("publish-targets") ?? ["telegram"];
         TargetTelegram.IsChecked = targets.Contains("telegram"); TargetDiscord.IsChecked = targets.Contains("discord"); TargetBluesky.IsChecked = targets.Contains("bluesky");
         _loaded = true;
@@ -253,7 +256,7 @@ public partial class MainWindow : Window
     {
         var draft = CurrentDraft;
         await _draftLock.WaitAsync();
-        try { await _store.SaveDocumentAsync("draft", draft); await _store.SaveDocumentAsync("publish-targets", SelectedPlatformNames()); }
+        try { await _store.SaveDocumentAsync("draft", draft); await _store.SaveDocumentAsync("publish-targets", SelectedPlatformNames()); await _store.SaveDocumentAsync("selected-destinations", _extraSelected.ToArray()); }
         finally { _draftLock.Release(); }
     }
     private async void SaveDraftClick(object sender, RoutedEventArgs e) => await Guard(async () =>
@@ -323,7 +326,7 @@ public partial class MainWindow : Window
         if (_busy) return;
         await Guard(async () =>
         {
-            var options = new AppOptions(DemoInput.IsChecked != false, ChatInput.Text.Trim());
+            var options = new AppOptions(DemoInput.IsChecked != false, ChatInput.Text.Trim(), RatingRule: RatingRule(PrimaryTelegramRating));
             if (!options.Demo)
             {
                 TelegramClient.BotId(TokenInput.Password.Trim());
@@ -334,10 +337,10 @@ public partial class MainWindow : Window
             _options = options; ApplyMode(); StatusLabel.Text = "Настройки сохранены.";
         });
     }
-    private IPublisher Client(bool demo, string platform = "telegram", string? channel = null, string? contentLabel = null) => platform == "bluesky"
+    private IPublisher Client(bool demo, string platform = "telegram", string? channel = null, string? contentLabel = null, string destinationId = "") => platform == "bluesky"
         ? demo ? new DemoBluesky() : new BlueskyClient(_http, _bluesky.Handle, SecretVault.Load("bluesky"), channel ?? _bluesky.Did, contentLabel ?? SelectedBlueskyLabel)
         : platform == "discord"
-        ? demo ? new DemoDiscord() : new DiscordClient(_http, DiscordEndpoint.Parse(SecretVault.Load("discord")), channel ?? _discord.ChannelId, _discord.Spoiler, _discord.SuppressEmbeds)
+        ? demo ? new DemoDiscord() : new DiscordClient(_http, DiscordEndpoint.Parse(SecretVault.LoadDestination(destinationId)), channel ?? _discord.ChannelId, _discord.Spoiler, _discord.SuppressEmbeds)
         : demo ? new DemoTelegram() : new TelegramClient(_http, SecretVault.Load());
     private async Task RunOperation(Func<CancellationToken, Task> action)
     {
@@ -386,7 +389,7 @@ public partial class MainWindow : Window
         if (_selected is not { } selected) return;
         if (!selected.Demo && MessageBox.Show("Изменить это сообщение в " + PublishLimits.Name(selected.Platform) + "?", "Редактирование", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         StatusLabel.Text = selected.Demo ? "Демонстрационное изменение…" : "Сохраняю на площадке…";
-        var updated = await new Workflow(_store).EditAsync(Client(selected.Demo, selected.Platform, selected.Delivery.ChatId), selected, EditInput.Text, ct);
+        var updated = await new Workflow(_store).EditAsync(Client(selected.Demo, selected.Platform, selected.Delivery.ChatId, destinationId: selected.Options?.DestinationId ?? ""), selected, EditInput.Text, ct);
         await LoadHistoryAsync();
         StatusLabel.Text = updated.Result.Confirmed ? (selected.Demo ? "ДЕМО: изменение сохранено." : "Изменение сохранено на площадке.") : updated.Result.Error;
     });

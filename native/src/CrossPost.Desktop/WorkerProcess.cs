@@ -49,7 +49,7 @@ internal static class WorkerProcess
             {
                 Start(); nextLaunch = DateTimeOffset.UtcNow.AddSeconds(2);
             }
-            var reply = await RequestAsync("protocol|5", 1000);
+            var reply = await RequestAsync("protocol|6", 1000);
             if (reply == "ok") return;
             if (reply == "error")
                 throw new InvalidOperationException("Работает Worker предыдущей версии. Остановите очередь на вкладке «Очередь», затем нажмите «Запустить очередь». Новое задание ещё не добавлено.");
@@ -114,13 +114,13 @@ internal static class WorkerProcess
                     if (command.StartsWith("cancel|", StringComparison.Ordinal) && Guid.TryParse(command[7..], out var id) && id == activeId)
                     { active?.Cancel(); return true; }
                 }
-                return command is "ping" or "protocol|5";
+                return command is "ping" or "protocol|6";
             });
             try
             {
                 var store = new Store(App.DataFolder); await store.InitializeAsync(recoverUnfinished: false);
                 await store.RecoverQueueAsync();
-                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow, 5));
+                await store.SaveDocumentAsync("worker-info", new WorkerInfo(Environment.ProcessId, DateTimeOffset.UtcNow, 6));
                 var runner = new QueueRunner(store);
                 while (!stopping.IsCancellationRequested && !Volatile.Read(ref draining))
                 {
@@ -130,6 +130,23 @@ internal static class WorkerProcess
                     {
                         var ran = await runner.RunNextAsync(DateTimeOffset.UtcNow, async job =>
                         {
+                            if (job.Options.DestinationId.Length > 0)
+                            {
+                                var profiles = await store.ReadDocumentAsync<DestinationProfile[]>("destinations") ?? [];
+                                DestinationRouting.RequireForJob(job, profiles);
+                                if (job.Options.Platform == "discord")
+                                {
+                                    if (job.Options.Demo) return (IPublisher)new DemoDiscord();
+                                    var endpoint = DiscordEndpoint.Parse(SecretVault.LoadDestination(job.Options.DestinationId));
+                                    if (endpoint.Id != job.BotId) throw new QueuePausedException("Webhook назначения изменился.");
+                                    return new DiscordClient(http, endpoint, job.Options.Chat, job.Options.Spoiler, job.Options.SuppressEmbeds);
+                                }
+                                if (job.Options.Platform != "telegram") throw new QueuePausedException("Неизвестный тип назначения.");
+                                if (job.Options.Demo) return new DemoTelegram();
+                                var secret = SecretVault.Load();
+                                if (TelegramClient.BotId(secret) != job.BotId) throw new QueuePausedException("Изменился бот Telegram. Проверьте назначение.");
+                                return new TelegramClient(http, secret);
+                            }
                             if (job.Options.Platform == "bluesky")
                             {
                                 if (job.Options.Demo) return (IPublisher)new DemoBluesky();
@@ -140,16 +157,18 @@ internal static class WorkerProcess
                             }
                             if (job.Options.Platform == "discord")
                             {
-                                if (job.Options.Demo) return (IPublisher)new DemoDiscord();
                                 var discord = await store.ReadDocumentAsync<DiscordOptions>("discord-options") ?? new();
+                                if (!DestinationRouting.Accepts(discord.RatingRule, job.Draft.ContentLabel)) throw new QueuePausedException("Рейтинг не подходит Discord.");
+                                if (job.Options.Demo) return (IPublisher)new DemoDiscord();
                                 if (discord.Demo) throw new QueuePausedException("Включён деморежим Discord. Задание приостановлено.");
                                 var endpoint = DiscordEndpoint.Parse(SecretVault.Load("discord"));
                                 if (endpoint.Id != job.BotId) throw new QueuePausedException("Выбран другой webhook Discord. Проверьте задание вручную.");
                                 return new DiscordClient(http, endpoint, job.Options.Chat, job.Options.Spoiler, job.Options.SuppressEmbeds);
                             }
                             if (job.Options.Platform != "telegram") throw new QueuePausedException("Площадка задания не поддерживается этой версией.");
-                            if (job.Options.Demo) return new DemoTelegram();
                             var options = await store.ReadDocumentAsync<AppOptions>("options") ?? new();
+                            if (!DestinationRouting.Accepts(options.RatingRule, job.Draft.ContentLabel)) throw new QueuePausedException("Рейтинг не подходит каналу Telegram.");
+                            if (job.Options.Demo) return new DemoTelegram();
                             if (options.Demo) throw new QueuePausedException("Включён деморежим. Реальное задание приостановлено.");
                             var token = SecretVault.Load();
                             if (TelegramClient.BotId(token) != job.BotId)
@@ -217,6 +236,12 @@ internal static class WorkerProcess
                 || bluesky.Delivery.AttachmentIds?.Length != 2 || bluesky.Draft.ContentLabel != "explicit"
                 || bluesky.Draft.AltFor(0) != "Поворот" || bluesky.Draft.AltFor(1) != "Прозрачность")
                 throw new InvalidOperationException("Bluesky background routing, ALT or rating snapshot failed");
+            var additional = await store.ReadDocumentAsync<Guid[]>("destination-worker-smoke-ids") ?? throw new InvalidOperationException("Destination batch missing");
+            foreach (var id in additional)
+            {
+                var post = await WaitFor(id);
+                if (post.Options?.DestinationId.Length is not > 0 || post.Draft.ContentLabel != "explicit") throw new InvalidOperationException("Worker lost destination identity or rating");
+            }
             var batch = await store.ReadDocumentAsync<Guid[]>("batch-worker-smoke-ids") ?? throw new InvalidOperationException("Linked batch missing");
             var expectedTexts = await store.ReadDocumentAsync<Dictionary<string,string>>("batch-worker-smoke-texts") ?? throw new InvalidOperationException("Expected text variants missing");
             foreach (var id in batch)

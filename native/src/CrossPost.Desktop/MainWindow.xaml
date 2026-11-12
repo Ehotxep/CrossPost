@@ -94,15 +94,16 @@
          <Expander x:Name="MediaPreviewExpander" Header="Посмотреть выбранное изображение" Margin="0,10,0,0">
           <Image x:Name="PreviewImage" Visibility="Collapsed" Height="180" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,10,0,0" />
          </Expander>
-         <StackPanel x:Name="BlueskyComposer" Visibility="Collapsed" Margin="0,8,0,8">
+
           <WrapPanel>
-           <TextBlock Text="Рейтинг Bluesky" VerticalAlignment="Center" Margin="0,0,10,0" />
+           <TextBlock Text="Рейтинг публикации" VerticalAlignment="Center" Margin="0,0,10,0" />
            <ComboBox x:Name="BlueskyRating" Width="180" SelectedIndex="0" SelectionChanged="BlueskyRatingChanged">
             <ComboBoxItem Content="SFW" />
             <ComboBoxItem Content="Эротика • nudity" />
             <ComboBoxItem Content="Откровенное • porn" />
            </ComboBox>
           </WrapPanel>
+         <StackPanel x:Name="BlueskyComposer" Visibility="Collapsed" Margin="0,8,0,8">
           <TextBlock Text="ALT выбранного изображения" Margin="0,8,0,0" />
           <TextBox x:Name="ImageAltInput" TextChanged="ImageAltChanged" TextWrapping="Wrap" AcceptsReturn="True" Height="65" />
           <Button Content="Подготовить копии для Bluesky" Click="PrepareBlueskyImages" HorizontalAlignment="Left" />
@@ -259,6 +260,13 @@
           </StackPanel>
          </Grid>
         </CheckBox>
+        <TextBlock x:Name="ExtraDestinationHeading" Text="Другие каналы" FontWeight="SemiBold" Margin="0,12,0,4" />
+        <ItemsControl x:Name="ExtraDestinations">
+         <ItemsControl.ItemTemplate><DataTemplate>
+          <CheckBox Content="{Binding Label}" ToolTip="{Binding Label}" IsChecked="{Binding Selected, Mode=OneWay}" IsEnabled="{Binding Eligible}" Checked="ExtraDestinationChanged" Unchecked="ExtraDestinationChanged" Margin="0,4,0,4"><CheckBox.ContentTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="210" /></DataTemplate></CheckBox.ContentTemplate></CheckBox>
+         </DataTemplate></ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <Button Content="Управление каналами…" Click="ShowDestinations" HorizontalAlignment="Left" />
         <TextBlock x:Name="TargetSummary" Style="{StaticResource MutedTextStyle}" FontSize="12" TextWrapping="Wrap" Margin="0,10,0,10" />
        </StackPanel>
        <StackPanel x:Name="ComposeActions" Grid.Row="2">
@@ -488,6 +496,7 @@
       <TextBlock Text="ПРИЛОЖЕНИЕ" Style="{StaticResource EyebrowStyle}" Margin="10,0,0,8" />
       <Button x:Name="SettingsGeneralNav" Style="{StaticResource SettingsNavigationStyle}" Content="Общие" Tag="general" Click="ShowSettingsCategory" />
       <Button x:Name="SettingsMigrationNav" Style="{StaticResource SettingsNavigationStyle}" Content="Переход с Python" Tag="migration" Click="ShowSettingsCategory" />
+      <Button x:Name="SettingsDestinationsNav" Style="{StaticResource SettingsNavigationStyle}" Content="Каналы публикации" Tag="destinations" Click="ShowSettingsCategory" />
       <Button x:Name="SettingsTextsNav" Style="{StaticResource SettingsNavigationStyle}" Content="Тексты площадок" Tag="texts" Click="ShowSettingsCategory" />
       <TextBlock Text="ПЛОЩАДКИ" Style="{StaticResource EyebrowStyle}" Margin="10,22,0,8" />
       <Button x:Name="SettingsTelegramNav" Style="{StaticResource SettingsNavigationStyle}" Content="Telegram" Tag="telegram" Click="ShowSettingsCategory" />
@@ -545,6 +554,24 @@
          <TextBlock Text="Защищённая копия открывается только текущим пользователем Windows на этом ПК. При восстановлении исходные файлы, включая API-ключи, будут записаны в выбранную новую папку в исходном виде. Внешние папки моделей/экспортов не включены." Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,12,0,0" />
         </StackPanel>
        </Border>
+       <Border x:Name="SettingsDestinationsPanel" Style="{StaticResource CardStyle}" Visibility="Collapsed"><StackPanel>
+        <TextBlock Text="Каналы публикации" Style="{StaticResource SectionTitleStyle}" />
+        <TextBlock Text="Дополнительные каналы Telegram используют бота из настроек Telegram. При смене бота сохраните назначения заново. Каждый Discord webhook хранится отдельно. Назначения выбираются в редакторе; рейтинг проверяется перед отправкой. Основные подключения остаются в настройках площадок." Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,8,0,12" />
+        <ListBox x:Name="DestinationSettingsList" MaxHeight="200" SelectionChanged="DestinationSettingsSelected" />
+        <Button Content="Новое назначение" Click="NewDestination" HorizontalAlignment="Left" />
+        <TextBlock x:Name="DestinationEditorHeading" Text="Новое назначение" Style="{StaticResource SectionTitleStyle}" Margin="0,15,0,8" />
+        <TextBlock Text="Название" /><TextBox x:Name="DestinationName" />
+        <ComboBox x:Name="DestinationPlatform" SelectionChanged="DestinationPlatformChanged"><ComboBoxItem Content="Telegram" /><ComboBoxItem Content="Discord" /></ComboBox>
+        <StackPanel x:Name="DestinationTelegramPanel"><TextBlock Text="Канал: @имя или -100…" /><TextBox x:Name="DestinationAddress" /></StackPanel>
+        <StackPanel x:Name="DestinationSecretPanel" Visibility="Collapsed"><TextBlock Text="Webhook Discord — секретная ссылка" /><PasswordBox x:Name="DestinationSecret" /></StackPanel>
+        <TextBlock Text="Какие посты сюда отправлять" />
+        <ComboBox x:Name="DestinationRating" SelectedIndex="0"><ComboBoxItem Content="Любой рейтинг" /><ComboBoxItem Content="Только SFW" /><ComboBoxItem Content="Только 18+" /></ComboBox>
+        <CheckBox x:Name="DestinationEnabled" Content="Назначение включено" IsChecked="True" Margin="0,10,0,0" />
+        <CheckBox x:Name="DestinationDemo" Content="Деморежим — без сетевых запросов и публикаций" IsChecked="True" />
+        <StackPanel x:Name="DestinationDiscordOptions" Visibility="Collapsed"><CheckBox x:Name="DestinationSpoiler" Content="Изображения под спойлером" /><CheckBox x:Name="DestinationEmbeds" Content="Убирать карточки ссылок" IsChecked="True" /></StackPanel>
+        <WrapPanel><Button Content="Сохранить назначение" Click="SaveDestination" /><Button Content="Удалить выбранное" Click="DeleteDestination" /></WrapPanel>
+        <TextBlock Text="Изменение адреса или webhook не перенаправляет старые задания: они приостанавливаются для проверки. В реальном режиме сохранение Discord проверяет только сведения о канале." Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" Margin="0,12,0,0" />
+       </StackPanel></Border>
        <Border x:Name="SettingsTextsPanel" Style="{StaticResource CardStyle}" Visibility="Collapsed">
         <StackPanel>
          <TextBlock Text="Отдельные тексты площадок" Style="{StaticResource SectionTitleStyle}" />
@@ -559,10 +586,11 @@
        </Border>
        <Border x:Name="SettingsTelegramPanel" Style="{StaticResource CardStyle}" Visibility="Collapsed">
         <StackPanel>
-         <TextBlock Text="Настройки Telegram" Style="{StaticResource PageTitleStyle}" Margin="0,0,0,16" />
-         <CheckBox x:Name="DemoInput" Content="Демонстрационный режим — без запросов в Telegram" IsChecked="True" />
+         <TextBlock Text="Telegram • основной канал и бот" Style="{StaticResource PageTitleStyle}" Margin="0,0,0,16" />
+         <CheckBox x:Name="DemoInput" Content="Деморежим основного канала — без запросов в Telegram" IsChecked="True" />
          <TextBlock Text="Канал: @имя или -100…" />
          <TextBox x:Name="ChatInput" />
+         <TextBlock Text="Рейтинг основного канала" /><ComboBox x:Name="PrimaryTelegramRating" SelectedIndex="0"><ComboBoxItem Content="Любой рейтинг" /><ComboBoxItem Content="Только SFW" /><ComboBoxItem Content="Только 18+" /></ComboBox>
          <TextBlock Text="Токен бота из @BotFather" />
          <PasswordBox x:Name="TokenInput" />
          <TextBlock Text="Токен сохраняется с защитой Windows для текущего пользователя. Бот должен быть администратором выбранного канала." TextWrapping="Wrap" Foreground="#B4B9C6" Margin="0,0,0,12" />
@@ -574,10 +602,11 @@
        </Border>
        <Border x:Name="SettingsDiscordPanel" Style="{StaticResource CardStyle}" Visibility="Collapsed">
         <StackPanel>
-         <TextBlock Text="Discord • webhook канала" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
-         <CheckBox x:Name="DiscordDemoInput" Content="Демонстрационный режим Discord — без запросов и публикаций" IsChecked="True" />
+         <TextBlock Text="Discord • основной webhook" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
+         <CheckBox x:Name="DiscordDemoInput" Content="Деморежим основного webhook — без запросов и публикаций" IsChecked="True" />
          <TextBlock Text="Ссылка webhook (секрет)" />
          <PasswordBox x:Name="DiscordWebhookInput" />
+         <TextBlock Text="Рейтинг основного webhook" /><ComboBox x:Name="PrimaryDiscordRating" SelectedIndex="0"><ComboBoxItem Content="Любой рейтинг" /><ComboBoxItem Content="Только SFW" /><ComboBoxItem Content="Только 18+" /></ComboBox>
          <TextBlock x:Name="DiscordTargetLabel" Text="Канал пока не проверен" TextWrapping="Wrap" Foreground="#B4B9C6" Margin="0,0,0,12" />
          <CheckBox x:Name="DiscordSpoilerInput" Content="Скрывать изображения под спойлер" />
          <CheckBox x:Name="DiscordEmbedsInput" Content="Убирать карточки ссылок" IsChecked="True" />

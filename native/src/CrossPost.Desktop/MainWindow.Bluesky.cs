@@ -40,7 +40,7 @@ public partial class MainWindow
         _alts[ImageList.SelectedIndex] = ImageAltInput.Text; _draftTimer.Stop(); _draftTimer.Start();
     }
     private void BlueskyRatingChanged(object sender, SelectionChangedEventArgs e)
-    { if (_loaded) { _draftTimer.Stop(); _draftTimer.Start(); } }
+    { if (_loaded) { RefreshDestinations(); RenderTargetSummary(); _draftTimer.Stop(); _draftTimer.Start(); } }
     private async void PrepareBlueskyImages(object sender, RoutedEventArgs e) => await RunOperation(PrepareBlueskyDraftAsync);
     private async Task PrepareBlueskyDraftAsync(CancellationToken ct)
     {

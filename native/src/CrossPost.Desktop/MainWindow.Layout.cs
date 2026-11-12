@@ -28,7 +28,7 @@ public partial class MainWindow
     }
     private void SelectSettingsCategory(string category)
     {
-        var pages = new[] { ("general",SettingsGeneralPanel,SettingsGeneralNav), ("texts",SettingsTextsPanel,SettingsTextsNav), ("migration",SettingsMigrationPanel,SettingsMigrationNav),
+        var pages = new[] { ("general",SettingsGeneralPanel,SettingsGeneralNav), ("texts",SettingsTextsPanel,SettingsTextsNav), ("migration",SettingsMigrationPanel,SettingsMigrationNav), ("destinations",SettingsDestinationsPanel,SettingsDestinationsNav),
             ("telegram",SettingsTelegramPanel,SettingsTelegramNav), ("discord",SettingsDiscordPanel,SettingsDiscordNav), ("bluesky",SettingsBlueskyPanel,SettingsBlueskyNav) };
         foreach (var (key,panel,button) in pages)
         {
@@ -52,15 +52,19 @@ public partial class MainWindow
     private void UpdateDestinationRows()
     {
         var rows = new[] { (TargetTelegram,TargetTelegramInfo,_options), (TargetDiscord,TargetDiscordInfo,_discord.PublishOptions), (TargetBluesky,TargetBlueskyInfo,_bluesky.PublishOptions) };
-        var count = rows.Count(row=>row.Item1.IsChecked==true);
+        var count = rows.Count(row=>row.Item1.IsChecked==true && DestinationRouting.Accepts(row.Item3.RatingRule, SelectedBlueskyLabel))
+            + DestinationRouting.Select(_destinations, _extraSelected, SelectedBlueskyLabel).Length;
+        var selected = rows.Count(row=>row.Item1.IsChecked==true) + _extraSelected.Count;
         SelectedDestinationCount.Text = count==0 ? "Не выбраны" : count==1 ? "1 место" : $"{count} места";
         foreach (var (_,label,options) in rows)
         {
             var destination = options.Demo ? "ДЕМО" : options.Chat.Length>0 ? options.Chat : "Не настроено";
-            label.Text = destination+" · "+Draft.LanguageName(CurrentDraft.LanguageFor(options.Platform));
+            label.Text = destination+" · "+Draft.LanguageName(CurrentDraft.LanguageFor(options.Platform))
+                + (DestinationRouting.Accepts(options.RatingRule, SelectedBlueskyLabel) ? "" : " · не подходит рейтингу");
             label.ToolTip = label.Text;
         }
         TargetSummary.Text = count==0 ? "Выберите, куда отправить пост." : "У каждого назначения будет свой результат в истории.";
+        if (selected > count) TargetSummary.Text += $" Исключено по рейтингу или отключено: {selected-count}.";
     }
     private BitmapSource? ThumbnailFor(string path)
     {

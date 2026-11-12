@@ -15,6 +15,7 @@ public partial class MainWindow
     {
         _discord = await _store.ReadDocumentAsync<DiscordOptions>("discord-options") ?? new();
         if (App.SmokeTest) _discord = _discord with { Demo = true };
+        PrimaryDiscordRating.SelectedIndex = RatingIndex(_discord.RatingRule);
         DiscordDemoInput.IsChecked = _discord.Demo; DiscordWebhookInput.Password = SecretVault.Load("discord");
         DiscordSpoilerInput.IsChecked = _discord.Spoiler; DiscordEmbedsInput.IsChecked = _discord.SuppressEmbeds;
         DiscordTargetLabel.Text = _discord.ChannelId.Length > 0 ? $"{_discord.Name} • канал {_discord.ChannelId}" : "Канал пока не проверен";
@@ -34,7 +35,7 @@ public partial class MainWindow
         }
         else if (!demo) throw new InvalidOperationException("Укажите ссылку webhook Discord.");
         SecretVault.Save(secret, "discord");
-        _discord = new(demo, info?.Id ?? "", info?.ChannelId ?? "", info?.GuildId ?? "", info?.Name ?? "Discord", DiscordSpoilerInput.IsChecked == true, DiscordEmbedsInput.IsChecked != false);
+        _discord = new(demo, info?.Id ?? "", info?.ChannelId ?? "", info?.GuildId ?? "", info?.Name ?? "Discord", DiscordSpoilerInput.IsChecked == true, DiscordEmbedsInput.IsChecked != false, RatingRule(PrimaryDiscordRating));
         await _store.SaveDocumentAsync("discord-options", _discord);
         DiscordTargetLabel.Text = info is null ? "Деморежим: канал не проверялся" : $"{info.Name} • канал {info.ChannelId}";
         ApplyMode(); UpdatePreview(); StatusLabel.Text = "Настройки Discord сохранены. Проверка не публиковала сообщения.";

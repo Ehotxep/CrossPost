@@ -123,6 +123,7 @@ public partial class MainWindow
         DemoInput.IsChecked = _options.Demo; ChatInput.Text = _options.Chat; TokenInput.Password = SecretVault.Load();
         await InitializeDiscordAsync(); await InitializeBlueskyAsync(CurrentDraft);
         TargetTelegram.IsChecked = TargetDiscord.IsChecked = TargetBluesky.IsChecked = false;
+        _extraSelected.Clear(); RefreshDestinations();
         ApplyMode(); UpdatePreview();
         MigrationReplace.IsChecked = false;
         StatusLabel.Text = "Выбранные настройки перенесены в деморежиме. Проверьте подключения в настройках площадок перед реальной отправкой.";
@@ -141,6 +142,7 @@ public partial class MainWindow
                 _images.Clear(); _images.AddRange(draft.Images); _alts.Clear(); _alts.AddRange(Enumerable.Range(0, draft.Images.Length).Select(draft.AltFor));
                 RefreshImages(); await InitializeBlueskyAsync(draft); await InitializeTextsAsync(draft);
                 TargetTelegram.IsChecked = TargetDiscord.IsChecked = TargetBluesky.IsChecked = false;
+        _extraSelected.Clear(); RefreshDestinations();
             }
             finally { _loaded = true; }
             await SaveDraftAsync(); ApplyMode(); UpdatePreview(); SwitchView(ComposeView);
