@@ -63,6 +63,8 @@ public partial class MainWindow
             var design=CurrentDraft with { EnglishTitle="Sunset in the mountains",EnglishText="The last rays of sunlight and a quiet evening.",Language="both",PlatformTexts=null };
             await InitializeTextsAsync(design);BlueskyRating.SelectedIndex=0;_loaded=true;PlatformPicker.SelectedIndex=0;UpdatePreview();ApplyMode();
             Width=1400;Height=1000;SwitchView(ComposeView);ComposeView.ScrollToTop();await CaptureWindowAsync("11-compose-python-design");
+            var actionBottom=ComposeActions.TranslatePoint(new Point(),PublicationSidebar).Y+ComposeActions.ActualHeight;
+            if(actionBottom>PublicationSidebar.ActualHeight-12)throw new InvalidOperationException("Destination list pushed publication actions outside the sidebar");
             var host=TitleInput.Template.FindName("PART_ContentHost",TitleInput) as ScrollViewer ?? throw new InvalidOperationException("Title editor content host missing");
             var glyph=TitleInput.GetRectFromCharacterIndex(0);var hostTop=host.TranslatePoint(new Point(),TitleInput).Y;
             if(TitleInput.Text.Length==0 || glyph.IsEmpty || glyph.Height<TitleInput.FontSize*.7 || glyph.Y<hostTop-.5 || glyph.Bottom>hostTop+host.ActualHeight+.5)

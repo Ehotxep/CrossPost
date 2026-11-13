@@ -42,6 +42,7 @@
     <DockPanel Margin="0,0,0,18">
      <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
       <TextBlock Text="Черновик сохраняется автоматически" Style="{StaticResource MutedTextStyle}" FontSize="12" VerticalAlignment="Center" Margin="0,0,14,0" />
+      <Button Content="Сохранить" Click="SaveDraftClick" Style="{StaticResource CompactButtonStyle}" />
       <Button Content="Новый черновик" Click="ClearDraft" Style="{StaticResource CompactButtonStyle}" />
      </WrapPanel>
      <TextBlock Text="Новый пост" Style="{StaticResource PageTitleStyle}" VerticalAlignment="Center" />
@@ -212,15 +213,15 @@
       <Grid>
        <Grid.RowDefinitions>
         <RowDefinition Height="Auto" />
-        <RowDefinition Height="Auto" />
-        <RowDefinition Height="Auto" />
         <RowDefinition Height="*" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
        </Grid.RowDefinitions>
        <DockPanel Margin="0,0,0,14">
         <TextBlock x:Name="SelectedDestinationCount" Text="1 место" Style="{StaticResource MutedTextStyle}" FontSize="12" DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center" />
         <TextBlock Text="Публикация" Style="{StaticResource SectionTitleStyle}" />
        </DockPanel>
-       <StackPanel Grid.Row="1">
+       <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
         <CheckBox x:Name="TargetTelegram" Style="{StaticResource DestinationToggleStyle}" Checked="TargetSelectionChanged" Unchecked="TargetSelectionChanged" IsChecked="True">
          <Grid>
           <Grid.ColumnDefinitions>
@@ -274,13 +275,13 @@
         </ItemsControl>
         <Button Content="Управление каналами…" Click="ShowDestinations" HorizontalAlignment="Left" />
         <TextBlock x:Name="TargetSummary" Style="{StaticResource MutedTextStyle}" FontSize="12" TextWrapping="Wrap" Margin="0,10,0,10" />
-       </StackPanel>
+       </StackPanel></ScrollViewer>
        <StackPanel x:Name="ComposeActions" Grid.Row="2">
         <Button x:Name="SendButton" Style="{StaticResource PrimaryButtonStyle}" Content="Опубликовать сейчас" Click="SendPost" Margin="0,4,0,8" Padding="12,12" />
         <Button Content="В очередь" Click="QueueNow" Margin="0,0,0,8" />
-        <Button Content="Сохранить черновик" Click="SaveDraftClick" Margin="0,0,0,12" />
+
        </StackPanel>
-       <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+       <ScrollViewer Grid.Row="3" MaxHeight="160" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel>
          <Expander Header="Запланировать" Margin="0,4,0,12">
           <StackPanel Margin="0,10,0,0">
