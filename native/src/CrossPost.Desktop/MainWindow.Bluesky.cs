@@ -39,8 +39,18 @@ public partial class MainWindow
         while (_alts.Count < _images.Count) _alts.Add("");
         _alts[ImageList.SelectedIndex] = ImageAltInput.Text; _draftTimer.Stop(); _draftTimer.Start();
     }
+    private bool _settingRatingSegments;
+    private void RatingSegmentChanged(object sender,RoutedEventArgs e)
+    { if (!_settingRatingSegments && BlueskyRating is not null && sender is RadioButton { Tag:string tag } && int.TryParse(tag,out var index)) BlueskyRating.SelectedIndex=index; }
+    private void SyncRatingSegments()
+    {
+        if (RatingSafe is null || RatingExplicit is null) return;
+        _settingRatingSegments=true;
+        try { RatingSafe.IsChecked=BlueskyRating.SelectedIndex==0;RatingErotic.IsChecked=BlueskyRating.SelectedIndex==1;RatingExplicit.IsChecked=BlueskyRating.SelectedIndex==2; }
+        finally { _settingRatingSegments=false; }
+    }
     private void BlueskyRatingChanged(object sender, SelectionChangedEventArgs e)
-    { if (_loaded) { RefreshDestinations(); RenderTargetSummary(); _draftTimer.Stop(); _draftTimer.Start(); } }
+    { SyncRatingSegments(); if (_loaded) { RefreshDestinations(); RenderTargetSummary(); _draftTimer.Stop(); _draftTimer.Start(); } }
     private async void PrepareBlueskyImages(object sender, RoutedEventArgs e) => await RunOperation(PrepareBlueskyDraftAsync);
     private async Task PrepareBlueskyDraftAsync(CancellationToken ct)
     {

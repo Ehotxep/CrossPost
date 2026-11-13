@@ -77,7 +77,8 @@ public partial class MainWindow
             if (!file.Exists) return null;
             if (_thumbnails.TryGetValue(path,out var cached) && cached.Modified==file.LastWriteTimeUtc && cached.Length==file.Length) return cached.Bitmap;
             var image = new BitmapImage(); image.BeginInit(); image.CacheOption=BitmapCacheOption.OnLoad;
-            image.DecodePixelWidth=128; image.UriSource=new Uri(file.FullName); image.EndInit(); image.Freeze();
+            image.DecodePixelWidth=256; image.UriSource=new Uri(file.FullName); image.EndInit(); image.Freeze();
+            if (_thumbnails.Count >= 256) _thumbnails.Remove(_thumbnails.Keys.First());
             _thumbnails[path]=(file.LastWriteTimeUtc,file.Length,image); return image;
         }
         catch (Exception error) when (error is IOException or NotSupportedException or FileFormatException) { return null; }

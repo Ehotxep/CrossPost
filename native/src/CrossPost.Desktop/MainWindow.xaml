@@ -42,7 +42,7 @@
     <DockPanel Margin="0,0,0,18">
      <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
       <TextBlock Text="Черновик сохраняется автоматически" Style="{StaticResource MutedTextStyle}" FontSize="12" VerticalAlignment="Center" Margin="0,0,14,0" />
-      <Button Content="Новый черновик" Click="ClearDraft" />
+      <Button Content="Новый черновик" Click="ClearDraft" Style="{StaticResource CompactButtonStyle}" />
      </WrapPanel>
      <TextBlock Text="Новый пост" Style="{StaticResource PageTitleStyle}" VerticalAlignment="Center" />
     </DockPanel>
@@ -62,22 +62,22 @@
          </DockPanel>
          <Button x:Name="FileDropButton" Style="{StaticResource DropAreaStyle}" Click="PickImage">
           <StackPanel HorizontalAlignment="Center">
-           <TextBlock Text="＋" FontSize="26" Foreground="{StaticResource AccentInkBrush}" HorizontalAlignment="Center" Margin="0,0,0,8" />
-           <TextBlock Text="Перетащите изображения сюда" FontWeight="SemiBold" HorizontalAlignment="Center" />
-           <TextBlock Text="или нажмите, чтобы выбрать JPEG и PNG" Style="{StaticResource MutedTextStyle}" FontSize="12" Margin="0,6,0,0" HorizontalAlignment="Center" />
+           <TextBlock Text="" FontSize="1" Visibility="Collapsed" />
+           <TextBlock Text="Перетащите картинки сюда" FontWeight="SemiBold" HorizontalAlignment="Center" />
+           <TextBlock Text="или нажмите, чтобы выбрать JPEG и PNG. До 10 файлов." Style="{StaticResource MutedTextStyle}" FontSize="12" Margin="0,6,0,0" HorizontalAlignment="Center" />
           </StackPanel>
          </Button>
-         <ListBox x:Name="ImageList" MaxHeight="220" Background="Transparent" BorderThickness="0" SelectionChanged="ImageSelected" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+         <ListBox x:Name="ImageList" MaxHeight="220" Background="Transparent" BorderThickness="0" SelectionChanged="ImageSelected" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
           <ListBox.ItemsPanel>
            <ItemsPanelTemplate>
-            <WrapPanel />
+            <StackPanel Orientation="Horizontal" />
            </ItemsPanelTemplate>
           </ListBox.ItemsPanel>
           <ListBox.ItemTemplate>
            <DataTemplate>
-            <StackPanel Width="120" Margin="2">
+            <StackPanel Width="168" Margin="2">
              <Border Background="{StaticResource FieldBrush}" CornerRadius="8" ClipToBounds="True">
-              <Image Source="{Binding Thumbnail}" Height="82" Width="120" Stretch="UniformToFill" />
+              <Image Source="{Binding Thumbnail}" Height="140" Width="168" Stretch="UniformToFill" />
              </Border>
              <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" FontSize="11" Margin="0,6,0,0" />
             </StackPanel>
@@ -95,9 +95,15 @@
           <Image x:Name="PreviewImage" Visibility="Collapsed" Height="180" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,10,0,0" />
          </Expander>
 
-          <WrapPanel>
-           <TextBlock Text="Рейтинг публикации" VerticalAlignment="Center" Margin="0,0,10,0" />
-           <ComboBox x:Name="BlueskyRating" Width="180" SelectedIndex="0" SelectionChanged="BlueskyRatingChanged">
+          <WrapPanel Margin="0,14,0,0" VerticalAlignment="Center">
+           <Border Background="{StaticResource FieldBrush}" BorderBrush="#262A34" BorderThickness="1" CornerRadius="9" Padding="3"><StackPanel Orientation="Horizontal">
+            <RadioButton x:Name="RatingSafe" GroupName="ContentRating" Style="{StaticResource SegmentRadioStyle}" Tag="0" IsChecked="True" Checked="RatingSegmentChanged"><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Fill="#4CD69B" Margin="0,0,7,0"/><TextBlock Text="SFW"/></StackPanel></RadioButton>
+            <RadioButton x:Name="RatingErotic" GroupName="ContentRating" Style="{StaticResource SegmentRadioStyle}" Tag="1" Checked="RatingSegmentChanged"><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Fill="#F3BE55" Margin="0,0,7,0"/><TextBlock Text="Эротика"/></StackPanel></RadioButton>
+            <RadioButton x:Name="RatingExplicit" GroupName="ContentRating" Style="{StaticResource SegmentRadioStyle}" Tag="2" Checked="RatingSegmentChanged"><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Fill="#FF7B72" Margin="0,0,7,0"/><TextBlock Text="Откровенное"/></StackPanel></RadioButton>
+           </StackPanel></Border>
+           <TextBlock Text="Рейтинг определяет назначения" Style="{StaticResource MutedTextStyle}" FontSize="11.5" VerticalAlignment="Center" Margin="12,0,0,0"/>
+           <TextBlock Visibility="Collapsed" Text="Рейтинг публикации" VerticalAlignment="Center" Margin="0,0,10,0" />
+           <ComboBox x:Name="BlueskyRating" Visibility="Collapsed" Width="180" SelectedIndex="0" SelectionChanged="BlueskyRatingChanged">
             <ComboBoxItem Content="SFW" />
             <ComboBoxItem Content="Эротика • nudity" />
             <ComboBoxItem Content="Откровенное • porn" />
@@ -132,14 +138,14 @@
            <ColumnDefinition x:Name="EnglishColumn" Width="*" />
           </Grid.ColumnDefinitions>
           <StackPanel>
-           <TextBlock Text="Русский · основной" FontWeight="SemiBold" Margin="0,0,0,10" />
+           <TextBlock Text="Русский · основной" FontWeight="SemiBold" Height="20" Margin="0,0,0,10" />
            <TextBlock Text="Заголовок" Style="{StaticResource FieldLabelStyle}" />
            <TextBox x:Name="TitleInput" TextChanged="DraftChanged" />
            <TextBlock Text="Описание" Style="{StaticResource FieldLabelStyle}" />
            <TextBox x:Name="BodyInput" Height="144" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" />
           </StackPanel>
-          <Expander x:Name="EnglishEditor" Grid.Column="2" Header="English" IsExpanded="True">
-           <StackPanel Margin="0,10,0,0">
+          <Expander x:Name="EnglishEditor" Style="{StaticResource AlignedEnglishEditorStyle}" Grid.Column="2" Header="English" IsExpanded="True">
+           <StackPanel>
             <TextBlock Text="Title" Style="{StaticResource FieldLabelStyle}" />
             <TextBox x:Name="EnglishTitleInput" TextChanged="DraftChanged" />
             <TextBlock Text="Description" Style="{StaticResource FieldLabelStyle}" />
@@ -156,7 +162,7 @@
            <ComboBoxItem Content="Bluesky" />
           </ComboBox>
          </WrapPanel>
-         <Border Margin="0,14,0,0" Style="{StaticResource InsetPanelStyle}">
+         <Expander Header="Язык и отдельный текст площадки" Margin="0,10,0,0"><Border Margin="0,8,0,0" Style="{StaticResource InsetPanelStyle}">
           <StackPanel>
            <TextBlock x:Name="PlatformTextHeading" Text="Текст для Telegram" FontWeight="SemiBold" />
            <WrapPanel Margin="0,6,0,6">
@@ -183,7 +189,7 @@
            </Expander>
            <TextBlock Text="Отдельные тексты включаются для каждой площадки в настройках. Язык можно выбрать независимо от отдельного текста." TextWrapping="Wrap" Foreground="#B4B9C6" Margin="0,6,0,0" />
           </StackPanel>
-         </Border>
+         </Border></Expander>
         </StackPanel>
        </Border>
        <Border Style="{StaticResource CardStyle}">
@@ -375,85 +381,99 @@
     </StackPanel>
    </Grid>
    <Grid x:Name="LibraryView" Visibility="Collapsed">
-    <Grid.RowDefinitions>
-     <RowDefinition Height="Auto" />
-     <RowDefinition Height="*" />
-    </Grid.RowDefinitions>
-    <WrapPanel>
-     <TextBlock Text="Публикации" Style="{StaticResource PageTitleStyle}" Margin="0,0,18,0" />
-     <Button Content="Импорт Python-базы…" Click="ImportLegacy" />
-     <Button Content="Обновить" Click="RefreshLibrary" />
-     <CheckBox x:Name="IncludeDemo" Content="Демо" Checked="LibraryFilterChanged" Unchecked="LibraryFilterChanged" VerticalAlignment="Center" Margin="5" />
-     <Button Content="Очередь" Click="ShowQueue" x:Name="NavQueue" />
-     <Button Content="Журнал и правки" Click="ShowHistory" x:Name="NavHistory" />
-    </WrapPanel>
-    <Grid Grid.Row="1" Margin="0,8,0,0">
-     <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="*" />
-      <ColumnDefinition Width="1.3*" />
-     </Grid.ColumnDefinitions>
-     <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,16,0">
-      <Border Style="{StaticResource CardStyle}">
-       <StackPanel>
-        <WrapPanel>
-         <Button Content="‹" Click="PreviousLibraryMonth" />
-         <TextBlock x:Name="LibraryMonthLabel" FontSize="18" VerticalAlignment="Center" Margin="4" />
-         <Button Content="›" Click="NextLibraryMonth" />
-         <Button Content="Месяц" Click="ClearLibraryDay" />
-        </WrapPanel>
-        <UniformGrid Columns="7">
-         <TextBlock Text="Пн" />
-         <TextBlock Text="Вт" />
-         <TextBlock Text="Ср" />
-         <TextBlock Text="Чт" />
-         <TextBlock Text="Пт" />
-         <TextBlock Text="Сб" />
-         <TextBlock Text="Вс" />
-        </UniformGrid>
-        <ItemsControl x:Name="CalendarDays" Height="228">
-         <ItemsControl.ItemsPanel>
-          <ItemsPanelTemplate>
-           <UniformGrid Columns="7" />
-          </ItemsPanelTemplate>
-         </ItemsControl.ItemsPanel>
-         <ItemsControl.ItemTemplate>
-          <DataTemplate>
-           <Button Content="{Binding Label}" Tag="{Binding Date}" Click="SelectLibraryDay" FontSize="11" Padding="0" Margin="1" Background="{Binding Background}" ToolTip="{Binding Detail}" />
-          </DataTemplate>
-         </ItemsControl.ItemTemplate>
-        </ItemsControl>
-        <TextBlock x:Name="LibrarySummary" TextWrapping="Wrap" Foreground="#B4B9C6" Margin="0,12,0,0" />
-        <TextBlock x:Name="ImportSummary" TextWrapping="Wrap" Margin="0,10,0,0" Foreground="#4CD69B" />
-       </StackPanel>
-      </Border>
-     </ScrollViewer>
-     <Grid Grid.Column="1" Margin="16,0,0,0">
-      <Grid.RowDefinitions>
-       <RowDefinition Height="*" />
-       <RowDefinition Height="Auto" />
-      </Grid.RowDefinitions>
-      <ListView x:Name="WorkList" SelectionMode="Extended" SelectionChanged="WorkSelected" Background="#1A1D24" Foreground="#E8EAF0">
-       <ListView.View>
-        <GridView>
-         <GridViewColumn Header="Дата" Width="125" DisplayMemberBinding="{Binding DateLabel}" />
-         <GridViewColumn Header="Работа" Width="230" DisplayMemberBinding="{Binding Title}" />
-         <GridViewColumn Header="Площадки" Width="150" DisplayMemberBinding="{Binding Platforms}" />
-         <GridViewColumn Header="Результат" Width="160" DisplayMemberBinding="{Binding StateLabel}" />
-         <GridViewColumn Header="Связь" Width="160" DisplayMemberBinding="{Binding GroupLabel}" />
-        </GridView>
-       </ListView.View>
-      </ListView>
-      <StackPanel Grid.Row="1" Margin="0,8,0,0">
-       <WrapPanel>
-        <Button Content="Объединить" Click="JoinWorks" ToolTip="Объединить любые выбранные работы, сохранив все публикации и замеры" />
-        <Button Content="Разъединить" Click="SplitWorks" />
-        <Button Content="Открыть" Click="OpenLibraryPost" />
-       </WrapPanel>
-       <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
-        <TextBlock x:Name="WorkDetails" TextWrapping="Wrap" Foreground="#B4B9C6" />
-       </ScrollViewer>
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <DockPanel Margin="0,0,0,16">
+     <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+      <Button Content="Очередь" Click="ShowQueue" x:Name="NavQueue" Style="{StaticResource CompactButtonStyle}"/>
+      <Button Content="Журнал и правки" Click="ShowHistory" x:Name="NavHistory" Style="{StaticResource CompactButtonStyle}"/>
+     </WrapPanel>
+     <StackPanel Orientation="Horizontal"><TextBlock Text="Публикации" Style="{StaticResource PageTitleStyle}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+      <Button x:Name="JoinWorksButton" Content="Объединить посты" Click="JoinWorks" ToolTip="Выберите несколько работ с Ctrl или Shift"/>
+     </StackPanel>
+    </DockPanel>
+    <Grid Grid.Row="1" x:Name="LibraryColumns">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+     <ScrollViewer x:Name="LibraryScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
+      <StackPanel>
+       <Border x:Name="CalendarCard" Style="{StaticResource CardStyle}" SizeChanged="CalendarSizeChanged">
+        <StackPanel>
+         <DockPanel Margin="0,0,0,16">
+          <TextBlock x:Name="LibraryMonthCount" DockPanel.Dock="Right" Style="{StaticResource MutedTextStyle}" VerticalAlignment="Center"/>
+          <StackPanel Orientation="Horizontal">
+           <Button Content="‹" Click="PreviousLibraryMonth" Style="{StaticResource CalendarNavigationStyle}" ToolTip="Предыдущий месяц"/>
+           <TextBlock x:Name="LibraryMonthLabel" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" Margin="12,0"/>
+           <Button Content="›" Click="NextLibraryMonth" Style="{StaticResource CalendarNavigationStyle}" ToolTip="Следующий месяц"/>
+           <Button Content="Сегодня" Click="TodayLibraryMonth" Style="{StaticResource LinkButtonStyle}" Margin="12,0,0,0"/>
+          </StackPanel>
+         </DockPanel>
+         <UniformGrid Columns="7" Margin="0,0,0,6"><UniformGrid.Resources><Style TargetType="TextBlock" BasedOn="{StaticResource MutedTextStyle}"><Setter Property="FontSize" Value="11.5"/><Setter Property="Margin" Value="6,0,0,0"/></Style></UniformGrid.Resources>
+          <TextBlock Text="Пн"/><TextBlock Text="Вт"/><TextBlock Text="Ср"/><TextBlock Text="Чт"/><TextBlock Text="Пт"/><TextBlock Text="Сб"/><TextBlock Text="Вс"/>
+         </UniformGrid>
+         <ItemsControl x:Name="CalendarDays">
+          <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="7"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate><DataTemplate>
+           <Border CornerRadius="10" Background="{Binding Background}" BorderBrush="{Binding Border}" BorderThickness="1" Margin="3" Padding="5" Opacity="{Binding Opacity}">
+            <Grid ToolTip="{Binding Detail}">
+             <Button Tag="{Binding Date}" Click="SelectLibraryDay" Style="{StaticResource CalendarHitStyle}" ToolTip="Показать публикации за день"/>
+             <Grid IsHitTestVisible="False"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <DockPanel Margin="1,0,1,5"><TextBlock Text="{Binding CountText}" DockPanel.Dock="Right" FontSize="11" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Day}" FontWeight="SemiBold" FontSize="12" Foreground="#B4B9C6"/></DockPanel>
+              <TextBlock Grid.Row="2" Text="{Binding PlanText}" Foreground="#F3BE55" FontSize="10.5" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+             </Grid>
+             <ItemsControl ItemsSource="{Binding Works}" Margin="0,23,0,18">
+              <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="{Binding TileColumns}" Rows="{Binding TileRows}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate><DataTemplate>
+               <Button Tag="{Binding Id}" Click="SelectCalendarWork" Style="{StaticResource CalendarWorkStyle}" ToolTip="{Binding Title}">
+                <Grid><Border Background="#2A2F3A" CornerRadius="6"/><Path Style="{StaticResource PhotoPlaceholderStyle}"/>
+                 <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
+                 <Border Background="#D9111318" VerticalAlignment="Bottom" Padding="3,1"><TextBlock Text="{Binding ShortPlatforms}" Foreground="White" FontSize="9" TextTrimming="CharacterEllipsis"/></Border>
+                </Grid>
+               </Button>
+              </DataTemplate></ItemsControl.ItemTemplate>
+             </ItemsControl>
+             <TextBlock Text="{Binding MoreText}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Foreground="{StaticResource MutedBrush}" FontSize="10" IsHitTestVisible="False"/>
+            </Grid>
+           </Border>
+          </DataTemplate></ItemsControl.ItemTemplate>
+         </ItemsControl>
+        </StackPanel>
+       </Border>
+       <DockPanel Margin="0,4,0,10"><Button Content="Весь месяц" Click="ClearLibraryDay" Style="{StaticResource LinkButtonStyle}" DockPanel.Dock="Right"/>
+        <TextBlock x:Name="LibraryDayHeading" Text="Публикации за месяц" Style="{StaticResource SectionTitleStyle}" VerticalAlignment="Center"/>
+       </DockPanel>
+       <Border Style="{StaticResource CardStyle}" Padding="0">
+        <StackPanel>
+         <TextBlock x:Name="LibraryEmpty" Text="Пока нет публикаций. После отправки здесь появятся работы и их результаты." Style="{StaticResource MutedTextStyle}" Margin="20"/>
+         <ListView x:Name="WorkList" SelectionMode="Extended" SelectionChanged="WorkSelected" BorderThickness="0" Background="Transparent" MaxHeight="440" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ItemContainerStyle="{StaticResource PublicationItemStyle}">
+          <ListView.ItemTemplate><DataTemplate>
+           <Grid Margin="0,2" ToolTip="{Binding MeasurementHint}"><Grid.ColumnDefinitions><ColumnDefinition Width="56"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Border Width="56" Height="56" CornerRadius="8" Background="{StaticResource FieldBrush}" ClipToBounds="True"><Grid><Path Style="{StaticResource PhotoPlaceholderStyle}"/><Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/></Grid></Border>
+            <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
+             <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+             <TextBlock Text="{Binding DateLabel}" Style="{StaticResource MutedTextStyle}" FontSize="11.5" Margin="0,3,0,3"/>
+             <ItemsControl ItemsSource="{Binding Badges}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><Border Background="{Binding Color}" CornerRadius="4" Padding="4,1" Margin="0,0,4,0" ToolTip="{Binding Name}"><TextBlock Text="{Binding Code}" Foreground="White" FontSize="9" FontWeight="SemiBold"/></Border></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+            </StackPanel>
+            <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" MaxWidth="185"><TextBlock Text="{Binding ViewsLabel}" Foreground="#B4B9C6" FontSize="12" HorizontalAlignment="Right"/><TextBlock Text="{Binding ReactionsLabel}" Style="{StaticResource MutedTextStyle}" FontSize="11.5" HorizontalAlignment="Right"/><TextBlock Text="{Binding GroupLabel}" Foreground="{StaticResource AccentInkBrush}" FontSize="10.5" TextTrimming="CharacterEllipsis" HorizontalAlignment="Right"/><TextBlock Text="{Binding StateLabel}" Style="{StaticResource MutedTextStyle}" FontSize="10.5" TextTrimming="CharacterEllipsis" HorizontalAlignment="Right"/></StackPanel>
+           </Grid>
+          </DataTemplate></ListView.ItemTemplate>
+         </ListView>
+        </StackPanel>
+       </Border>
+       <Expander Header="Дополнительно" Margin="0,0,0,12"><StackPanel Margin="0,12,0,0">
+        <WrapPanel><Button Content="Импорт Python-базы…" Click="ImportLegacy" Style="{StaticResource CompactButtonStyle}"/><Button Content="Обновить" Click="RefreshLibrary" Style="{StaticResource CompactButtonStyle}"/><CheckBox x:Name="IncludeDemo" Content="Показать демо" Checked="LibraryFilterChanged" Unchecked="LibraryFilterChanged" Margin="10,5"/></WrapPanel>
+        <TextBlock x:Name="LibrarySummary" Style="{StaticResource MutedTextStyle}" Margin="0,8,0,0"/><TextBlock x:Name="ImportSummary" TextWrapping="Wrap" Foreground="{StaticResource GoodBrush}" Margin="0,8,0,0"/>
+       </StackPanel></Expander>
       </StackPanel>
-     </Grid>
+     </ScrollViewer>
+     <Border x:Name="WorkInspector" Grid.Column="1" Width="300" Margin="12,0,0,0" Visibility="Collapsed" Style="{StaticResource CardStyle}">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
+       <DockPanel Margin="0,0,0,12"><Button Content="✕" Click="CloseWorkInspector" DockPanel.Dock="Right" Style="{StaticResource LinkButtonStyle}" ToolTip="Закрыть сведения"/><TextBlock Text="Публикация" Style="{StaticResource SectionTitleStyle}"/></DockPanel>
+       <Image x:Name="WorkInspectorImage" Height="150" Stretch="Uniform" Margin="0,0,0,12"/>
+       <TextBlock x:Name="WorkInspectorTitle" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,12"/>
+       <TextBlock x:Name="WorkDetails" TextWrapping="Wrap" Foreground="#B4B9C6"/>
+       <WrapPanel Margin="0,12,0,0"><Button x:Name="OpenLibraryButton" Content="Открыть на площадке" Click="OpenLibraryPost"/><Button x:Name="SplitWorksButton" Content="Разъединить" Click="SplitWorks"/></WrapPanel>
+       <TextBlock Text="Несколько работ можно выделить с Ctrl или Shift и объединить кнопкой сверху." Style="{StaticResource MutedTextStyle}" FontSize="11.5" Margin="0,12,0,0"/>
+      </StackPanel></ScrollViewer>
+     </Border>
     </Grid>
    </Grid>
    <Grid x:Name="LibraryStatsView" Visibility="Collapsed">

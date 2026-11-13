@@ -83,6 +83,7 @@ jobs:
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "close-smoke-ready.txt"))) { throw "Window did not confirm normal single-request close" }
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "migration-smoke-ready.txt"))) { throw "Python profile migration and DPAPI check missing" }
           if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "destinations-smoke-ready.txt"))) { throw "Multi-destination check missing" }
+          if (-not (Test-Path (Join-Path $env:CROSSPOST_NATIVE_DATA "python-design-smoke-ready.txt"))) { throw "Python design verification missing" }
           Set-Content (Join-Path $env:CROSSPOST_NATIVE_DATA "window-closed.txt") "Window process exited"
           $verify = Start-Process -FilePath (Resolve-Path artifacts/win-x64/CrossPost.Native.exe) -ArgumentList "--verify-worker-smoke" -PassThru
           if (-not $verify.WaitForExit(90000)) { $verify.Kill(); throw "Background worker test timed out" }
@@ -154,6 +155,10 @@ jobs:
         with:
           name: CrossPost-Native-Prototype-${{ needs.build.outputs.version }}-win-x64
           path: native-release
+      - uses: actions/download-artifact@v4
+        with:
+          name: CrossPost-Native-UI-${{ needs.build.outputs.version }}-win-x64
+          path: native-ui
       - name: Publish tagged native version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -162,4 +167,4 @@ jobs:
           test "$GITHUB_REF_NAME" = "native-v$version"
           flags=()
           if [[ "$version" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" native-release/*.zip native-release/*.sha256 --repo "$GITHUB_REPOSITORY" --verify-tag "${flags[@]}" --latest=false --title "CrossPost Native $version" --notes-file native/RELEASE-NOTES.md
+          gh release create "$GITHUB_REF_NAME" native-release/*.zip native-release/*.sha256 native-ui/11-compose-python-design.png native-ui/12-publications-python-design.png --repo "$GITHUB_REPOSITORY" --verify-tag "${flags[@]}" --latest=false --title "CrossPost Native $version" --notes-file native/RELEASE-NOTES.md

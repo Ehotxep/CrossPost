@@ -43,6 +43,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        SourceInitialized += (_,_) => NativeWindowTheme.Apply(this);
         DataContext = this;
         Title = "CrossPost Native — прототип " + NativeAppVersion;
         SwitchView(ComposeView);
@@ -138,6 +139,8 @@ public partial class MainWindow : Window
         await RunBlueskySmokeAsync();
         App.TraceSmoke("library scenario");
         await RunLibrarySmokeAsync();
+        App.TraceSmoke("Python design reference and calendar interactions");
+        await RunPythonDesignSmokeAsync();
         await CapturePopulatedViewsAsync();
         App.TraceSmoke("bilingual and custom text controls");
         await RunTextSmokeAsync();
