@@ -63,8 +63,11 @@ public partial class MainWindow
             var design=CurrentDraft with { EnglishTitle="Sunset in the mountains",EnglishText="The last rays of sunlight and a quiet evening.",Language="both",PlatformTexts=null };
             await InitializeTextsAsync(design);BlueskyRating.SelectedIndex=0;_loaded=true;PlatformPicker.SelectedIndex=0;UpdatePreview();ApplyMode();
             Width=1400;Height=1000;SwitchView(ComposeView);ComposeView.ScrollToTop();await CaptureWindowAsync("11-compose-python-design");
-            if(Math.Abs(TitleInput.TranslatePoint(new Point(),TextCard).Y-EnglishTitleInput.TranslatePoint(new Point(),TextCard).Y)>1.5)
-                throw new InvalidOperationException($"Russian and English title fields are not aligned: RU={TitleInput.TranslatePoint(new Point(),TextCard).Y}, EN={EnglishTitleInput.TranslatePoint(new Point(),TextCard).Y}, editor row={Grid.GetRow(EnglishEditor)}, margin={EnglishEditor.Margin}");
+            var ru=TitleInput.TranslatePoint(new Point(),TextCard).Y;var en=EnglishTitleInput.TranslatePoint(new Point(),TextCard).Y;
+            if(Grid.GetRow(EnglishEditor)==0)
+            { if(Math.Abs(ru-en)>1.5) throw new InvalidOperationException($"Bilingual columns not aligned: RU={ru}, EN={en}, card width={TextCard.ActualWidth}"); }
+            else if(TextCard.ActualWidth>=660 || en<=BodyInput.TranslatePoint(new Point(),TextCard).Y+BodyInput.ActualHeight)
+                throw new InvalidOperationException("Narrow bilingual editor overlaps or remains stacked at a wide width");
             RatingExplicit.IsChecked=true;
             if(BlueskyRating.SelectedIndex!=2 || CurrentDraft.ContentLabel!="explicit") throw new InvalidOperationException("Segmented content rating did not update routing");
             RatingSafe.IsChecked=true;

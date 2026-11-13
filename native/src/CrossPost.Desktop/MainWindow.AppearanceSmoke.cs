@@ -22,6 +22,9 @@ public partial class MainWindow
     }
     private async Task CaptureWindowAsync(string name)
     {
+        // Let pending HWND size/visibility changes settle before measuring the responsive editor.
+        await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.ApplicationIdle);
+        UpdateResponsiveLayout();
         await Dispatcher.InvokeAsync(UpdateLayout, DispatcherPriority.Render);
         var root = (FrameworkElement)Content;
         var width = (int)Math.Ceiling(root.ActualWidth+root.Margin.Left+root.Margin.Right);
