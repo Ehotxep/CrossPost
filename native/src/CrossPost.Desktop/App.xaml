@@ -66,7 +66,7 @@
   <Style x:Key="PageTitleStyle" TargetType="TextBlock"><Setter Property="FontFamily" Value="{StaticResource InterHeadingFont}"/><Setter Property="FontSize" Value="22"/></Style>
   <Style x:Key="SectionTitleStyle" TargetType="TextBlock"><Setter Property="FontFamily" Value="{StaticResource InterHeadingFont}"/><Setter Property="FontSize" Value="15"/></Style>
   <Style x:Key="MutedTextStyle" TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource MutedBrush}"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
-  <Style x:Key="FieldLabelStyle" TargetType="TextBlock"><Setter Property="Foreground" Value="#B4B9C6"/><Setter Property="FontSize" Value="12.5"/></Style>
+  <Style x:Key="FieldLabelStyle" TargetType="TextBlock"><Setter Property="Height" Value="18"/><Setter Property="Foreground" Value="#B4B9C6"/><Setter Property="FontSize" Value="12.5"/></Style>
   <Style x:Key="EyebrowStyle" TargetType="TextBlock" BasedOn="{StaticResource MutedTextStyle}"><Setter Property="FontSize" Value="10"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
   <Style x:Key="SettingsNavigationStyle" TargetType="Button" BasedOn="{StaticResource NavigationStyle}"><Setter Property="HorizontalContentAlignment" Value="Left"/><Setter Property="Margin" Value="0,2,0,2"/><Setter Property="Padding" Value="12,10"/></Style>
   <Style x:Key="SettingsSelectedNavigationStyle" TargetType="Button" BasedOn="{StaticResource SettingsNavigationStyle}"><Setter Property="Foreground" Value="{StaticResource AccentInkBrush}"/><Setter Property="Background" Value="#2C3048"/></Style>

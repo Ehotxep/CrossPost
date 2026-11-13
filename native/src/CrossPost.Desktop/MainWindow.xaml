@@ -140,14 +140,14 @@
           <StackPanel>
            <TextBlock Text="Русский · основной" FontWeight="SemiBold" Height="20" Margin="0,0,0,10" />
            <TextBlock Text="Заголовок" Style="{StaticResource FieldLabelStyle}" />
-           <TextBox x:Name="TitleInput" TextChanged="DraftChanged" />
+           <TextBox x:Name="TitleInput" Height="42" TextChanged="DraftChanged" />
            <TextBlock Text="Описание" Style="{StaticResource FieldLabelStyle}" />
            <TextBox x:Name="BodyInput" Height="144" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" />
           </StackPanel>
           <Expander x:Name="EnglishEditor" Style="{StaticResource AlignedEnglishEditorStyle}" Grid.Column="2" Header="English" IsExpanded="True">
            <StackPanel>
             <TextBlock Text="Title" Style="{StaticResource FieldLabelStyle}" />
-            <TextBox x:Name="EnglishTitleInput" TextChanged="DraftChanged" />
+            <TextBox x:Name="EnglishTitleInput" Height="42" TextChanged="DraftChanged" />
             <TextBlock Text="Description" Style="{StaticResource FieldLabelStyle}" />
             <TextBox x:Name="EnglishBodyInput" Height="144" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="DraftChanged" />
            </StackPanel>
