@@ -4,7 +4,7 @@
     <UseWPF>true</UseWPF><EnableWindowsTargeting>true</EnableWindowsTargeting>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier><SelfContained>true</SelfContained>
     <ApplicationIcon>../../../app/web/crosspost.ico</ApplicationIcon>
-    <Version>0.0.14-dev</Version><AssemblyName>CrossPost.Native</AssemblyName>
+    <Version>0.0.15-dev</Version><AssemblyName>CrossPost.Native</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../CrossPost.Core/CrossPost.Core.csproj"/>
