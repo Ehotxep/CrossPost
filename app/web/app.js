@@ -178,7 +178,7 @@
   const S = {
     view: "post",   // при запуске всегда «Новый пост»; выбранный раздел помним только до закрытия
     src: store.get("src", "e6ai"),
-    rating: store.get("rating", "all"), cat: store.get("cat", "all"), mine: store.get("mine", false),
+    rating: store.get("rating", "all"), cat: store.get("cat", "all"), mine: store.get("mine", false), trendCommon:store.get("trendCommon",false), trendPeriod:store.get("trendPeriod","quarter"),
     sel: null, info: null, data: null, fc: null, loading: false, error: null, flash: "",
     manual: false,
     tg: null, tgCh: [], tgErr: "", tgBusy: false, tgJson: "", netDraft: null, netRes: null, netOpen: false,
@@ -192,7 +192,7 @@
   Object.defineProperty(S, "taggerOn", { get: () => S.taggerMaster && !(S.info && S.info.tagger_paused) });
   let poll = null;
 
-  const CAT_LABEL = { all: "Все", species: "Виды", character: "Персонажи", franchise: "Франшизы", general: "Темы" };
+  const CAT_LABEL = { all: "Все", species: "Виды", character: "Персонажи", franchise: "Франшизы", general: "Темы и детали", clothing:"Одежда", setting:"Окружение" };
   const pct = (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v * 100)) + "%";
   const mult = (v) => "×" + Number(v).toFixed(2).replace(".", DEC);
   const plural = (n, a, b, c) => { if (window.I18N.lang === "en") return Math.abs(n) === 1 ? a : c; n = Math.abs(n) % 100; const k = n % 10; return n > 10 && n < 20 ? c : k === 1 ? a : k >= 2 && k <= 4 ? b : c; };
@@ -231,7 +231,7 @@
   };
   // площадки: буквы на цветном квадрате (свои значки, без чужих логотипов)
   const PLAT = { telegram: ["TG", "#2A9FD8", "Telegram"], discord: ["DS", "#5865F2", "Discord"], vk: ["VK", "#2D7BE5", "ВКонтакте"],
-    e6ai: ["BA", "#24508F", "Booru"], reddit: ["R", "#F0541E", "Reddit"], deviantart: ["DA", "#14A85A", "DeviantArt"], bluesky: ["BS", "#1185FE", "Bluesky"], joyreactor: ["JR", "#C2410C", "Joyreactor"], x: ["X", "#3A3F4B", "X"] };
+    e6ai: ["BA", "#24508F", "blep.art"], e621: ["621", "#b28b40", "e621"], floofgens: ["FG", "#7762c4", "floofgens.net"], reddit: ["R", "#F0541E", "Reddit"], deviantart: ["DA", "#14A85A", "DeviantArt"], bluesky: ["BS", "#1185FE", "Bluesky"], joyreactor: ["JR", "#C2410C", "Joyreactor"], x: ["X", "#3A3F4B", "X"] };
   const pbadge = (platform, { cls = "", tip = "", link = "", sm = false } = {}) => {
     const [t, c, name] = PLAT[platform] || [String(platform || "?").slice(0, 2).toUpperCase(), "#555", platform];
     const attrs = `class="pb ${sm ? "sm" : ""} ${cls}" style="--pc:${c}" data-tip="${esc(tip || name)}" aria-label="${esc(tip || name)}"`;
@@ -321,17 +321,25 @@
     if (ae && $main.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && ae.type !== "checkbox") return;
     softRender();
   }
+  let trendRequest = 0;
   async function loadOverview() {
+    const request = ++trendRequest;
+    const query = {source:S.src,rating:S.rating,category:S.cat,mine_only:S.mine,show_common:S.trendCommon,period:S.trendPeriod};
     S.data = null; S.fc = null; S.error = null;
-    if (!S.info.trends[S.src].ready) return;
+    if (!S.info.trends[query.source]?.ready) { S.loading=false; return; }
     S.loading = true; render();
     try {
-      S.data = await api("trends_overview", { source: S.src, rating: S.rating, category: S.cat, mine_only: S.mine });
-      const all = (S.data.rising || []).concat(S.data.popular || []);
-      if (!S.sel || !all.some((x) => x.tag === S.sel)) S.sel = all.length ? all[0].tag : null;
-      if (S.sel) S.fc = await api("trends_forecast", { source: S.src, tag: S.sel, rating: S.rating });
-    } catch (e) { S.error = e.message; }
-    S.loading = false;
+      const result = await api('trends_overview', query);
+      if (request !== trendRequest) return;
+      S.data = result;
+      const all = (result?.rising || []).concat(result?.popular || []);
+      if (!S.sel || !all.some(x => x.tag === S.sel)) S.sel = all[0]?.tag || null;
+      if (S.sel) {
+        const forecast = await api('trends_forecast', {source:query.source,tag:S.sel,rating:query.rating});
+        if (request === trendRequest) S.fc = forecast;
+      }
+    } catch (e) { if (request === trendRequest) S.error = e.message; }
+    finally { if (request === trendRequest) S.loading=false; }
   }
   // список каналов — из базы, мгновенно (без обращения к Telegram)
   async function loadChannels() {
@@ -874,21 +882,24 @@
   }
 
   function renderTrends() {
+    const sourceNames = {e6ai:"blep.art",e621:"e621",floofgens:"floofgens.net"};
+    if (!sourceNames[S.src]) S.src = "e6ai";
+    const sourceName = sourceNames[S.src];
     const st = S.info.trends[S.src];
     const job = st.job;
     const running = job && job.state === "running";
     const about = S.src === "e621"
       ? "e621 — крупнейший фурри-архив. ИИ-работы туда загружать нельзя, но это лучший индикатор вкусов фандома: тренды часто приходят оттуда."
-      : "Ваша площадка для ИИ-работ. Популярность — избранное на пост: просмотров blep.art не отдаёт.";
-    const dump = st.meta ? `выгрузка от ${st.meta.dump_date.split("-").reverse().join(".")} · ${num(st.meta.posts)} ${plural(st.meta.posts, "пост", "поста", "постов")} за 2 года` : "данных пока нет";
+      : `${sourceName}: темы и интерес аудитории по избранному. Это статистика работ с тегом, а не оценка влияния самого тега.`;
+    const dump = st.meta ? `выгрузка от ${st.meta.dump_date.split("-").reverse().join(".")} · ${num(st.meta.posts)} ${plural(st.meta.posts, "пост", "поста", "постов")} в расчёте` : "данных пока нет";
     let h = `
     <div class="head" style="align-items:flex-end">
       <div style="display:flex;flex-direction:column;gap:6px;max-width:760px">
-        <h1>Тренды · ${S.src}</h1>
+        <h1>Тренды · ${sourceName}</h1>
         <p class="muted">${about}</p>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
-        ${seg("src", [["e6ai", "blep.art"], ["e621", "e621"]], S.src)}
+        ${seg("src", Object.entries(sourceNames), S.src)}
         <div style="display:flex;align-items:center;gap:10px">
           <span class="muted small">${dump}</span>
           <button class="btn" data-action="update" ${running ? "disabled" : ""}>${st.ready ? "Обновить" : "Скачать"}</button>
@@ -898,7 +909,7 @@
     </div>`;
     if (S.trSet) h += trendsSettingsHtml();
     if (running) {
-      h += `<div class="card"><div class="head"><h3>Готовлю данные ${S.src}</h3><span class="muted small">${esc(job.message)}</span></div>
+      h += `<div class="card"><div class="head"><h3>Готовлю данные ${sourceName}</h3><span class="muted small">${esc(job.message)}</span></div>
         <div class="progress"><div style="width:${Math.round(job.progress * 100)}%"></div></div>
         <p class="note">Можно пользоваться приложением дальше — данные обновятся сами.</p></div>`;
     } else if (job && job.state === "error") {
@@ -921,19 +932,19 @@
 
     // опережающие сигналы
     if (d.leads === null) {
-      const other = S.src === "e621" ? "blep.art" : "e621";
-      h += `<div class="card"><h2>Опережающие сигналы</h2><p class="muted">Скачайте выгрузку ${other}, чтобы сравнивать, что растёт на e621 и ещё не дошло до blep.art.</p></div>`;
+      const other = S.src === "e621" ? d.leads_label : "e621";
+      h += `<div class="card"><h2>Опережающие сигналы</h2><p class="muted">${esc(d.comparison_note || `Скачайте выгрузку ${other}, чтобы сравнить рост тем на e621 и ${d.leads_label}.`)}</p></div>`;
     } else {
       const card = (l) => `<div class="wrap">
-        <button class="lead" data-pick="${esc(l.tag)}" data-src="e6ai" title="Открыть прогноз на blep.art">
+        <button class="lead" data-pick="${esc(l.tag)}" data-src="${d.leads_target}" title="Открыть прогноз на ${esc(d.leads_label)}">
           <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-right:22px"><span class="tag" style="font-weight:600">${esc(l.tag)}</span>${l.mine ? `<span class="pill mine">ваш стиль</span>` : ""}</span>
           <span class="kv"><span>e621</span><b style="color:var(--good)">${num(l.e621_before)} → ${num(l.e621_now)}</b></span>
-          <span class="kv"><span>blep.art</span><b>${num(l.e6ai_before)} → ${num(l.e6ai_now)}</b></span>
+          <span class="kv"><span>${esc(d.leads_label)}</span><b>${num(l.e6ai_before)} → ${num(l.e6ai_now)}</b></span>
         </button>${hideBtn(l.tag)}</div>`;
       const grp = (title, note, list) => `<div style="display:flex;flex-direction:column;gap:8px">
         <div class="head"><h3>${title}</h3><span class="muted small">${note}</span></div>
         ${list.length ? `<div class="leads">${list.map(card).join("")}</div>` : `<p class="muted small">Сейчас ничего заметного.</p>`}</div>`;
-      h += `<section class="card"><div class="head"><h2>Опережающие сигналы: растёт на e621, на blep.art ещё нет</h2>
+      h += `<section class="card"><div class="head"><h2>Опережающие сигналы: e621 → ${esc(d.leads_label)}</h2>
         <span class="muted small">работ в месяц: 3 месяца назад → сейчас</span></div>
         ${grp("Растёт на e621", "теги, которые давно есть, но набирают обороты", d.leads.growing)}
         ${grp("Новое на e621", "полгода назад тега почти не было: новый персонаж, игра или мем", d.leads.new)}`;
@@ -945,11 +956,15 @@
       <span class="lbl">Рейтинг</span>${seg("rating", [["all", "Все"], ["s", "Safe"], ["q", "Questionable"], ["e", "Explicit"]], S.rating)}
       <span class="vsep"></span>
       <span class="lbl">Категория</span>${seg("cat", Object.entries(CAT_LABEL), S.cat)}
+      <label class="check"><input type="checkbox" data-action="trend-common" ${S.trendCommon ? "checked" : ""}> Показать общие теги</label>
       <label class="check" style="margin-left:auto"><input type="checkbox" data-action="mine" ${S.mine ? "checked" : ""}> Только мой стиль</label>
     </div>`;
     if (S.mine && !S.info.settings.style_tags.length) {
       h += `<div class="card"><p class="muted">Список «мой стиль» пуст — добавьте теги в <a href="#" data-view-link="settings" data-tab="trends">настройках трендов</a>.</p></div>`;
     }
+
+    h += `<div class="bar"><span class="lbl">Период роста</span>${seg("trendPeriod", [["month","4 недели"],["quarter","3 месяца"]], S.trendPeriod)}
+      <span class="muted small">${d.filters?.hidden_common ? `Общие теги скрыты: ${d.filters.hidden_common}.` : ''} Выгрузка: ${esc(d.dump_date)} · учтены недели до ${esc(d.week_end)}.</span></div>`;
 
     // сезон
     if (d.seasonal && d.seasonal.length) {
@@ -971,18 +986,18 @@
       const badge = x.badge ? `<span class="pill ${{ "сезон": "season", "ранний сигнал": "early", "ваш стиль": "mine" }[x.badge]}">${x.badge}</span>`
         : (kind === "pop" && x.mine ? `<span class="pill mine">ваш стиль</span>` : "");
       const title = kind === "pop"
-        ? `${x.tag}: пост с тегом набирает ${mult(x.lift)} избранного к среднему посту; ${x.per_month} в месяц`
-        : `${x.tag}: отклик ${pct(x.response)}, число работ ${pct(x.supply)} за 3 месяца`;
-      return `<div class="wrap"><button class="li ${S.sel === x.tag ? "sel" : ""}" data-pick="${esc(x.tag)}" title="${esc(title)}">
+        ? `${x.reason || "Отклик постов с тегом"}. Выборка: ${x.sample ?? "—"} работ за 4 недели; отклик ${mult(x.lift)}`
+        : `${x.reason || "Рост темы"}. Выборка: ${x.sample ?? "—"} против ${x.previous_sample ?? "—"} работ за ${d.filters?.growth_weeks || 13} недель`;
+      return `<div class="wrap"><button class="li trend-topic ${S.sel === x.tag ? "sel" : ""}" data-pick="${esc(x.tag)}" title="${esc(title)}"><span class="trend-main">
         ${kind === "pop" ? `<span class="rank">${i + 1}</span>` : ""}
         <span class="name">${catDot(x.category)}<span class="tag">${esc(x.tag)}</span>${badge}</span>
-        ${sparkline(x.spark)}${val}<span class="meta">${num(x.per_month)}/мес</span></button>${hideBtn(x.tag)}</div>`;
+        ${sparkline(x.spark)}${val}<span class="meta">${num(x.per_month)}/мес</span></span><span class="trend-reason">${esc(x.reason || "")} · ${x.sample ?? "—"} работ${x.confidence ? ` · ${esc(x.confidence)}` : ""}</span></button>${hideBtn(x.tag)}</div>`;
     };
     h += `<div class="row">
       <section class="card grow"><div class="head"><h2>Популярно сейчас</h2><span class="muted small">отклик за 4 недели</span></div>
         <div class="list">${d.popular.length ? d.popular.map((x, i) => row(x, i, "pop")).join("") : `<p class="muted">Нет тегов с достаточным числом постов.</p>`}</div></section>
-      <section class="card grow"><div class="head"><h2>Набирает популярность</h2><span class="muted small">3 месяца к предыдущим 3</span></div>
-        <div class="list">${d.rising.length ? d.rising.map((x, i) => row(x, i, "rise")).join("") : `<p class="muted">Заметного роста сейчас нет.</p>`}</div></section>
+      <section class="card grow"><div class="head"><h2>Набирает популярность</h2><span class="muted small">${d.filters?.growth_weeks === 4 ? "4 недели к предыдущим 4" : "3 месяца к предыдущим 3"}</span></div>
+        <div class="list">${d.rising.length ? d.rising.map((x, i) => row(x, i, "rise")).join("") : `<p class="muted">${d.coverage?.growth_previous ? "Нет заметного роста с достаточной выборкой." : "Недостаточно данных за предыдущий период для сравнения."}</p>`}</div></section>
     </div>`;
 
     // прогноз
@@ -1037,21 +1052,22 @@
 
   function emptyState(running) {
     const big = S.src === "e621";
+    const label = {e6ai:"blep.art",e621:"e621",floofgens:"floofgens.net"}[S.src] || S.src;
     return `<section class="card empty">
-      <h2>Данных ${S.src} ещё нет</h2>
-      <p class="muted">Приложение скачает ежедневную выгрузку всей базы ${S.src} (${big ? "это большой файл, порядка гигабайта — займёт время" : "несколько десятков мегабайт"}) и посчитает тренды у вас на компьютере.</p>
+      <h2>Данных ${label} ещё нет</h2>
+      <p class="muted">Приложение скачает ежедневную выгрузку базы ${label} (${big ? "большой файл — загрузка займёт время" : "размер зависит от текущей выгрузки сайта"}) и посчитает тренды у вас на компьютере.</p>
       <div style="display:flex;flex-wrap:wrap;gap:10px">
-        <button class="btn primary" data-action="update" ${running ? "disabled" : ""}>Скачать выгрузку ${S.src}</button>
+        <button class="btn primary" data-action="update" ${running ? "disabled" : ""}>Скачать выгрузку ${label}</button>
         <button class="btn" data-action="manual">Подключить скачанные файлы</button>
       </div>
       ${S.manual ? manualForm() : ""}
     </section>`;
   }
   function manualForm() {
-    const base = S.src === "e621" ? "https://e621.net/db_export/" : "https://blep.art/db_export/";
+    const base = {e6ai:"https://blep.art/db_export/",e621:"https://e621.net/db_export/",floofgens:"https://floofgens.net/db_export/"}[S.src];
     const pickBtn = S.info.can_pick_files ? `<button class="btn" data-action="pickfiles">Выбрать файлы…</button>` : "";
     return `<div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:720px;margin-top:6px">
-      <p class="note">Скачайте с ${base} два файла с одной датой: <span class="tag">posts-ГГГГ-ММ-ДД.csv.gz</span> и <span class="tag">tags-ГГГГ-ММ-ДД.csv.gz</span>.</p>
+      <p class="note">Скачайте с ${base} согласованную пару файлов: <span class="tag">posts-ГГГГ-ММ-ДД.csv.gz</span> и <span class="tag">tags-ГГГГ-ММ-ДД.csv.gz</span> или <span class="tag">posts.csv.gz</span> и <span class="tag">tags.csv.gz</span>.</p>
       ${pickBtn}
       <div class="field"><label for="mp">Файл постов</label><input id="mp" placeholder="C:\\Users\\…\\Downloads\\posts-2026-10-09.csv.gz"></div>
       <div class="field"><label for="mt">Файл тегов</label><input id="mt" placeholder="C:\\Users\\…\\Downloads\\tags-2026-10-09.csv.gz"></div>
@@ -1070,8 +1086,9 @@
         <div class="row">
           <div class="field" style="flex:1 1 200px"><label for="r6">Обновлять blep.art, раз в … дней</label><input id="r6" type="number" min="1" value="${s.trends.e6ai.refresh_days}"></div>
           <div class="field" style="flex:1 1 200px"><label for="r621">Обновлять e621, раз в … дней</label><input id="r621" type="number" min="1" value="${s.trends.e621.refresh_days}"></div>
+          <div class="field" style="flex:1 1 200px"><label for="rfloof">Обновлять floofgens.net, раз в … дней</label><input id="rfloof" type="number" min="1" value="${s.trends.floofgens.refresh_days}"></div>
         </div>
-        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 260px"><label for="nick">Ник для запросов к e621 и blep.art ${hint("Сайты просят указывать ник в запросах программ — так они понимают, кто к ним обращается. Пароль не нужен.")}</label>
+        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 260px"><label for="nick">Ник для запросов к e621, blep.art и floofgens.net ${hint("Сайты просят указывать ник в запросах программ — так они понимают, кто к ним обращается. Пароль не нужен.")}</label>
             <input id="nick" value="${esc(s.nickname || "")}" placeholder="например, fennec_artist"></div>
           <button class="btn" data-pa="nick-save">Сохранить ник</button></div>
         <div class="cardfoot"><button class="btn primary" data-action="save-settings">Сохранить</button><span class="ok small">${esc(S.flash)}</span></div></section>`;
@@ -1144,10 +1161,10 @@
 
   // меню настроек: группа, пункты, когда группа видна (по включённым функциям)
   const PSECS = [["Программа", [["app", "Общие"], ["features", "Функции"], ["worker", "Фоновая отправка"]], () => true],
-    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "Booru"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]], () => true],
+    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art"], ["e621", "e621"], ["floofgens", "floofgens.net"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]], () => true],
     ["Оформление поста", [["signatures", "Подписи"], ["hashtags", "Хэштеги"], ["translate", "Перевод", () => modOn("translation")]], () => modOn("crosspost")],
     ["Файлы", [["light", "JPEG-превью"], ["media", "Видео и GIF"], ["versions", "Умное таргетирование", () => modOn("targeting")], ["files", "Хранение файлов"]], () => modOn("crosspost")],
-    ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || modOn("e6ai")],
+    ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || ["e6ai","e621","floofgens"].some(modOn)],
     ["Статистика и тренды", [["collect", "Сбор статистики", () => statsOn()], ["trends", "Тренды", () => modOn("trends")]], () => statsOn() || modOn("trends")],
     ["Дополнительно", [["x", "X (проверка)"], ["net", "Прокси и соединение"], ["diag", "Диагностика"]], () => true]];
   // четыре функции приложения; у каждой — модули, которые она включает и выключает разом
@@ -1155,17 +1172,17 @@
     ["crosspost", "Кросспостинг", "Публикация одного поста сразу на несколько площадок, отложенная отправка по расписанию и история публикаций.", ["crosspost", "history"]],
     ["tags", "Подбор тегов", "Автоматически предлагает теги по картинке — для хэштегов и для blep.art / e621 / floofgens.net. Без неё теги вводятся вручную.", ["tagger"]],
     ["stats", "Статистика", "Просмотры и реакции по площадкам, лучшие работы и время публикации, уведомления о всплесках и прогноз.", ["stats", "collect", "news", "forecast"]],
-    ["trends", "Тренды", "Что сейчас популярно на blep.art и e621: растущие теги, ниши и сравнение с вашим стилем.", ["trends"]],
+    ["trends", "Тренды", "Что сейчас популярно на blep.art, e621 и floofgens.net: растущие теги, ниши и сравнение с вашим стилем.", ["trends"]],
     ["targeting", "Умное таргетирование", "Для постов в нескольких версиях (например, комикс с русскими и английскими надписями): отметьте версию у каждого файла, и на каждую площадку уйдут подходящие.", ["targeting"]],
     ["translation", "Языки и перевод", "Отдельный английский текст и подписи для англоязычных площадок. Автоперевод — через DeepSeek, по кнопке.", ["translation"]]];
   const featOn = (f) => f[3].some((k) => modOn(k));
   const statsOn = () => modOn("stats") || modOn("collect");
-  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "blep.art / e621 / floofgens.net", "загрузка, теги, теггер и база тегов"]],
+  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "blep.art", "оригиналы и теги"], ["e621", "e621", "оригиналы и теги"], ["floofgens", "floofgens.net", "оригиналы и теги"]],
     extras: [["tagger", "Теггер", "предлагает теги по картинке для blep.art / e621 / floofgens.net и хэштегов; без него теги вводятся вручную"],
       ["collect", "Сбор статистики", "регулярно сохраняет просмотры и реакции опубликованных постов, учитывает правки модераторов и догружает превью"],
       ["news", "Новости по свежим артам", "уведомления в колокольчике: популярные работы, всплески реакций, новые комментарии"],
       ["forecast", "Прогноз", "ожидаемые просмотры и подсказка лучшего времени публикации"]],
-    screens: [["history", "История", "календарь и список публикаций"], ["stats", "Статистика", "просмотры и индекс успеха каналов"], ["trends", "Тренды", "blep.art и e621, обновление выгрузок"]] };
+    screens: [["history", "История", "календарь и список публикаций"], ["stats", "Статистика", "просмотры и индекс успеха каналов"], ["trends", "Тренды", "blep.art, e621 и floofgens.net, обновление выгрузок"]] };
   const modOn = (k) => !(S.info && S.info.modules) || S.info.modules[k] !== false;
   // какие экраны видны: «Новый пост» и «История» — кросспостинг, «Статистика» и «Тренды» — свои функции, «Настройки» — всегда
   const viewOn = (v) => v === "settings" ? true : v === "post" ? modOn("crosspost") : v === "history" ? modOn("crosspost") && modOn("history") : modOn(v);
@@ -1577,7 +1594,7 @@
   const SOON = {};
   function renderSoon() {
     const [t, d] = SOON[S.view] || ["Скоро", ""];
-    $main.innerHTML = `<h1>${t}</h1><section class="card soon"><p>${d}</p><p class="muted small">Раздел в работе. Сейчас готовы <a href="#" data-view-link="trends">тренды blep.art и e621</a>.</p></section>`;
+    $main.innerHTML = `<h1>${t}</h1><section class="card soon"><p>${d}</p><p class="muted small">Раздел в работе. Сейчас готовы <a href="#" data-view-link="trends">тренды blep.art, e621 и floofgens.net</a>.</p></section>`;
   }
 
   // ---------------- события ----------------
@@ -1725,7 +1742,7 @@
       if (S[k] === v) return;
       S[k] = v;
       if (k === "src") { store.set("src", v); S.sel = null; S.manual = false; }
-      if (k === "rating" || k === "cat") store.set(k, v);
+      if (["rating","cat","trendPeriod"].includes(k)) store.set(k, v);
       if (k === "sp" || k === "sc") { store.set(k, v); await loadStats(); render(); return; }
       await loadOverview(); render(); return;
     }
@@ -1799,7 +1816,7 @@
       }
       if (act === "pickfiles") {
         const files = await api("pick_files");
-        const posts = files.find((f) => /posts-/.test(f)), tags = files.find((f) => /tags-/.test(f));
+        const posts = files.find((f) => /posts(?:-|\.csv)/.test(f)), tags = files.find((f) => /tags(?:-|\.csv)/.test(f));
         if (posts) document.getElementById("mp").value = posts;
         if (tags) document.getElementById("mt").value = tags;
       }
@@ -1815,7 +1832,7 @@
         if (v("nick") !== null) ch.nickname = v("nick").trim();
         if (v("style") !== null) ch.style_tags = v("style").split(/[\s,]+/).filter(Boolean);
         if (v("hidden") !== null) ch.hidden_tags = v("hidden").split(/[\s,]+/).filter(Boolean);
-        if (v("r6") !== null) ch.trends = { e6ai: { refresh_days: +v("r6") || 1 }, e621: { refresh_days: +v("r621") || 7 } };
+        if (v("r6") !== null) ch.trends = { e6ai: { refresh_days: +v("r6") || 1 }, e621: { refresh_days: +v("r621") || 7 }, floofgens:{refresh_days:+v("rfloof")||1} };
         await api("settings_save", { changes: ch });
         await loadInfo(); S.flash = "Сохранено"; render();
       }
@@ -1862,6 +1879,7 @@
       const c = S.tgCh.find((x) => x.chat_id === e.target.dataset.chsel);
       S.tgCh = await api("tg_select", { chat_id: c.chat_id, selected: e.target.checked, rating: c.rating || "all" }); S.stats = null; render(); return;
     }
+    if (e.target.dataset.action === "trend-common") { S.trendCommon = e.target.checked; store.set("trendCommon",S.trendCommon); await loadOverview(); render(); }
     if (e.target.dataset.action === "mine") { S.mine = e.target.checked; store.set("mine", S.mine); await loadOverview(); render(); }
   });
 

@@ -16,16 +16,17 @@ class Floofgens(unittest.TestCase):
         self.env = patch.dict(os.environ, CROSSPOST_DATA=self.tmp.name)
         self.env.start()
         self.addCleanup(self.env.stop)
-        settings.update('e6ai', {'site': 'floofgens', 'username': 'blep-user', 'blep_api_key': 'blep-key',
-                                'accounts': {'floofgens': {'username': 'floof-user', 'api_key': 'floof-key'},
-                                             'e621': {'username': 'e621-user', 'api_key': 'e621-key'}}})
+        settings.update('e6ai', {'username': 'blep-user', 'blep_api_key': 'blep-key'})
+        settings.update('floofgens', {'username': 'floof-user', 'api_key': 'floof-key'})
+        settings.update('e621', {'username': 'e621-user', 'api_key': 'e621-key'})
+        settings.update('modules', {'floofgens': True, 'e621': True})
         post_stats._e6_cache.clear()
         self.addCleanup(post_stats._e6_cache.clear)
 
     def test_check_is_read_only_and_uses_floofgens_credentials(self):
         response = Mock(status_code=200, json=lambda: {'name': 'floof-user', 'id': 7})
         with patch('requests.get', return_value=response) as get, patch('requests.post') as post:
-            self.assertEqual(e6ai.check(settings.load()['e6ai'])['id'], 7)
+            self.assertEqual(e6ai.check(settings.load()['floofgens'])['id'], 7)
         post.assert_not_called()
         self.assertEqual(get.call_args_list[0].args[0], 'https://floofgens.net/favorites.json')
         self.assertEqual(get.call_args_list[0].kwargs['auth'], ('floof-user', 'floof-key'))
@@ -48,15 +49,14 @@ class Floofgens(unittest.TestCase):
             return Mock(status_code=200, json=lambda: {'success': True, 'post_id': 42})
         for rating, expected in [('sfw', 's'), ('erotic', 'q'), ('explicit', 'e')]:
             with self.subTest(rating=rating), patch('core.retry.post', side_effect=send) as post:
-                result = e6ai.upload(settings.load()['e6ai'], path, ['artist:test', 'blue eyes', 'blue eyes', 'rating:s'],
+                result = e6ai.upload(settings.load()['floofgens'], path, ['artist:test', 'blue eyes', 'blue eyes', 'rating:s'],
                                      rating, ['https://example.org/art'], 'Description', 8)
                 self.assertEqual(post.call_args.kwargs['data']['upload[rating]'], expected)
                 self.assertEqual(result, {'post_id': 42, 'url': 'https://floofgens.net/posts/42', 'duplicate': False})
                 post.assert_called_once()
 
     def test_e621_uses_its_own_account_and_upload_endpoint(self):
-        settings.update('e6ai', {'site': 'e621'})
-        cfg = settings.load()['e6ai']
+        cfg = settings.load()['e621']
         self.assertEqual(e6ai.name(cfg), 'e621')
         self.assertEqual(e6ai.history_site(cfg), 'e621')
         path = Path(self.tmp.name) / 'drawing.png'
@@ -71,23 +71,23 @@ class Floofgens(unittest.TestCase):
     def test_removing_platform_keeps_account_and_blocks_publication(self):
         from app.api import Api
         api = Api.__new__(Api)
-        settings.update('e6ai', {'enabled': True})
-        api.modules_set('e6ai', False)
-        self.assertFalse(settings.load()['e6ai']['enabled'])
-        self.assertEqual(settings.load()['e6ai']['api_key'], 'floof-key')
-        api.modules_set('e6ai', True)
-        self.assertTrue(settings.load()['e6ai']['enabled'])
-        self.assertEqual(settings.load()['e6ai']['api_key'], 'floof-key')
+        settings.update('floofgens', {'enabled': True})
+        api.modules_set('floofgens', False)
+        self.assertFalse(settings.load()['floofgens']['enabled'])
+        self.assertEqual(settings.load()['floofgens']['api_key'], 'floof-key')
+        api.modules_set('floofgens', True)
+        self.assertTrue(settings.load()['floofgens']['enabled'])
+        self.assertEqual(settings.load()['floofgens']['api_key'], 'floof-key')
 
     def test_duplicate_and_auth_failure(self):
         from core.common import PlatformError
         path = Path(self.tmp.name) / 'image.png'
         path.write_bytes(b'image')
         with patch('core.retry.post', return_value=Mock(status_code=412, json=lambda: {'reason': 'duplicate', 'post_id': 42})):
-            self.assertTrue(e6ai.upload(settings.load()['e6ai'], path, [], 'sfw')['duplicate'])
+            self.assertTrue(e6ai.upload(settings.load()['floofgens'], path, [], 'sfw')['duplicate'])
         with patch('core.retry.post', return_value=Mock(status_code=401, json=lambda: {})):
             with self.assertRaisesRegex(PlatformError, 'floofgens.net не принял'):
-                e6ai.upload(settings.load()['e6ai'], path, [], 'sfw')
+                e6ai.upload(settings.load()['floofgens'], path, [], 'sfw')
 
     def test_statistics_and_moderation_follow_original_site(self):
         from app import db

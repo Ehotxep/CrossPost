@@ -1,6 +1,6 @@
 /* Путеводитель использует обычные экраны настроек и не публикует тестовые посты. */
 (function () {
-  const platforms = [['telegram','Telegram'],['discord','Discord'],['vk','ВКонтакте'],['bluesky','Bluesky'],['deviantart','DeviantArt'],['e6ai','blep.art / e621 / floofgens.net'],['reddit','Reddit'],['joyreactor','JoyReactor']];
+  const platforms = [['telegram','Telegram'],['discord','Discord'],['vk','ВКонтакте'],['bluesky','Bluesky'],['deviantart','DeviantArt'],['e6ai','blep.art'],['e621','e621'],['floofgens','floofgens.net'],['reddit','Reddit'],['joyreactor','JoyReactor']];
   const steps = ['Площадки','Оформление','Расписание','Дополнительные функции'];
   const C = () => window.CP;
   const esc = value => C().esc(value == null ? '' : value);
@@ -17,7 +17,7 @@
       joyreactor: !!(cfg.joyreactor?.browser_ok && cfg.joyreactor.ai_tags?.length),
       bluesky: !!cfg.bluesky_session?.ok,
       deviantart: !!cfg.deviantart_session?.ok,
-      e6ai: !!(cfg.e6ai?.has_key && cfg.e6ai?.username),
+      ...Object.fromEntries(['e6ai','e621','floofgens'].map(k=>[k,!!(cfg[k]?.has_key && cfg[k]?.username)])),
     };
     return platforms.map(([key,name]) => ({key,name,ready:enabled(key) && configured[key],
       message: cfg.modules?.[key]===false ? 'Площадка выключена' : !configured[key] ? 'Нужно настроить подключение' : enabled(key) ? 'Настройки заполнены' : 'Подключение сохранено, отправка выключена'}));
@@ -73,7 +73,7 @@
       ${card('Время вручную','В редакторе выберите дату и время рядом с кнопкой публикации. Пост появится в календаре.', '<button class="btn small" data-guide-open="post" data-view-link="post">Открыть редактор</button>')}
       ${card('Автоматическая очередь',p.pipeline?.enabled?'Автоматическая очередь включена. Crosspost назначает время по её правилам; его можно закрепить вручную.':'Автоматическая очередь выключена. Добавленные в неё посты ждут включения, а посты с ручным временем следуют своему расписанию.','<button class="btn small" data-guide-open="queue" data-view-link="history">Открыть очередь</button>')}
       ${card('Фоновая отправка','Чтобы запланированные посты выходили при закрытом окне, нужна фоновая отправка. Перед закрытием дождитесь подтверждения её запуска. Автозапуск Windows включается отдельно.',link('worker','Настроить фоновую отправку'))}</div>`;
-    const features = [['tags','Подбор тегов',['tagger'],'Предлагает теги по картинке. Модель устанавливается отдельно.'],['stats','Статистика',['stats','collect','news','forecast'],'Собирает результаты публикаций, показывает новости и прогноз.'],['trends','Тренды',['trends'],'Помогает изучать популярные темы на blep.art и e621.']];
+    const features = [['tags','Подбор тегов',['tagger'],'Предлагает теги по картинке. Модель устанавливается отдельно.'],['stats','Статистика',['stats','collect','news','forecast'],'Собирает результаты публикаций, показывает новости и прогноз.'],['trends','Тренды',['trends'],'Помогает изучать популярные темы на blep.art, e621 и floofgens.net.']];
     return `<p class="muted">Включите только нужные возможности. Их можно изменить в любой момент.</p><div class="guide-items">${features.map(([key,name,keys,text])=>`<label class="guide-item"><span class="tgl"><input type="checkbox" data-feat="${key}" ${keys.some(k=>modules[k]!==false)?'checked':''}><span>${name}</span></span><p class="muted small">${text}</p></label>`).join('')}</div>
       <div class="guide-check"><h3>Проверка готовности</h3><p class="muted small">Это локальная проверка настроек: она не обращается к площадкам, не запускает очередь и ничего не публикует.</p><button class="btn" data-guide-action="check" ${C().S.guideChecking?'disabled':''}>${C().S.guideChecking?'Проверяю…':'Проверить настройки'}</button>${resultHtml()}${C().S.guideError?C().problemHtml(C().S.guideError):''}</div>`;
   }

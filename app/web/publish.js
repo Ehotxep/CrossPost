@@ -17,11 +17,23 @@
   const TEXTP = ["telegram", "discord", "vk", "bluesky", "deviantart", "reddit", "joyreactor"];   // площадки с текстом поста и подписью
   const esc = (s) => C().esc(s == null ? "" : s);
   const mod = (k) => { const st = window.CP && window.CP.S, m = st && st.info && st.info.modules; return !m || m[k] !== false; };   // модуль включён
-  const BN = () => {   // куда загружаем: e6ai или e621 (безопасно и до загрузки настроек)
-    const st = window.CP && window.CP.S, e6 = st && st.pub && st.pub.e6ai;
-    return (e6 && e6.site_name) || "e6ai";
+  const BOORUS = ['e6ai', 'e621', 'floofgens'];
+  const BN = () => {
+    const s = S();
+    if (s.view === 'settings') {
+      if (BOORUS.includes(s.platSec)) return s.platSec;
+      return BOORUS.includes(s.booruTagSite) ? s.booruTagSite : BOORUS.find(k => s.pub?.modules?.[k] !== false) || 'e6ai';
+    }
+    const active = BOORUS.filter(k => s.pub?.[k]?.enabled && !(s.draft?.exclude || []).includes(k));
+    return active.includes(s.booruTagSite) ? s.booruTagSite : active[0] || s.booruTagSite || 'e6ai';
   };
-  const BL = () => S().pub?.booru_sites?.[BN()]?.name || ({e6ai:"blep.art",e621:"e621",floofgens:"floofgens.net"}[BN()] || BN());
+  const BL = () => S().pub?.booru_sites?.[BN()]?.name || ({e6ai:'blep.art',e621:'e621',floofgens:'floofgens.net'}[BN()]);
+  const TAG_METHODS = new Set(['tag_cats','post_tags','e6_learned','e6_forget','e6_never','e6_check_now','e6db_status','e6db_update','tag_search','e6_initial','e6_form']);
+  const tagApi = (name, args={}) => C().api(name, TAG_METHODS.has(name) ? {...args, booru_site:BN()} : args);
+  function booruTabs() {
+    const keys = BOORUS.filter(k => S().pub?.modules?.[k] !== false && (S().view === 'settings' || (S().pub[k]?.enabled && !(S().draft?.exclude || []).includes(k))));
+    return `<div class="chips" aria-label="Сайт для редактирования тегов">${keys.map(k => `<button class="chip ${BN() === k ? 'on' : ''}" data-pa="booru-tags" data-site="${k}">${C().pbadge(k,{sm:true})} ${esc(S().pub.booru_sites[k].name)}</button>`).join('')}</div>`;
+  }
   const mb = (b) => b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + " КБ" : (b / 1024 / 1024).toFixed(b < 10 * 1024 * 1024 ? 1 : 0).replace(".", DEC) + " МБ";
   const tok = () => encodeURIComponent(window.API_TOKEN);
   const ratingPill = (r) => r === "sfw" ? `<span class="pill sfw">SFW</span>` : r === "erotic" ? `<span class="pill erotic">Эротика</span>` : r === "explicit" ? `<span class="pill nsfw">18+</span>` : "";
@@ -31,7 +43,25 @@
   const multiOn = () => featOn("targeting") && !!draft().multi;
   function draft() {
     const s = S();
-    if (!s.draft) s.draft = C().store.get("draft", null) || { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
+    if (!s.draft) s.draft = C().store.get("draft", null) || { files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} };
+    if (s.pub) {
+      if (!s.draft.booru_posts) {
+        const legacy = s.pub.legacy_booru_site || 'e6ai';
+        s.draft.booru_posts = {[legacy]: {tags:s.draft.e6tags || s.draft.e6ai_tags || {}, meta:s.draft.e6meta || s.draft.e6ai_meta || {}}};
+        if (legacy !== 'e6ai') {
+          s.draft.exclude = (s.draft.exclude || []).map(k => k === 'e6ai' ? legacy : k);
+          const profile = s.draft.profile;
+          if (profile) {
+            if (profile.e6ai) { profile[legacy] = profile.e6ai; delete profile.e6ai; }
+            for (const field of ['text_lang','versions']) if (profile[field]?.e6ai !== undefined) { profile[field][legacy] = profile[field].e6ai; delete profile[field].e6ai; }
+            if (profile.platforms) profile.platforms = profile.platforms.map(k => k === 'e6ai' ? legacy : k);
+          }
+          if (s.draft.platform_texts?.e6ai) { s.draft.platform_texts[legacy] = s.draft.platform_texts.e6ai; delete s.draft.platform_texts.e6ai; }
+        }
+      }
+      const slot = s.draft.booru_posts[BN()] ||= {tags:{},meta:{}};
+      s.draft.e6tags = slot.tags; s.draft.e6meta = slot.meta;
+    }
     return s.draft;
   }
   function saveDraft() { C().store.set("draft", S().draft); queueDraftSave(); }
@@ -41,7 +71,7 @@
   const requests=new window.PostState.LatestRequests();
   const draftKey=()=>JSON.stringify([apiDraft(),S().pub]);
 
-  const EMPTY = () => ({ files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} });
+  const EMPTY = () => ({ files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {}, booru_posts:{} });
   // досылка опубликованного поста на другие площадки: черновик этого поста открывается на экране «Новый пост»,
   // а ваш текущий черновик откладывается и возвращается после
   async function openExtend(pubId) {
@@ -52,7 +82,7 @@
     if (!cur.extend) C().store.set("draft_saved", cur);
     const x = r.draft || {};
     s.draft = { files: r.files, variants: x.variants || {}, title: x.title || "", text: x.text || "", rating: x.rating, signature: x.signature !== false,
-      exclude: x.exclude || [], hashtags: x.hashtags == null ? null : x.hashtags, e6tags: x.e6ai_tags || {}, e6meta: x.e6ai_meta || {}, multi: !!x.multi, marks: x.marks || {},
+      exclude: x.exclude || [], hashtags: x.hashtags == null ? null : x.hashtags, e6tags: x.e6ai_tags || {}, e6meta: x.e6ai_meta || {}, booru_posts:x.booru_posts, multi: !!x.multi, marks: x.marks || {},
       platform_texts:x.platform_texts||{},alts:x.alts||{},reddit_flairs:x.reddit_flairs||{},profile:x.profile||null,extend: { pub_id: r.pub_id, title: r.title, done: r.done, failed: r.failed, missing: r.missing } };
     saveDraft();
     s.pstatOpen = null; s.postMode = "edit"; s.when = "now"; s.tried = false; s.schedMsg = "";
@@ -67,7 +97,7 @@
 
   // ---------------- загрузка данных ----------------
   async function load(view) {
-    const s = S(), api = C().api;
+    const s = S(), api = tagApi;
     try {
       if (view === "post") {
         if (!s.pub) s.pub = await api("pub_settings");
@@ -417,7 +447,7 @@
       return p.signatures.use[k] !== false && (d.rating && d.rating !== "sfw" ? v.nsfw : v.sfw);
     }) : [];
     const titleFor = p ? [["telegram", p.telegram.include_title], ["discord", p.discord.include_title], ["vk", p.vk.include_title]].filter(([, on]) => on).map(([k]) => k) : [];
-    const tagsOn = p && ((p.e6ai && p.e6ai.enabled) || (p.hashtags && p.hashtags.enabled));
+    const tagsOn = p && ((BOORUS.some(k => p[k]?.enabled)) || (p.hashtags && p.hashtags.enabled));
     const X = d.extend;
     const toolButtons = `<div class="post-tools-buttons"><button class="btn small ${s.postPanel==='drafts'?'on':''}" data-pa="post-panel" data-panel="drafts" aria-expanded="${s.postPanel==='drafts'}" aria-controls="post-tools">Черновики</button><button class="btn small ${s.postPanel==='templates'?'on':''}" data-pa="post-panel" data-panel="templates" aria-expanded="${s.postPanel==='templates'}" aria-controls="post-tools">Шаблоны</button></div>`;
     const head = (X ? `<div class="toolbar"><h1>Дослать пост</h1><span class="spacer"></span>${toolButtons}<button class="btn ghost" data-pa="extend-cancel">${C().ICON.close} Отменить досылку</button></div>
@@ -478,7 +508,7 @@
     if (s.view === "post") C().render();
   }
   // ----- второй язык: английский вариант заголовка и описания, на какие площадки он уходит -----
-  const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "Booru"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]];
+  const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art"], ["e621", "e621"], ["floofgens", "floofgens.net"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]];
   // шаблоны сервисов: [код, адрес, модель по умолчанию, название]
   const TRP = [["deepseek", "https://api.deepseek.com", "deepseek-flash", "DeepSeek"], ["openai", "https://api.openai.com/v1", "gpt-4o-mini", "OpenAI"],
     ["openrouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", "OpenRouter"], ["ollama", "http://localhost:11434/v1", "qwen2.5:7b", "Ollama (локально)"],
@@ -564,7 +594,7 @@
   }
   function e6FormHtml(f) {
     const s = S(), d = draft(), F = (s.e6form || {})[f.id], m = e6meta(f.id);
-    const isArtist = BN() === "e621";   // на e621 строка «Директор» — это «Художник»
+    const isArtist = BN() !== "e6ai";   // на e621 строка «Директор» — это «Художник»
     if (!F) return `<p class="muted small">Готовлю форму…</p>`;
     const R = F.rows, c = F.check, need = new Set(c.need);
     const lim = (lst, n) => { const on = lst.filter((o) => o.on || o.imp || o.lock); const sug = lst.filter((o) => !(o.on || o.imp || o.lock)).slice(0, n); return [...on, ...sug]; };
@@ -621,8 +651,8 @@
       <button class="btn small primary" data-pa="e6db-get">Скачать базу</button></div>`;
   }
   function e6on() {   // e6ai настроен и не выключен для этого поста (по умолчанию выключен)
-    const s = S(), e6 = s.pub && s.pub.e6ai;
-    return !!(e6 && e6.enabled && !(draft().exclude || []).includes("e6ai"));
+    const s = S(), e6 = s.pub && s.pub[BN()];
+    return !!(e6 && e6.enabled && !(draft().exclude || []).includes(BN()));
   }
   function e6Html() {
     const s = S(), d = draft();
@@ -630,11 +660,11 @@
     const imgs = d.files;
     const tg = s.tagger || {};
     const runJob = tg.run_job, running = runJob && runJob.state === "running";
-    let h = `<div class="tagsec" id="e6card"><div class="cardhead"><h3 style="display:flex;align-items:center;gap:8px">Теги ${BL()} ${C().pbadge("e6ai", { sm: true })}
+    let h = `<div class="tagsec" id="e6card"><div class="cardhead"><h3 style="display:flex;align-items:center;gap:8px">Теги ${BL()} ${C().pbadge(BN(), { sm: true })}
         ${C().hint("Как форма загрузки на blep.art. Сплошные — уйдут на " + (BL()) + ", пунктир — подсказка теггера (число — уверенность): нажмите, чтобы добавить. Бледные " + (BL()) + " добавит сам. Мелкие детали (пирсинг, украшения, татуировки) теггер путает — их отмечайте сами. Без заполненных строк и «Всё верно» " + (BL()) + " не загружаем.")}</h3>
         <span class="muted small">${!mod("tagger") ? `теггер выключен — теги вписываются вручную (<a href="#" data-view-link="settings" data-tab="features">Функции</a>)` : tg.ready ? "теггер JTP PILOT²" : `теггер не установлен — <a href="#" data-view-link="platforms" data-tab="tags">установить</a>`}</span></div>`;
     if (s.tagCpu) h += `<div class="callout warn"><p>Теггер не видит видеокарту и подбирал бы теги на процессоре — это медленно и тормозит компьютер, поэтому теги пока не подбираются. <a href="#" data-view-link="settings" data-tab="tags">Как исправить</a></p></div>`;
-    h += e6DbHtml();
+    h += booruTabs() + e6DbHtml();
     if (running) h += `<p class="muted small">${esc(runJob.message || "Подбираю теги…")}</p>`;
     if (!imgs.length) return h + `<p class="muted small">Добавьте картинки — теги для каждой свои: на ${BL()} каждая картинка — отдельный пост.</p></div>`;
     h += imgs.map((f) => {
@@ -659,16 +689,17 @@
     const s = S(); s.tagCat = s.tagCat || {};
     const miss = [...new Set(tags)].filter((t) => !(t in s.tagCat));
     if (!miss.length) return false;
-    try { Object.assign(s.tagCat, await C().api("tag_cats", { tags: miss })); } catch (e) { return false; }
+    try { Object.assign(s.tagCat, await tagApi("tag_cats", { tags: miss })); } catch (e) { return false; }
     return true;
   }
   async function refreshE6() {
     const s = S(), d = draft();
-    const imgs = d.files;
+    const imgs = d.files, site = BN();
     if (!imgs.length || !e6on()) { s.e6form = {}; return; }
     d.e6tags = d.e6tags || {}; d.e6meta = d.e6meta || {};
     try {
-      const res = await C().api("e6_form", { items: imgs.map((f) => ({ id: f.id, tags: d.e6tags[f.id] || [], meta: e6meta(f.id) })), rating: d.rating || "" });
+      const res = await tagApi("e6_form", { items: imgs.map((f) => ({ id: f.id, tags: d.e6tags[f.id] || [], meta: e6meta(f.id) })), rating: d.rating || "" });
+      if (site !== BN()) return;
       s.e6form = res; s.e6cats = s.e6cats || {};
       let ch = false;
       for (const [id, F] of Object.entries(res)) {
@@ -679,10 +710,10 @@
     } catch (e) { s.e6form = {}; }
   }
   async function loadTags(run, force) {
-    const s = S(), d = draft(), api = C().api;
+    const s = S(), d = draft(), api = tagApi;
     const e6 = e6on();
     // теггер смотрит картинки, пока он включён (переключатель справа вверху); к посту теги привязываются, только если включён e6ai
-    if (!mod("tagger") || !force && !(s.taggerOn !== false && s.pub && ((s.pub.e6ai && s.pub.e6ai.enabled) || (s.pub.hashtags && s.pub.hashtags.enabled)))) {
+    if (!mod("tagger") || !force && !(s.taggerOn !== false && s.pub && ((BOORUS.some(k => s.pub[k]?.enabled)) || (s.pub.hashtags && s.pub.hashtags.enabled)))) {
       if (e6) { await refreshE6(); if (s.view === "post" && s.postMode !== "progress") paintE6(); }   // теггер выключен — форма e6ai всё равно нужна
       return;
     }
@@ -753,7 +784,7 @@
     if (!q || q.length < 2) { acClose(); return; }
     const seq = ++acSeq;
     let res = [];
-    try { res = await C().api("tag_search", { q, cat: inp.dataset.ac || "", limit: 10 }); } catch (e) { return; }
+    try { res = await tagApi("tag_search", { q, cat: inp.dataset.ac || "", limit: 10 }); } catch (e) { return; }
     if (seq !== acSeq || document.activeElement !== inp) return;
     if (!res.length) { acClose(); return; }
     const el = acEl(), r = inp.getBoundingClientRect();
@@ -821,7 +852,7 @@
     const doneL = p.dests.filter((x) => x.done);
     const needs = p.dests.filter(isNeed);
     const row = (x) => `<label class="drow ${x.will ? "" : isNeed(x) ? "needrow" : "dim"}">${C().pbadge(x.platform, { cls: x.will || isNeed(x) ? "" : "off" })}
-        <span class="dn"><b translate="no">${esc(/^e621 · /.test(x.name) ? x.name : x.name.replace(/^[^·]+· /, ""))}</b><span>${x.will ? esc(x.details.join(", ")) : esc(x.reason)}${isNeed(x) ? ` · <a href="#" data-pa="e6need">к тегам</a>` : ""}</span></span>
+        <span class="dn"><b translate="no">${esc(BOORUS.includes(x.platform) ? x.name : x.name.replace(/^[^·]+· /, ""))}</b><span>${x.will ? esc(x.details.join(", ")) : esc(x.reason)}${isNeed(x) ? ` · <a href="#" data-pa="e6need">к тегам</a>` : ""}</span></span>
         <span class="tgl"><input type="checkbox" ${x.will || isNeed(x) ? "checked" : ""} ${x.can_toggle || x.off ? "" : "disabled"} data-pa="toggle" data-key="${esc(x.key)}" aria-label="${esc(x.name)}"></span></label>`;
     // пока пост только собирается, «выберите рейтинг» и «добавьте картинки» — не ошибки, а подсказки:
     // красным они становятся, только если нажать «Опубликовать» раньше времени
@@ -1443,7 +1474,7 @@
     }
   }
   async function openDrawer(key) {
-    const s = S(), api = C().api, [kind, id] = String(key).split(":");
+    const s = S(), api = tagApi, [kind, id] = String(key).split(":");
     hideHoverCard();
     s.pstatOpen = key; s.journalOpen=null; s.pstatErr = ""; s.pstat = s.pstat || {}; C().render();
     if (kind === "cal") return;
@@ -1454,6 +1485,25 @@
 
   // ----- статистика поста -----
   const mult = (v) => "×" + Number(v).toFixed(2).replace(".", DEC);
+  function booruCheckpointsHtml(data) {
+    if (!data?.items?.length) return '';
+    const number = value => value == null ? '—' : C().num(value);
+    const phase = hours => hours === 168 ? '7 дней' : hours + ' ч';
+    const states = {waiting:'Ожидается',due:'Ожидается замер',missed:'Пропущен',unknown:'Дата поста пока не получена'};
+    const comparison = point => {
+      const c = point.comparison;
+      if (!c?.ready) return `<p class="muted small">Недостаточно истории для сравнения: ${c?.n || 0} из ${data.minimum} публикаций.</p>`;
+      return `<details class="more"><summary>К обычному результату: ${c.index == null ? 'медиана равна нулю' : mult(c.index)} · ${c.n} публикаций${c.preliminary ? ' · предварительно' : ''}</summary>
+        <p class="small">Обычная медиана: <b>${number(c.median)}</b> добавлений в избранное. Эта работа выше ${c.lower} из ${c.n} результатов, наравне с ${c.equal}.</p>
+        <p class="muted small">У средних 50% сравнимых публикаций: ${number(c.typical_low)}–${number(c.typical_high)}. Интервал неопределённости медианы (95%): ${number(c.median_low)}–${number(c.median_high)}.</p>
+        <p class="muted small">${esc(c.method)}. История за предыдущие ${c.window_days} дней. Это описание наблюдений, а не доказательство причины успеха.</p></details>`;
+    };
+    const item = (art,index) => `<details class="booru-checkpoint-art" ${data.items.length === 1 ? 'open' : ''}><summary>Изображение ${index+1} · пост ${art.post_id}</summary>
+      ${art.points.map(point => `<div class="booru-checkpoint"><div class="row"><b>≈ ${phase(point.hours)}</b><span>${point.state === 'measured' ? `В избранном: <b>${number(point.favs)}</b>` : states[point.state] || 'Нет данных'}</span></div>
+        ${point.state === 'measured' ? `<span class="muted small">Фактический возраст: ${Number(point.age_h).toFixed(1).replace('.',DEC)} ч · ${esc(new Date(point.taken_at).toLocaleString(LOC))}</span>${comparison(point)}` : ''}</div>`).join('')}
+      ${art.error ? `<p class="muted small">${esc(art.error)}</p>` : ''}</details>`;
+    return `<section class="booru-checkpoints"><h4>Избранное в одинаковом возрасте</h4><p class="muted small">Наблюдения через сутки, трое суток и неделю. Пропущенные замеры не восстанавливаются из сегодняшних цифр.</p>${data.items.map(item).join('')}</section>`;
+  }
   function growthSvg(st, fc, curve) {
     const pts = (st.series || []).filter((p) => p.h <= 192);
     const final = fc && fc.expected ? fc.expected : st.projected || null;
@@ -1494,7 +1544,7 @@
       if (v >= L.hit || (pc != null && pc >= 0.9)) h += `<div class="banner-hit ${v >= L.super ? "super" : ""}">${C().ICON.trophy}<span><b>${v >= L.super ? "Супер-хит" : v >= L.hit ? "Хит канала" : "Сильный пост"}</b>${pc != null ? ` — входит в топ-${Math.max(1, Math.round((1 - pc) * 100))}% публикаций канала` : ""}${top.index ? "" : ", пока по оценке первых часов"}</span>${mk(v, !top.index, "big")}</div>`;
       else if (v < 0.77) h += `<div class="banner-hit low"><span>Пост идёт слабее обычного для канала${pc != null ? ` — лучше ${Math.round(pc * 100)}% публикаций` : ""}</span>${mk(v, !top.index, "big")}</div>`;
     }
-    const shown = d.dests.filter((x) => x.editable || x.stats || x.e6ai || x.nums || x.stats_url || !x.why);   // ссылка на статистику доступна и без автоматического сбора
+    const shown = d.dests.filter((x) => x.editable || x.stats || x.e6ai || x.booru_metrics || x.nums || x.stats_url || !x.why);   // ссылка на статистику доступна и без автоматического сбора
     if (!shown.length) h += `<p class="muted small">Площадки этого поста не отдают цифр — смотреть их можно только на самой площадке.</p>`;
     for (const x of shown) {
       const plat = x.platform || (x.key || "").split(":")[0];
@@ -1527,19 +1577,20 @@
         h += `<p class="muted small">${esc(x.stats.why)}</p>`;
       } else if (x.e6ai) {
         h += x.e6ai.error ? `<p class="muted small">${esc(x.e6ai.error)}</p>` : `<div class="pnums">
-          <div class="pnum"><span class="muted small">Score</span><b>${n(x.e6ai.score || 0)}</b></div>
-          <div class="pnum"><span class="muted small">В избранном</span><b>${n(x.e6ai.favs || 0)}</b></div>
-          <div class="pnum"><span class="muted small">Комментарии</span><b>${n(x.e6ai.comments || 0)}</b></div></div>`;
+          <div class="pnum"><span class="muted small">Score</span><b>${x.e6ai.score == null ? "—" : n(x.e6ai.score)}</b></div>
+          <div class="pnum"><span class="muted small">В избранном</span><b>${x.e6ai.favs == null ? "—" : n(x.e6ai.favs)}</b></div>
+          <div class="pnum"><span class="muted small">Комментарии</span><b>${x.e6ai.comments == null ? "—" : n(x.e6ai.comments)}</b></div></div>`;
         h += e6modHtml(x.e6mod);
       } else if (x.nums) {
         h += x.nums.error ? `<p class="muted small">${esc(x.nums.error)}</p>` :
           `<div class="pnums">${x.nums.cells.map(([l, v]) => `<div class="pnum"><span class="muted small">${esc(l)}</span><b>${typeof v === "number" ? n(v) : esc(v == null ? "0" : String(v))}</b></div>`).join("")}</div>${x.nums.note ? `<p class="muted small">${esc(x.nums.note)}</p>` : ""}`;
       } else if (x.why) h += `<p class="muted small">${esc(x.why)}</p>`;
+      if (x.booru_metrics) h += booruCheckpointsHtml(x.booru_metrics);
       h += `</div>`;
     }
     const busy = s.pstatBusy === id;
     h += `<div class="pfoot"><button class="btn small" data-pa="pstat-refresh" data-id="${esc(id)}" ${busy ? "disabled" : ""}>${C().ICON.refresh} ${busy ? "Обновляю…" : "Обновить цифры"}</button>
-      ${C().hint("Первые 7 дней цифры снимаются сами — через 1, 3, 6, 12 часов, сутки и дальше, пока работает фоновая отправка." + (S().worker && S().worker.track ? " " + S().worker.track : ""))}</div>`;
+      ${C().hint("Пока работает фоновая отправка и включён сбор статистики: Telegram измеряется в первые 7 дней; для blep.art, e621 и floofgens.net сохраняются контрольные точки примерно через 24, 72 и 168 часов." + (S().worker && S().worker.track ? " " + S().worker.track : ""))}</div>`;
     if (s.pstatErr) h += `<p class="err small">${esc(s.pstatErr)}</p>`;
     return h;
   }
@@ -1566,8 +1617,8 @@
         <button class="btn small ghost" data-pa="e6-checknow">Сверить сейчас</button></div>
       <div class="field"><span class="lbl">Не отмечаю сам — модераторы убирали</span><div class="chips">${L.removed.map((t) => chip(t, "mrem")).join("") || `<span class="muted small">пока ничего</span>`}</div></div>
       <div class="field"><span class="lbl">Отмечаю охотнее — модераторы добавляли</span><div class="chips">${L.added.map((t) => chip(t, "madd")).join("") || `<span class="muted small">пока ничего</span>`}</div></div>
-      <div class="field"><label for="e6never">Не предлагать совсем ${C().hint("Эти теги теггера не показываются даже пунктиром. Через пробел.")}</label>
-        <textarea id="e6never" rows="2" placeholder="ring_piercing one_eye_closed">${esc((L.never || []).join(" "))}</textarea></div>
+      <div class="field"><label for="e6never-${BN()}">Не предлагать совсем ${C().hint("Эти теги теггера не показываются даже пунктиром. Через пробел.")}</label>
+        <textarea id="e6never-${BN()}" rows="2" placeholder="ring_piercing one_eye_closed">${esc((L.never || []).join(" "))}</textarea></div>
       <div class="cardfoot"><button class="btn primary" data-pa="e6-never-save">Сохранить список</button>${L.removed.length || L.added.length ? `<button class="btn ghost" data-pa="e6-forget" data-tag="">Забыть всё выученное</button>` : ""}<span class="ok small">${esc(S().e6learnOk || "")}</span></div></section>`;
   }
 
@@ -1590,7 +1641,7 @@
       case "reddit": case "joyreactor": return p[sec].browser_ok ? [p[sec].enabled?"ok":"warn",p[sec].enabled?"через браузер · экспериментально":"отправка выключена"] : ["", "не подключено"];
       case "bluesky": { const b = p.bluesky_session || {}; return b.ok && p.bluesky.enabled ? ["ok", "@" + b.handle] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
       case "deviantart": { const b = p.deviantart_session || {}; return b.ok && p.deviantart.enabled ? ["ok", b.username || "подключено"] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
-      case "e6ai": { const pre = BL() + " · "; return p.e6ai.enabled && p.e6ai.has_key ? ["ok", pre + (p.e6ai.username || "подключено")] : ["", pre + "не подключено"]; }
+      case "e6ai": case "e621": case "floofgens": { const cfg = p[sec]; return cfg.enabled && cfg.has_key ? ["ok", cfg.username || "подключено"] : ["", "не подключено"]; }
       case "hashtags": return p.hashtags.enabled ? ["ok", "включены"] : ["", "выключены"];
       case "signatures": { const on = TEXTP.filter((k) => { const v = (p.signatures.platforms || {})[k] || {}; return v.sfw || v.nsfw; });
         return [on.length ? "ok" : "", on.length ? on.map((k) => C().PLAT[k][0]).join(", ") : "не заданы"]; }
@@ -1751,35 +1802,29 @@
       h += `</section>`;
     }
 
-    if (sec === "e6ai") {
-      const e6 = p.e6ai;
-      h += `<section class="card setc"><div class="head"><h2>${C().pbadge("e6ai")} ${BL()} ${hint("Оригиналы без сжатия; теги — постоянные плюс подобранные теггером; рейтинг s / q / e по рейтингу поста; в источники — ссылки на этот пост в других местах. Публикуется последним.")}</h2>
-          ${e6.enabled && e6.has_key ? badge("ok", "✓ " + esc(e6.username)) : badge("off", "не подключено")}</div>${err("e6")}${ok("e6")}
+    if (BOORUS.includes(sec)) {
+      const e6 = p[sec];
+      h += `<section class="card setc"><div class="head"><h2>${C().pbadge(sec)} ${BL()} ${hint("Оригиналы без сжатия; теги — постоянные плюс подобранные теггером; рейтинг s / q / e по рейтингу поста; в источники — ссылки на этот пост в других местах. Публикуется последним.")}</h2>
+          ${e6.enabled && e6.has_key ? badge("ok", "✓ " + esc(e6.username)) : badge("off", "не подключено")}</div>${err("e6:"+sec)}${ok("e6:"+sec)}
         ${BN() === "e6ai" && !e6.has_key ? `<div class="callout warn">e6ai закрылся. Перед отправкой на blep.art укажите новый API-ключ blep.art и нажмите «Проверить и сохранить». Старый ключ не используется.</div>` : ""}
-        <div class="row" style="align-items:center;gap:12px"><span class="small">Куда загружать ${hint("Формат загрузки blep.art, e621 и floofgens.net общий, поэтому форма тегов, теггер, проверка, правки модераторов и цифры работают одинаково. Аккаунт, API-ключ, постоянные теги и база тегов у каждого сайта свои — при переключении подставляются сами.")}</span>
-          <details class="platform-picker"><summary>${esc(BL())} · сменить сайт</summary>
-            <input type="search" data-platform-search aria-label="Поиск booru-сайта" placeholder="Найти сайт…">
-            <div class="platform-options">${Object.entries(p.booru_sites || {}).map(([key, site]) => `<button class="btn platform-option ${BN() === key ? 'primary' : ''}" data-platform-match="${esc(site.name.toLocaleLowerCase())}" data-pa="e6-site" data-val="${key}" ${site.available ? '' : 'disabled'} aria-pressed="${BN() === key}">${esc(site.name)}${site.available ? '' : ' · в разработке'}</button>`).join('')}</div>
-            <p class="muted small" data-platform-empty hidden>Площадка не найдена</p>
-          </details></div>
-        <p class="muted small">Для floofgens.net нужны собственные имя пользователя и API-ключ. Аккаунты, ключи, постоянные теги и базы тегов сайтов сохраняются отдельно.</p>
         ${BN() === "e621" ? `<div class="callout warn"><p><b>На e621 ИИ-арт запрещён правилами сайта</b> (кроме узких исключений вроде фонов) — для ИИ-работ есть blep.art. Такие загрузки удалят, а аккаунт могут заблокировать. Загружайте на e621 только работы, которые подходят под его правила. Проверьте и постоянные теги: <code>ai_generated</code> на e621 сразу пометит работу как ИИ.</p></div>` : ""}
-        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 200px"><label for="e6user">Имя пользователя на ${BL()}</label><input id="e6user" value="${esc(e6.username)}" placeholder="AnotherNeko"></div>
-          <div class="field" style="flex:2 1 260px"><label for="e6key">API-ключ ${hint("На " + (BL()) + ": Account → Manage API Access.")}</label><input id="e6key" type="password" placeholder="${e6.has_key ? "сохранён" : ""}"></div>
-          <button class="btn" data-pa="e6-save" ${busy("e6")}>Проверить и сохранить</button></div>
+        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 200px"><label for="e6user-${BN()}">Имя пользователя на ${BL()}</label><input id="e6user-${BN()}" value="${esc(e6.username)}" placeholder="AnotherNeko"></div>
+          <div class="field" style="flex:2 1 260px"><label for="e6key-${BN()}">API-ключ ${hint("На " + (BL()) + ": Account → Manage API Access.")}</label><input id="e6key-${BN()}" type="password" placeholder="${e6.has_key ? "сохранён" : ""}"></div>
+          <button class="btn" data-pa="e6-save" ${busy("e6:"+sec)}>Проверить и сохранить</button></div>
 </section>
         <section class="card setc"><div class="head"><h2>Теги и описание</h2></div>
-          <div class="field"><label for="e6const">Постоянные теги для ${BL()} ${hint(BN() === "e621" ? "Добавляются к каждой загрузке на e621: тег художника (artist), инструмент и т.п. У blep.art свои постоянные теги." : "Добавляются к каждой загрузке: ваш director-тег, инструмент и т.п. У e621 свои постоянные теги.")}</label>
-            <input id="e6const" value="${esc((e6.constant_tags || []).join(" "))}" placeholder="director_name stable_diffusion"></div>
-          <div class="row" style="align-items:center"><div class="field" style="flex:0 1 220px"><label for="e6pre">Отмечать теги теггера от, % ${hint("Сразу отмечаются теги не ниже 50% уверенности, даже если здесь меньше. Мелкие детали — пирсинг, украшения, татуировки — не отмечаются никогда: теггер их часто путает.")}</label><input id="e6pre" type="number" min="20" max="95" value="${Math.round(e6.preselect * 100)}"></div>
-            <div class="tgls" style="flex:1 1 360px"><label class="tgl"><input type="checkbox" id="e6src" ${e6.with_sources ? "checked" : ""}><span>Ссылки на пост — в источники</span></label>
-              <label class="tgl"><input type="checkbox" id="e6desc" ${e6.with_description ? "checked" : ""}><span>Текст поста — в описание</span></label></div></div>
+          <div class="field"><label for="e6const-${BN()}">Постоянные теги для ${BL()} ${hint(BN() === "e621" ? "Добавляются к каждой загрузке на e621: тег художника (artist), инструмент и т.п. У blep.art свои постоянные теги." : "Добавляются к каждой загрузке: ваш director-тег, инструмент и т.п. У e621 свои постоянные теги.")}</label>
+            <input id="e6const-${BN()}" value="${esc((e6.constant_tags || []).join(" "))}" placeholder="${BN() === 'e6ai' ? 'director_name stable_diffusion' : 'artist_name'}"></div>
+          <div class="row" style="align-items:center"><div class="field" style="flex:0 1 220px"><label for="e6pre-${BN()}">Отмечать теги теггера от, % ${hint("Сразу отмечаются теги не ниже 50% уверенности, даже если здесь меньше. Мелкие детали — пирсинг, украшения, татуировки — не отмечаются никогда: теггер их часто путает.")}</label><input id="e6pre-${BN()}" type="number" min="20" max="95" value="${Math.round(e6.preselect * 100)}"></div>
+            <div class="tgls" style="flex:1 1 360px"><label class="tgl"><input type="checkbox" id="e6src-${BN()}" ${e6.with_sources ? "checked" : ""}><span>Ссылки на пост — в источники</span></label>
+              <label class="tgl"><input type="checkbox" id="e6desc-${BN()}" ${e6.with_description ? "checked" : ""}><span>Текст поста — в описание</span></label></div></div>
           <div class="cardfoot"><button class="btn primary" data-pa="e6-opts">Сохранить</button></div></section>
         <p class="muted small">Теггер, база тегов и правки модераторов — в разделе <a href="#" data-view-link="settings" data-tab="tags">«Теги»</a>.</p>`;
     }
 
 
-    if (sec === "tags") {   // теггер — для хэштегов и e6ai / e621; база тегов и правки модераторов — для e6ai / e621
+    if (sec === "tags") {
+      h += booruTabs();   // теггер — для хэштегов и e6ai / e621; база тегов и правки модераторов — для e6ai / e621
       const tgr = s.tagger || {}, tjob = tgr.job, trun = tjob && tjob.state === "running";
       const mods = (s.info && s.info.modules) || {};
       h += mods.tagger === false ? `<section class="card setc"><div class="head"><h2>Подбор тегов выключен</h2></div>
@@ -1807,7 +1852,7 @@
         })() + `
           ${trun ? `<div class="callout"><p>${esc(tjob.message || "Устанавливаю…")}</p><div class="progress thin" style="flex:1 1 100%"><div style="width:${Math.round((tjob.progress || 0) * 100)}%"></div></div></div>` : ""}
           ${tjob && tjob.state === "error" ? `<pre class="err small" style="white-space:pre-wrap">${esc(tjob.error)}</pre>` : ""}</section>`;
-      h += mods.e6ai === false ? `<p class="muted small">База тегов и правки модераторов нужны для загрузки на blep.art / e621 / floofgens.net — площадка выключена.</p>`
+      h += BOORUS.every(k => mods[k] === false) ? `<p class="muted small">База тегов и правки модераторов нужны для загрузки на blep.art / e621 / floofgens.net — площадка выключена.</p>`
         : `${e6dbCard()}${e6learnCard()}`;
     }
 
@@ -2165,7 +2210,7 @@
     }
     const a = e.target.closest("[data-pa]");
     if (!a) return false;
-    const s = S(), api = C().api, act = a.dataset.pa;
+    const s = S(), api = tagApi, act = a.dataset.pa;
     if (a.tagName === "INPUT" || a.tagName === "SELECT") return act === "toggle" ? false : true;   // их обрабатывает onChange
     e.preventDefault();
     const d = draft();
@@ -2345,7 +2390,7 @@
         if (!a.dataset.tag && !confirm("Забыть всё, чему научились по правкам модераторов?")) return true;
         s.e6learn = await api("e6_forget", { tag: a.dataset.tag || "" }); C().render(); return true;
       }
-      case "e6-never-save": s.e6learn = await api("e6_never", { tags: val("e6never").split(/[\s,]+/).filter(Boolean) }); s.e6learnOk = "Сохранено"; C().render(); return true;
+      case "e6-never-save": s.e6learn = await api("e6_never", { tags: val("e6never-" + BN()).split(/[\s,]+/).filter(Boolean) }); s.e6learnOk = "Сохранено"; C().render(); return true;
       case "e6-checknow": { a.disabled = true; try { const r = await api("e6_check_now"); s.e6learnOk = r.checked ? `Сверено постов: ${r.checked}` : "Сверять пока нечего — посты сверяются через сутки после загрузки"; } catch (err) { s.e6learnOk = err.message; }
         s.e6learn = await api("e6_learned"); C().render(); return true; }
       case "media-install": {
@@ -2402,7 +2447,7 @@
       case "clear":
         if (!confirm("Очистить пост?")) return true;
         d.files.forEach((f) => api("post_remove_file", { file_id: f.id }).catch(() => {}));
-        s.draft = { _saved:d._saved, editing_schedule:d.editing_schedule, files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
+        s.draft = { _saved:d._saved, editing_schedule:d.editing_schedule, files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
       case "wk-start": a.disabled = true; try { s.worker = await api("worker_start"); } catch (err) { alert(err.message); } C().loadWorker(); C().render(); return true;
       case "wk-stop": if (!confirm("Выключить фоновую отправку? Запланированные посты будут выходить, только пока открыто окно Crosspost.")) return true;
         s.worker = await api("worker_stop"); setTimeout(async () => { s.worker = await api("worker_status"); C().render(); }, 16000); C().render(); return true;
@@ -2487,7 +2532,7 @@
           if(r.worker)s.worker=r.worker;
           s.schedMsg = `Запланировано: ${r.human}`;
           // новый пост; файлы НЕ удаляем — они нужны запланированной публикации
-          s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
+          s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} };
           saveDraft(); s.when = "now"; s.whenAt = null; await refreshPlan();
         } catch (err) { alert(err.message); }
         s.publishing = false; C().render(); return true;
@@ -2499,7 +2544,7 @@
           const result=await api("pipeline_add", checked);
           if(result.worker)s.worker=result.worker;
           s.schedMsg=result.notice;
-          s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
+          s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} };
           saveDraft(); s.when = "now"; s.whenAt = null; await refreshPlan();
         } catch (err) { alert(err.message); }
         s.publishing = false; C().render(); return true;
@@ -2595,7 +2640,7 @@
         { const st = await api("post_state"); s.pubState = st.state; s.pubJob = st.job; }
         s.view = "post"; s.postMode = "progress"; await C().loadInfo(); C().startPoll(); C().render(); return true;
       case "retry": await api("post_retry"); { const st = await api("post_state"); s.pubState = st.state; s.pubJob = st.job; } await C().loadInfo(); C().startPoll(); C().render(); return true;
-      case "newpost": s.postMode = "edit"; s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
+      case "newpost": s.postMode = "edit"; s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
       case "backedit": s.postMode = "edit"; await refreshPlan(); C().render(); return true;
       // --- настройки Telegram
       case "tg-token": await guard("tg", async () => { s.pub = await api("pub_tg_bot", { token: val("bottok"), transport: "auto" }); s.tgNewToken = false; s.pubOk.tg = "Бот подключён: @" + s.pub.telegram.bot_name + (s.pub.note ? ". " + s.pub.note : ""); }); return true;
@@ -2663,16 +2708,16 @@
       case "vk-finish": await guard("vk", async () => { s.pub = await api("pub_vk_finish", { url: val("vkurl") }); s.vkStarted = false; s.pubOk.vk = "Вход выполнен. Теперь укажите группу."; }); return true;
       case "vk-group": await guard("vk", async () => { s.pub = await api("pub_vk_group", { group_id: val("vkgroup").replace(/^.*vk\.com\//, "") }); s.pubOk.vk = `Группа «${s.pub.vk.group_name}» сохранена` + (s.pub.vk_group_check && s.pub.vk_group_check.is_admin === false ? " — но VK говорит, что вы в ней не админ и не редактор: публикация не пройдёт" : ""); }); return true;
       case "vk-logout": s.pub = await api("pub_vk_logout"); C().render(); return true;
-      case "e6-save": await guard("e6", async () => {
-        s.pub = await api("pub_e6ai", { username: val("e6user"), api_key: val("e6key") });
+      case "e6-save": await guard("e6:" + BN(), async () => {
+        s.pub = await api("pub_e6ai", { site:BN(), username: val("e6user-" + BN()), api_key: val("e6key-" + BN()) });
         const c = s.pub.e6ai_check || {};
-        s.pubOk.e6 = `Вход на ${BL()} работает: ${c.name || ""}` + (c.upload_limit != null ? ` · лимит загрузок: ${c.upload_limit}` : "");
+        s.pubOk["e6:" + BN()] = `Вход на ${BL()} работает: ${c.name || ""}` + (c.upload_limit != null ? ` · лимит загрузок: ${c.upload_limit}` : "");
       }); return true;
-      case "e6-opts": await guard("e6", async () => {
-        const pre = Math.min(95, Math.max(20, +val("e6pre") || 35)) / 100;
-        s.pub = await api("pub_save", { section: "e6ai", changes: { constant_tags: val("e6const").split(/[\s,]+/).filter(Boolean).map((t) => t.toLowerCase()),
-          preselect: pre, with_sources: !!snap.e6src, with_description: !!snap.e6desc } });
-        s.pubOk.e6 = "Сохранено";
+      case "e6-opts": await guard("e6:" + BN(), async () => {
+        const pre = Math.min(95, Math.max(20, +val("e6pre-" + BN()) || 35)) / 100;
+        s.pub = await api("pub_save", { section: BN(), changes: { constant_tags: val("e6const-" + BN()).split(/[\s,]+/).filter(Boolean).map((t) => t.toLowerCase()),
+          preselect: pre, with_sources: !!snap["e6src-" + BN()], with_description: !!snap["e6desc-" + BN()] } });
+        s.pubOk["e6:" + BN()] = "Сохранено";
       }); return true;
       case "tag-check": await guard("e6", async () => { s.tagger = await api("tagger_check"); C().render(); }); return true;
       case "tag-unload": s.tagger = await api("tagger_unload"); C().render(); return true;
@@ -2691,11 +2736,12 @@
       case "vk-method": s.pub = await api("pub_vk_method", { method: a.dataset.val }); C().render(); return true;
       case "vk-blogin": await guard("vk", async () => { await api("pub_vk_browser_login"); s.vkWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
       case "vk-bgroup": await guard("vk", async () => { s.pub = await api("pub_vk_browser_group", { group: val("vkbgroup") }); s.pubOk.vk = "Группа сохранена. Сделайте пробный прогон."; }); return true;
-      case "e6-site": {
-        s.pub = await api("pub_e6_site", { site: a.dataset.val });
-        s.e6db = null; s.e6form = {}; s.e6preds = {};
-        try { s.e6db = await api("e6db_status"); } catch (err) { /* без базы тоже работаем */ }
-        await refreshPlan(); C().render(); return true;
+      case "booru-tags": {
+        s.booruTagSite = a.dataset.site;
+        s.e6db = null; s.e6form = {}; s.e6preds = {}; s.e6cats = {}; s.tagCat = {};
+        draft();
+        try { s.e6db = await tagApi('e6db_status'); s.e6learn = await tagApi('e6_learned'); } catch (err) { /* errors are shown by the corresponding cards */ }
+        await loadTags(false); C().render(); return true;
       }
       case "vk-stats": await guard("vk", async () => { await api("pub_vk_stats", { url: val("vkstats") }); s.vkStatsWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
       case "vk-recon": await guard("vk", async () => { await api("pub_vk_recon", { url: val("vkstats") }); s.vkWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
@@ -2757,7 +2803,7 @@
   }
 
   async function onChange(e) {
-    const t = e.target, s = S(), api = C().api;
+    const t = e.target, s = S(), api = tagApi;
     if(t.dataset.redditCustomFlair){
       const d=draft();d.reddit_flairs=d.reddit_flairs||{};const value=t.value.trim();
       if(value)d.reddit_flairs[t.dataset.redditCustomFlair]=value;else delete d.reddit_flairs[t.dataset.redditCustomFlair];

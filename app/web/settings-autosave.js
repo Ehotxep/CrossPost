@@ -51,7 +51,7 @@
     }
   }
 
-  const C=()=>window.CP, platforms=['telegram','discord','vk','bluesky','deviantart','e6ai','reddit','joyreactor'];
+  const C=()=>window.CP, platforms=['telegram','discord','vk','bluesky','deviantart','e6ai','e621','floofgens','reddit','joyreactor'];
   const allowed={
     common:['nickname','style_tags','hidden_tags','trends'],
     light:['scale','quality','background','subsampling','sharpen'],
@@ -63,6 +63,7 @@
     reddit:['enabled','show_window','communities'],joyreactor:['enabled','show_window','ai_tags','constant_tags'],
     outputs:['by_date','jpeg','gif','video'],never:['tags'],
   };
+  for(const site of ['e6ai','e621','floofgens']) { allowed[site]=['constant_tags','preselect','with_sources','with_description'];allowed['never:'+site]=['tags']; }
   const words=value=>value.split(/[\s,]+/).filter(Boolean);
   function fieldKey(el){return el.id;}
   function describe(el) {
@@ -77,7 +78,7 @@
     }
     const common={nick:{nickname:v},style:{style_tags:words(v)},hidden:{hidden_tags:words(v)}};
     if(common[id])return {key:'common',patch:common[id]};
-    if(id==='r6'||id==='r621')return {key:'common',patch:{trends:{[id==='r6'?'e6ai':'e621']:{refresh_days:Number(v)}}}};
+    if(['r6','r621','rfloof'].includes(id))return {key:'common',patch:{trends:{[{r6:'e6ai',r621:'e621',rfloof:'floofgens'}[id]]:{refresh_days:Number(v)}}}};
     const light={lscale:{scale:Number(v)/100},lq:{quality:Number(v)},lbg:{background:v},lsub:{subsampling:on?'4:4:4':'4:2:0'},lsharp:{sharpen:on}};
     if(light[id])return {key:'light',patch:light[id]};
     const ht={htOn:{enabled:on},htN:{max_species:Number(v)},htS:{rating_tags:{sfw:v.replace(/^#/,'')}},htQ:{rating_tags:{erotic:v.replace(/^#/,'')}},htE:{rating_tags:{explicit:v.replace(/^#/,'')}},htC:{constant:words(v).map(t=>t.replace(/^#/,''))}};
@@ -86,12 +87,13 @@
     const sig=/^sig-(telegram|discord|vk|bluesky|deviantart|reddit|joyreactor)-(en-)?(sfw|nsfw)$/.exec(id);
     if(sig)return {key:'signatures',patch:{platforms:{[sig[1]]:sig[2]?{en:{[sig[3]]:el.value}}:{[sig[3]]:el.value}}}};
     if(id.startsWith('siguse-')&&platforms.includes(id.slice(7)))return {key:'signatures',patch:{use:{[id.slice(7)]:on}}};
-    const ver=/^ver-(telegram|discord|vk|bluesky|deviantart|reddit|joyreactor|e6ai)-(ru|en|clean)$/.exec(id);
+    const ver=/^ver-(telegram|discord|vk|bluesky|deviantart|reddit|joyreactor|e6ai|e621|floofgens)-(ru|en|clean)$/.exec(id);
     if(ver)return {key:'versions',patch:{[ver[1]]:['ru','en','clean'].filter(k=>document.getElementById(`ver-${ver[1]}-${k}`)?.checked)}};
     const tr={trbase:{base:v},trmodel:{model:v},trstyle:{style:el.value}};
     if(tr[id])return {key:'translate',patch:tr[id]};
     const e6={e6const:{constant_tags:words(v).map(t=>t.toLowerCase())},e6pre:{preselect:Number(v)/100},e6src:{with_sources:on},e6desc:{with_description:on}};
-    if(e6[id])return {key:'e6ai',patch:e6[id]};
+    const booru=/^(e6const|e6pre|e6src|e6desc)-(e6ai|e621|floofgens)$/.exec(id);
+    if(booru)return {key:booru[2],patch:e6[booru[1]]};
     const bs={bson:{enabled:on},bstitle:{include_title:on},bsalt:{alt_from_title:on},bsrating:{rating:v},bslang:{langs:words(v).slice(0,3)}};
     if(bs[id])return {key:'bluesky',patch:bs[id]};
     const da={daon:{enabled:on},daai:{is_ai_generated:on},danoai:{noai:on},daorig:{originals:on},datags:{tags_from:on?'hashtags':'none'},dadl:{allow_free_download:on},darating:{rating:v}};
@@ -99,7 +101,8 @@
     if(id==='dagal')return {key:'deviantart',patch:{gallery_id:v,gallery_name:v?(C().S.daGal||[]).find(g=>g.id===v)?.name||'':''}};
     const output={fdate:'by_date',fjpeg:'jpeg',fgif:'gif',fvideo:'video'};
     if(output[id])return {key:'outputs',patch:{[output[id]]:on}};
-    if(id==='e6never')return {key:'never',patch:{tags:words(v)}};
+    const never=/^e6never-(e6ai|e621|floofgens)$/.exec(id);
+    if(never)return {key:'never:'+never[1],patch:{tags:words(v)}};
     return null;
   }
 
@@ -109,7 +112,7 @@
   async function save(key,patch){
     const s=C().S,api=(name,args)=>C().api(name,args,{silent:true});
     if(key==='common')s.info.settings=await api('settings_save',{changes:patch});
-    else if(key==='never')s.e6learn=await api('e6_never',{tags:patch.tags});
+    else if(key.startsWith('never:'))s.e6learn=await api('e6_never',{tags:patch.tags,booru_site:key.split(':')[1]});
     else if(key==='outputs'){
       const o=s.outputs||await api('outputs_get',{});
       s.outputs=await api('outputs_set',{folder:o.custom?o.dir:'',by_date:o.by_date,jpeg:o.jpeg,gif:o.gif,video:o.video,move:false,...patch});
@@ -132,6 +135,7 @@
       if(!error){box.remove();return;}
       const details=invalid.size?'Проверьте заполнение выделенных полей.':[...queue.errors.values()].join('; ');
       const sections={light:'light',hashtags:'hashtags',signatures:'signatures',versions:'versions',translate:'translate',e6ai:'e6ai',bluesky:'bluesky',deviantart:'deviantart',outputs:'files',never:'tags',common:'trends',reddit:'reddit',joyreactor:'joyreactor'};
+      Object.assign(sections,{e621:'e621',floofgens:'floofgens','never:e6ai':'tags','never:e621':'tags','never:floofgens':'tags'});
       const links=[...new Set([...queue.errors.keys(),...[...invalid.values()].map(v=>v.scope)])].filter(key=>sections[key]).map(key=>`<button class="btn small" data-view-link="settings" data-tab="${sections[key]}">${window.I18N.t('Открыть настройки с ошибкой')}</button>`).join(' ');
       box.innerHTML=`<b>${window.I18N.t('Настройки не сохранены')}</b><p>${C().esc(window.I18N.t(details))}</p><button class="btn small" data-settings-save-retry>${window.I18N.t('Повторить сохранение')}</button> <button class="btn small ghost" data-settings-save-discard ${queue.active?'disabled':''}>${window.I18N.t('Убрать несохранённые правки')}</button> ${links}`;
     }

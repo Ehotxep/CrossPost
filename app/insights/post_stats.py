@@ -15,6 +15,7 @@ import numpy as np
 from app import db, stats
 from app.insights import model as M
 from app.paths import sub
+from app.publish import booru
 
 TRACK_DAYS = 8
 _e6_cache: dict = {}
@@ -42,13 +43,13 @@ def _pubs(days: int | None = None, pub_id: int | None = None) -> list[dict]:
 
 
 def _tg_dests(pub: dict) -> list[dict]:
-    return [d for d in json.loads(pub["dests"] or "[]")
+    return [d for d in booru.destinations(pub["dests"])
             if d.get("platform") == "telegram" and d.get("state") == "done" and d.get("chat_id") and d.get("message_ids")]
 
 
 # --- e6ai -----------------------------------------------------------------------------------
 
-def e6ai_stats(link: str) -> dict | None:
+def e6ai_stats(link: str, force: bool = False) -> dict | None:
     import re
     import requests
     from app.publish import settings as PS
@@ -63,11 +64,9 @@ def e6ai_stats(link: str) -> dict | None:
     pid = m.group(1)
     site = "blep" if key == "e6ai" else key
     hit = _e6_cache.get((site, pid))
-    if hit and time.time() - hit[0] < 600:
+    if not force and hit and time.time() - hit[0] < 600:
         return hit[1]
-    raw = PS.load(raw=True)["e6ai"]
-    acc = raw if key == "e6ai" else ((raw.get("accounts") or {}).get(key) or {})
-    cfg = {"username": acc.get("username", ""), "api_key": acc.get("blep_api_key", "") if key == "e6ai" else acc.get("api_key", "")}
+    cfg = PS.load()[key]
     base = PS.BOORU[key]
     auth = (cfg["username"], cfg["api_key"]) if cfg.get("username") and cfg.get("api_key") else None
     try:
@@ -78,6 +77,13 @@ def e6ai_stats(link: str) -> dict | None:
         p = r.json().get("post") or {}
         out = {"score": (p.get("score") or {}).get("total"), "up": (p.get("score") or {}).get("up"),
                "favs": p.get("fav_count"), "comments": p.get("comment_count")}
+        uploader = p.get('uploader_id')
+        owner = f'id:{uploader}' if uploader else ('name:'+str(p['uploader_name']).casefold() if p.get('uploader_name') else None)
+        ext = str((p.get('file') or {}).get('ext') or '').lower()
+        out.update(observed_at=datetime.now(timezone.utc).isoformat(),created_at=p.get('created_at'),owner=owner,
+                   rating=p.get('rating'),kind='gif' if ext=='gif' else 'video' if ext in ('webm','mp4','mov') else 'image' if ext in ('png','jpg','jpeg','webp','avif') else None,
+                   deleted=bool((p.get('flags') or {}).get('deleted') or p.get('is_deleted')))
+
     except RuntimeError as e:
         out = {"error": str(e)}
     except Exception as e:  # noqa: BLE001
@@ -238,15 +244,17 @@ def _for_single_publication(pub_id: int) -> dict:
     curve = M.growth_curve()
     fcs = {r["chat_id"]: json.loads(r["data"]) for r in db.query("SELECT chat_id, data FROM forecasts WHERE pub_id=?", (pub["id"],))}
     dests = []
-    for d in json.loads(pub["dests"] or "[]"):
+    for d in booru.destinations(pub["dests"]):
         item = {"key": d.get("key"), "name": d.get("name"), "platform": d.get("platform"), "state": d.get("state"),
                 "link": d.get("link") or ""}
+        from app.insights import booru_metrics as BM
+        refs = BM.register(pub,d) if d.get('platform') in booru.PLATFORMS else []
         item["editable"] = d.get("platform") == "telegram" and d.get("key") != "telegram:group" and bool(d.get("chat_id") and d.get("message_ids"))
         if d.get("platform") == "reddit" and d.get("state") == "done":
             item["stats_url"] = reddit_stats_url(d.get("link"))
         from app.publish import settings as _PS
         if d.get("state") != "done":
-            item["why"] = "не опубликовано"
+            item["why"] = "Публикация завершилась не полностью; ниже — подтверждённые изображения" if refs else "не опубликовано"
         elif d.get("platform") == "reddit":
             item["why"] = "Статистика доступна на Reddit; автоматический сбор пока не подключён"
         elif d.get("platform") not in ("telegram", "discord", "vk") and not _PS.module_on("collect"):
@@ -259,8 +267,9 @@ def _for_single_publication(pub_id: int) -> dict:
             st = tg_stats(d, curve)
             fc = fcs.get(str(d["chat_id"]))
             item.update(stats=st, forecast=fc, verdict=verdict(st, fc))
-        elif d.get("platform") == "e6ai" or d.get("key") == "e6ai":
+        elif d.get("platform") in ("e6ai", "e621", "floofgens") or d.get("key") in ("e6ai", "e621", "floofgens"):
             item["e6ai"] = e6ai_stats(d.get("link"))
+            BM.observe(d.get("link"),item["e6ai"])
             try:
                 from app.insights import e6learn
                 item["e6mod"] = e6learn.for_publication(pub["id"])
@@ -275,6 +284,8 @@ def _for_single_publication(pub_id: int) -> dict:
         elif d.get("platform") == "vk":
             from app.publish import vk_stats
             item["nums"] = vk_stats.nums_for(d.get("link"))
+        if refs:
+            item["booru_metrics"] = BM.report(pub["id"],d.get("platform"))
         dests.append(item)
     return {"id": pub["id"], "title": pub["title"] or "", "created": pub["created"], "rating": pub["rating"],
             "files": json.loads(pub["files"] or "[]"), "dests": dests, "curve": curve,
@@ -379,6 +390,14 @@ def refresh_publication(tg, pub_id: int, report):
     if not rows:
         raise ValueError("Публикация не найдена")
     _e6_cache.clear()   # e6ai, Bluesky, DeviantArt — спросим заново
+    from app.insights import booru_metrics as BM
+    from app.publish import settings as PS
+    for dest in booru.destinations(rows[0]['dests']):
+        BM.register(rows[0],dest)
+        for (site,_),link,ref in BM.references(dest):
+            if PS.module_on('collect') and PS.module_on(site):
+                report(message=f'Обновляю цифры {PS.BOORU_SITES[site]["name"]}…')
+                BM.observe(link,e6ai_stats(link,force=True))
     dests = [d for d in _tg_dests(rows[0]) if d.get("key") != "telegram:group"]
     if dests and not tg.keys():
         report(progress=1.0, message="Цифры Telegram берутся через вход по API («Импорт для статистики» → API); остальные обновлены")
@@ -416,7 +435,7 @@ def track_tick(tg, min_gap: float = 60) -> dict:
             return {"skipped": "recent"}
         _last_track["t"] = time.time()
         if not tg.keys():
-            _last_track["note"] = "Замеры не идут: нет входа в Telegram через API (только импорт из выгрузки)"
+            _last_track["note"] = "Замеры Telegram не идут: нет входа через API (только импорт из выгрузки)"
             return {"skipped": "no_api"}
         now = datetime.now(timezone.utc)
         todo: dict[str, set] = {}
@@ -447,7 +466,7 @@ def track_tick(tg, min_gap: float = 60) -> dict:
             fill_previews(tg)
         except Exception:  # noqa: BLE001 — превью не критичны
             pass
-        _last_track["note"] = f"Последний замер: {datetime.now().strftime('%H:%M')}" + (f", обновлено сообщений: {n}" if n else "")
+        _last_track["note"] = f"Последний замер Telegram: {datetime.now().strftime('%H:%M')}" + (f", обновлено сообщений: {n}" if n else "")
         return {"updated": n, "channels": len(todo)}
     except Exception as e:  # noqa: BLE001
         _last_track["note"] = f"Замер не удался: {e}"

@@ -15,6 +15,7 @@
       hashtags: draft.hashtags == null ? null : draft.hashtags,
       e6ai_tags: draft.e6tags || draft.e6ai_tags || {},
       e6ai_meta: draft.e6meta || draft.e6ai_meta || {},
+      ...(draft.booru_posts ? {booru_posts:draft.booru_posts} : {}),
       tagger,
       platform_texts: draft.platform_texts || {},
       alts: draft.alts || {},

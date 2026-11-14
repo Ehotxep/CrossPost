@@ -2768,3 +2768,19 @@ Object.assign(window.EN_DICT, {
   "Найти сайт…": "Find a site…",
   "Выберите нужные площадки. Убранные площадки не отображаются в меню и редакторе и не участвуют в отправке. Ключи и история сохраняются.": "Choose the platforms you need. Removed platforms are hidden from the menu and editor and excluded from publishing. Credentials and history are kept."
 });
+
+Object.assign(window.EN_DICT, {
+  "Показать общие теги":"Show common tags", "Одежда":"Clothing", "Окружение":"Settings", "Темы и детали":"Themes and details",
+  "Период роста":"Growth period", "4 недели":"4 weeks", "3 месяца":"3 months",
+  "Обновлять floofgens.net, раз в … дней":"Update floofgens.net every … days",
+  "Данных floofgens.net ещё нет":"No floofgens.net data yet",
+  "Нет заметного роста с достаточной выборкой.":"No notable growth with a sufficient sample.",
+  "Недостаточно данных за предыдущий период для сравнения.":"There is not enough data from the previous period for a comparison."
+});
+
+Object.assign(window.EN_DICT, {
+  "Избранное в одинаковом возрасте":"Favorites at the same post age",
+  "Наблюдения через сутки, трое суток и неделю. Пропущенные замеры не восстанавливаются из сегодняшних цифр.":"Observations at one day, three days and one week. Missed checkpoints are not reconstructed from current totals.",
+  "Дата поста пока не получена":"The post date has not been retrieved yet",
+  "Ожидается замер":"Waiting for an observation", "Пропущен":"Missed"
+});

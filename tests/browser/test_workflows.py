@@ -30,6 +30,7 @@ settings.update('modules',{'collect':False,'news':False,'tagger':False,'forecast
 settings.update('discord',{'enabled':True,'webhooks':[{'name':'Новый пост','url':'https://example.invalid/hook'}]})
 updates.check_async=lambda:None
 runner.D.post=lambda *args,**kwargs:[]
+runner.E6.check=lambda cfg:{'name':cfg['username']}
 with db.tx() as c:
  for i in range(65):
   c.execute('INSERT INTO publications(created,title,text,files,dests,draft) VALUES (?,?,?,?,?,?)',('2026-01-01T12:00:00+00:00','Новый пост' if i==0 else 'Post '+str(i),'','[]',json.dumps([{'key':'discord:0','platform':'discord','name':'Discord','state':'done'}]),'{}'))
@@ -73,32 +74,66 @@ main()
         self.assertTrue(result['ok'], result)
         return result['result']
 
-    def test_floofgens_site_can_be_selected_without_reusing_another_key(self):
+    def test_booru_sites_have_independent_settings_and_post_switches(self):
         page = self.browser.new_page()
         try:
+            for site in ('e621','floofgens'):
+                self.api('modules_set',key=site,on=True)
             page.goto(self.base, wait_until='networkidle')
-            page.evaluate("async()=>{await CP.loadInfo();CP.S.view='settings';CP.S.platSec='e6ai';await Pub.load('settings');CP.render()}")
-            page.locator('.platform-picker summary').click()
-            page.get_by_role('searchbox', name='Поиск booru-сайта').fill('floof')
-            target = page.locator('[data-pa="e6-site"][data-val="floofgens"]')
-            self.assertTrue(target.is_enabled())
-            target.click()
-            page.wait_for_function("CP.S.pub.e6ai.site_name === 'floofgens'")
-            page.locator('label[for="e6user"]').filter(has_text='floofgens.net').wait_for()
-            self.assertIn('floofgens.net', page.locator('label[for="e6user"]').inner_text())
-            self.assertEqual(page.locator('#e6user').input_value(), '')
-            self.assertEqual(page.locator('#e6key').input_value(), '')
-            self.assertFalse(self.api('pub_settings')['e6ai']['has_key'])
-            page.locator('.platform-picker summary').click()
-            page.get_by_role('searchbox', name='Поиск booru-сайта').fill('e621')
-            page.locator('[data-pa="e6-site"][data-val="e621"]').click()
-            page.wait_for_function("CP.S.pub.e6ai.site_name === 'e621'")
+            page.evaluate("async()=>{await CP.loadInfo();CP.S.view='settings';CP.S.platSec='floofgens';await Pub.load('settings');CP.render()}")
+            self.assertEqual(page.locator('[data-pa="e6-site"]').count(), 0)
+            page.locator('#e6user-floofgens').fill('FloofTest')
+            page.locator('#e6key-floofgens').fill('floof-test-secret')
+            page.locator('[data-pa="e6-save"]').click()
+            page.wait_for_function("CP.S.pub.floofgens.has_key && CP.S.pub.floofgens.username === 'FloofTest'")
+            page.locator('#e6const-floofgens').fill('floof_tag')
+            page.locator('.platnav [data-psec="e621"]').click()
+            page.locator('#e6user-e621').wait_for()
+            self.assertEqual(page.locator('#e6user-e621').input_value(), '')
+            self.assertFalse(self.api('pub_settings')['e621']['has_key'])
+            self.assertEqual(self.api('pub_settings')['floofgens']['constant_tags'], ['floof_tag'])
             page.locator('.callout.warn').filter(has_text='На e621 ИИ-арт запрещён').wait_for()
-            self.assertIn('На e621 ИИ-арт запрещён', page.locator('.callout.warn').inner_text())
-            page.locator('.platform-picker summary').click()
-            page.locator('[data-pa="e6-site"][data-val="e6ai"]').click()
-            page.wait_for_function("CP.S.pub.e6ai.site_name === 'e6ai'")
+            page.locator('#e6user-e621').fill('DrawingTest')
+            page.locator('#e6key-e621').fill('e621-test-secret')
+            page.locator('[data-pa="e6-save"]').click()
+            page.wait_for_function("CP.S.pub.e621.has_key && CP.S.pub.e621.username === 'DrawingTest'")
+            page.locator('#e6const-e621').fill('drawing_tag')
+            page.locator('.platnav [data-psec="floofgens"]').click()
+            page.locator('#e6user-floofgens').wait_for()
+            self.assertEqual(page.locator('#e6user-floofgens').input_value(), 'FloofTest')
+            self.assertEqual(page.locator('#e6const-floofgens').input_value(), 'floof_tag')
+            self.assertEqual(self.api('pub_settings')['e621']['constant_tags'], ['drawing_tag'])
+            page.evaluate("async()=>{CP.S.view='post';CP.S.draft={files:[],title:'Drawing',text:'',rating:'sfw',exclude:[],booru_posts:{}};await Pub.load('post');CP.render()}")
+            floof=page.locator('[data-pa="toggle"][data-key="floofgens"]')
+            drawing=page.locator('[data-pa="toggle"][data-key="e621"]')
+            self.assertTrue(floof.is_checked())
+            self.assertTrue(drawing.is_checked())
+            drawing.uncheck()
+            page.wait_for_function("CP.S.draft.exclude.includes('e621')")
+            self.assertTrue(floof.is_checked())
+            self.assertFalse(page.locator('[data-pa="toggle"][data-key="e621"]').is_checked())
+            buffer=io.BytesIO()
+            Image.new('RGB',(32,32),'#567890').save(buffer,format='PNG')
+            image=self.session.post(self.base+'/upload?name=booru.png',headers=self.headers,data=buffer.getvalue()).json()['result']
+            page.evaluate("""async image=>{CP.S.view='post';CP.S.booruTagSite='floofgens';CP.S.draft={files:[image],title:'Drawing',text:'',rating:'sfw',exclude:[],
+                booru_posts:{floofgens:{tags:{[image.id]:['female']},meta:{}},e621:{tags:{[image.id]:['male']},meta:{}}}};
+                await Pub.load('post');CP.render();} """,image)
+            page.locator('#e6card [data-pa="e6t"][data-tag="female"].on').wait_for()
+            page.locator('[data-pa="booru-tags"][data-site="e621"]').click()
+            male=page.locator('#e6card [data-pa="e6t"][data-tag="male"].on')
+            male.wait_for();male.click()
+            page.wait_for_function("id=>!CP.S.draft.booru_posts.e621.tags[id].includes('male')",arg=image['id'])
+            self.assertEqual(page.evaluate("id=>CP.S.draft.booru_posts.floofgens.tags[id]",image['id']),['female'])
+            page.locator('[data-pa="booru-tags"][data-site="floofgens"]').click()
+            page.locator('#e6card [data-pa="e6t"][data-tag="female"].on').wait_for()
+            page.reload(wait_until='networkidle')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='e621';await Pub.load('settings');CP.render()}")
+            self.assertEqual(page.locator('#e6user-e621').input_value(), 'DrawingTest')
+            self.assertEqual(page.locator('#e6const-e621').input_value(), 'drawing_tag')
         finally:
+            for site in ('e621','floofgens'):
+                self.api('pub_save',section=site,changes={'enabled':False})
+                self.api('modules_set',key=site,on=False)
             page.close()
 
     def test_platform_catalog_search_hides_disabled_platform_and_preserves_settings(self):
@@ -245,6 +280,36 @@ main()
         finally:
             page.close()
 
+    def test_booru_checkpoint_comparison_and_missing_measurements_are_clear(self):
+        page=self.browser.new_page(viewport={'width':1480,'height':1000})
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("""async()=>{
+                CP.S.view='history';CP.S.histMode='published';await Pub.load('history');
+                window.checkpointData={items:[{post_id:42,link:'https://floofgens.net/posts/42',verified:true,error:null,points:[
+                    {hours:24,state:'measured',favs:12,age_h:24.5,taken_at:'2026-11-14T00:00:00Z',comparison:{ready:false,n:2,minimum:10}},
+                    {hours:72,state:'missed'},{hours:168,state:'waiting'}]}],minimum:10};
+                CP.S.pstatOpen='pub:900';CP.S.pstat={...CP.S.pstat,'pub:900':{id:900,title:'Checkpoint test',created:'2026-11-13T00:00:00Z',rating:'sfw',files:[],
+                    dests:[{key:'floofgens',name:'floofgens.net',platform:'floofgens',state:'done',link:'https://floofgens.net/posts/42',why:'Сбор статистики выключен',booru_metrics:checkpointData}]}};
+                CP.render();
+            }""")
+            box=page.locator('.drawer .booru-checkpoints')
+            box.get_by_role('heading',name='Избранное в одинаковом возрасте').wait_for()
+            self.assertIn('В избранном: 12',box.inner_text())
+            self.assertIn('Пропущен',box.inner_text())
+            self.assertIn('Ожидается',box.inner_text())
+            self.assertIn('2 из 10',box.inner_text())
+            page.evaluate("""()=>{checkpointData.items[0].points[0].comparison={ready:true,n:12,minimum:10,window_days:180,median:6,index:2,
+                median_low:4,median_high:8,typical_low:2,typical_high:10,lower:10,equal:1,preliminary:true,method:'Та же площадка, автор, рейтинг и тип файла'};CP.render()}""")
+            box.locator('.more summary').click()
+            self.assertIn('выше 10 из 12',box.inner_text())
+            self.assertIn('наравне с 1',box.inner_text())
+            self.assertIn('95%',box.inner_text())
+            self.assertIn('не доказательство причины',box.inner_text())
+            self.assertGreater(box.bounding_box()['width'],200)
+        finally:
+            page.close()
+
     def test_editor_history_queue_settings_and_preservation(self):
         buffer = io.BytesIO()
         Image.new('RGB', (80, 60), '#356ca1').save(buffer, format='PNG')
@@ -352,6 +417,51 @@ main()
             page.screenshot(path=str(ROOT/'test-artifacts'/'workflow.png'), full_page=True)
             raise
         finally:
+            page.close()
+
+    def test_trends_floofgens_topics_filters_and_refresh_settings(self):
+        sys.path.insert(0,str(ROOT))
+        sys.path.insert(0,str(ROOT/'tests'))
+        from trend_fixture import write_fixture
+        old=self.api('modules').get('trends',True)
+        self.api('modules_set',key='trends',on=True)
+        page=self.browser.new_page(viewport={'width':1480,'height':1000})
+        errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.locator('#nav [data-view="trends"]').click()
+            page.locator('[data-set="src"][data-val="floofgens"]').click()
+            page.get_by_role('heading',name='Данных floofgens.net ещё нет').wait_for()
+            page.locator('[data-action="manual"]').click()
+            self.assertIn('https://floofgens.net/db_export/',page.locator('#main').inner_text())
+            write_fixture(self.tmp.name)
+            page.evaluate("async()=>{await CP.loadInfo();CP.render()}")
+            page.wait_for_function("CP.S.data?.source==='floofgens' && !CP.S.loading")
+            self.assertEqual(page.locator('.li[data-pick="solo"]').count(),0)
+            self.assertGreater(page.locator('.li[data-pick="armor"] .name').first.evaluate('el=>el.getBoundingClientRect().width'),60)
+            page.locator('[data-action="trend-common"]').check()
+            page.wait_for_function("CP.S.data?.filters.show_common===true && !CP.S.loading")
+            page.locator('.li[data-pick="solo"]').wait_for()
+            page.locator('[data-action="trend-common"]').uncheck()
+            page.wait_for_function("CP.S.data?.filters.show_common===false && !CP.S.loading")
+            page.locator('[data-set="cat"][data-val="clothing"]').click()
+            page.wait_for_function("CP.S.data?.filters.category==='clothing' && !CP.S.loading")
+            self.assertEqual(page.locator('.li[data-pick="wolf"]').count(),0)
+            page.locator('.li[data-pick="armor"]').first.wait_for()
+            page.locator('[data-set="trendPeriod"][data-val="month"]').click()
+            page.wait_for_function("CP.S.data?.filters.period==='month' && !CP.S.loading")
+            self.assertEqual(page.evaluate("CP.S.data.rising.find(r=>r.tag==='armor').sample"),160)
+            page.locator('[data-action="trends-settings"]').click()
+            page.locator('#rfloof').fill('3')
+            page.locator('#rfloof').blur()
+            page.wait_for_function("CP.S.info.settings.trends.floofgens.refresh_days===3")
+            page.reload(wait_until='networkidle')
+            page.locator('#nav [data-view="trends"]').click()
+            page.wait_for_function("CP.S.data?.source==='floofgens' && CP.S.data.filters.period==='month' && !CP.S.loading")
+            self.assertEqual(page.evaluate("CP.S.data.filters.category"),'clothing')
+            self.assertFalse(errors,errors)
+        finally:
+            self.api('modules_set',key='trends',on=old)
             page.close()
 
     def test_update_channel_selector_changes_channel_without_installing(self):

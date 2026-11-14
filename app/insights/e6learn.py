@@ -60,17 +60,32 @@ def record(pub_id: int, post_id, tags: list[str], site: str = "e6ai"):
                   (pid, pub_id, json.dumps(sorted(set(tags))), _now().isoformat(timespec="seconds"), site))
 
 
+def _learning_table():
+    """Keep old global learning as an archive; migrate it once to its former site."""
+    with db.tx() as c:
+        existed = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='e6_learn_sites'").fetchone()
+        c.execute("CREATE TABLE IF NOT EXISTS e6_learn_sites (site TEXT, tag TEXT, removed INTEGER DEFAULT 0, added INTEGER DEFAULT 0, last TEXT, PRIMARY KEY(site,tag))")
+        if not existed:
+            from app.publish import settings as PS
+            legacy = PS.load(raw=True).get('legacy_booru_site', 'e6ai')
+            c.execute("INSERT OR IGNORE INTO e6_learn_sites SELECT ?,tag,removed,added,last FROM e6_learn", (legacy,))
+
+
 def learned() -> dict:
-    """{тег: {"removed": n, "added": n}}"""
-    return {r["tag"]: {"removed": r["removed"], "added": r["added"]} for r in db.query("SELECT * FROM e6_learn")}
+    from app import e6tags
+    _learning_table()
+    return {r["tag"]: {"removed": r["removed"], "added": r["added"]}
+            for r in db.query("SELECT * FROM e6_learn_sites WHERE site=?", (e6tags.site(),))}
 
 
 def forget(tag: str | None = None):
+    from app import e6tags
+    _learning_table()
     with db.tx() as c:
         if tag:
-            c.execute("DELETE FROM e6_learn WHERE tag=?", (tag,))
+            c.execute("DELETE FROM e6_learn_sites WHERE site=? AND tag=?", (e6tags.site(), tag))
         else:
-            c.execute("DELETE FROM e6_learn")
+            c.execute("DELETE FROM e6_learn_sites WHERE site=?", (e6tags.site(),))
 
 
 def _fetch(post_id: int, site: str = "e6ai") -> dict | None:
@@ -79,14 +94,12 @@ def _fetch(post_id: int, site: str = "e6ai") -> dict | None:
     import requests
     from app.publish import settings as PS
     from app.publish import e6ai as E6
-    raw = PS.load(raw=True)["e6ai"]
-    if site == "e6ai":  # Historical e6ai post IDs do not identify blep.art posts.
+    if site == "e6ai":  # Retired domain; IDs cannot be reused on another site.
         return None
-    if site != "blep" and site not in PS.BOORU:
+    key = "e6ai" if site == "blep" else site
+    if key not in PS.BOORU:
         return None
-    acc = raw if site == "blep" else ((raw.get("accounts") or {}).get(site) or {})
-    cfg = dict(raw, username=acc.get("username", ""), api_key=acc.get("blep_api_key", "") if site == "blep" else acc.get("api_key", ""), site_name=site,
-               base=os.environ.get("CROSSPOST_E6AI_BASE") or PS.BOORU["e6ai" if site == "blep" else site])
+    cfg = PS.load()[key]
     auth = (cfg["username"], cfg["api_key"]) if cfg.get("username") and cfg.get("api_key") else None
     r = requests.get(f"{E6.base(cfg)}/posts/{post_id}.json", headers=E6._ua(cfg), auth=auth, timeout=20, allow_redirects=False)
     if r.status_code != 200:
@@ -112,12 +125,14 @@ def diff(sent: list[str], tags_by_cat: dict) -> tuple[list, list, dict]:
 def check_due(limit: int = 10) -> int:
     """Сверить посты, у которых подошёл срок. Возвращает, сколько сверено."""
     from app.publish import settings as PS
-    if not PS.module_on("e6ai"):   # e6ai выключен — сайт не опрашиваем
-        return 0
+    _learning_table()
     now = _now()
     rows = db.query("SELECT * FROM e6_sent WHERE checks < ? AND site != 'e6ai' ORDER BY at LIMIT 200", (len(CHECKS),))
     n = 0
     for r in rows:
+        platform = "e6ai" if r["site"] == "blep" else r["site"]
+        if not PS.module_on(platform):
+            continue
         age_h = (now - datetime.fromisoformat(r["at"])).total_seconds() / 3600
         if age_h < CHECKS[r["checks"] or 0] or n >= limit:
             continue
@@ -130,18 +145,21 @@ def check_due(limit: int = 10) -> int:
                 with db.tx() as c:
                     c.execute("UPDATE e6_sent SET checks=? WHERE post_id=? AND site=?", (len(CHECKS), r["post_id"], r["site"]))
             continue
-        removed, added, cats = diff(json.loads(r["sent"] or "[]"), tags)
+        from app import e6tags
+        with e6tags.for_site(platform):
+            removed, added, cats = diff(json.loads(r["sent"] or "[]"), tags)
+            old_cats = {t: _cat(t) for t in removed}
         old_r, old_a = set(json.loads(r["removed"] or "[]")), set(json.loads(r["added"] or "[]"))
         stamp = now.isoformat(timespec="seconds")
         with db.tx() as c:
             for t in set(removed) - old_r:   # учим только новое с прошлой сверки
-                if cats.get(t, _cat(t)) in LEARN_CATS:
-                    c.execute("INSERT INTO e6_learn (tag, removed, last) VALUES (?,1,?) ON CONFLICT(tag) DO UPDATE SET removed=removed+1, last=?",
-                              (t, stamp, stamp))
+                if cats.get(t, old_cats[t]) in LEARN_CATS:
+                    c.execute("INSERT INTO e6_learn_sites (site, tag, removed, last) VALUES (?,?,1,?) ON CONFLICT(site,tag) DO UPDATE SET removed=removed+1, last=?",
+                              (platform, t, stamp, stamp))
             for t in set(added) - old_a:
                 if cats.get(t) in LEARN_CATS:
-                    c.execute("INSERT INTO e6_learn (tag, added, last) VALUES (?,1,?) ON CONFLICT(tag) DO UPDATE SET added=added+1, last=?",
-                              (t, stamp, stamp))
+                    c.execute("INSERT INTO e6_learn_sites (site, tag, added, last) VALUES (?,?,1,?) ON CONFLICT(site,tag) DO UPDATE SET added=added+1, last=?",
+                              (platform, t, stamp, stamp))
             c.execute("UPDATE e6_sent SET checks=checks+1, checked_at=?, removed=?, added=?, final_cats=? WHERE post_id=? AND site=?",
                       (stamp, json.dumps(removed), json.dumps(added), json.dumps({t: cats[t] for t in added}), r["post_id"], r["site"]))
         n += 1

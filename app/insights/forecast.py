@@ -27,7 +27,10 @@ def draft_tags(draft: dict, image_ids: list[str]) -> list[str] | None:
                 tags |= {t for t, p in json.loads(f.read_text(encoding="utf-8")) if p >= M.TAG_PROB}
             except Exception:
                 pass
-    for lst in (draft.get("e6ai_tags") or {}).values():
+    selections = list((draft.get("e6ai_tags") or {}).values())
+    for slot in (draft.get("booru_posts") or {}).values():
+        selections.extend((slot.get("tags") or {}).values())
+    for lst in selections:
         if lst:
             known = True
             tags |= set(lst)

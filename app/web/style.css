@@ -1311,3 +1311,15 @@ input[aria-invalid="true"] { border-color: var(--bad); }
 .platform-option { display:flex; align-items:center; gap:10px; padding:10px; text-align:left; }
 .platform-option span span { display:block; }
 .platform-option[hidden] { display:none; }
+
+/* Keep topic names visible: explanations occupy a separate row. */
+.li.trend-topic { flex-direction:column; align-items:stretch; gap:4px; padding:8px; }
+.trend-main { display:flex; align-items:center; gap:10px; min-width:0; }
+.trend-main > svg, .trend-main > .rank, .trend-main > .val, .trend-main > .meta { flex-shrink:0; }
+.trend-reason { text-align:left; font-size:12px; line-height:1.45; color:var(--ink-3); }
+
+.booru-checkpoints { margin-top:14px; padding-top:12px; border-top:1px solid var(--line-soft); }
+.booru-checkpoint-art > summary { cursor:pointer; font-weight:600; margin:10px 0; }
+.booru-checkpoint { margin:8px 0; padding:10px; background:var(--card-2); border-radius:8px; }
+.booru-checkpoint .row { gap:12px; justify-content:space-between; }
+.booru-checkpoint .more { margin-top:8px; }

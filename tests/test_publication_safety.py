@@ -185,7 +185,7 @@ class PublicationSafety(unittest.TestCase):
                                             ('floofgens', 'floofgens.net', 'floofgens.net', 'floofgens')]:
             with self.subTest(site=site):
                 cfg = copy.deepcopy(self.runner.S.DEFAULTS)
-                cfg['e6ai'].update(with_sources=False, site_name=site)
+                cfg['e6ai'].update(enabled=True, username='artist', api_key='test-key', with_sources=False, site_name=site)
                 draft = {'rating':'sfw', 'title':'Artwork', 'text':'', 'signature':False, 'hashtags':[]}
                 path = Path(self.tmp.name) / 'animation.gif'
                 path.write_bytes(b'gif-data')

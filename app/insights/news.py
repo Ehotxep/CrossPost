@@ -161,7 +161,7 @@ def _one(pub, d, curve, PS):
 
     def need(base, cur, share=0.2):
         return max(1, int(round(max(base, cur * share) * f)))
-    if plat == "e6ai":
+    if plat in ("e6ai", "e621", "floofgens"):
         st = PS.e6ai_stats(d.get("link"))
         site = (st or {}).get("site") or "e6ai"
         if not st or st.get("error"):
@@ -253,7 +253,7 @@ def _moderators():
             continue
         pub = (db.query("SELECT * FROM publications WHERE id=?", (r["pub_id"],)) or [{"id": r["pub_id"], "title": "", "text": ""}])[0]
         parts = ([f"убрали {', '.join(rem[:4])}"] if rem else []) + ([f"добавили {', '.join(add[:4])}"] if add else [])
-        _add(f"mod:{r.get('site') or 'e6ai'}:{r['post_id']}:{len(rem)}:{len(add)}", pub["id"], "e6ai", "mod",
+        _add(f"mod:{r.get('site') or 'e6ai'}:{r['post_id']}:{len(rem)}:{len(add)}", pub["id"], "e6ai" if r.get("site") == "blep" else r.get("site") or "e6ai", "mod",
              f"{_title(pub)}: модераторы {'blep.art' if r.get('site') == 'blep' else r.get('site') or 'e6ai'} поправили теги — {'; '.join(parts)}")
 
 

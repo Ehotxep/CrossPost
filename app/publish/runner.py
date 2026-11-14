@@ -21,6 +21,7 @@ from app.jobs import Cancelled, mask_secrets
 from app.paths import data_dir
 from app.publish import settings as S
 from app.publish import e6ai as E6
+from app.publish import booru as B
 from app.publish import hashtags as HT
 from app.publish import prep, tg_bot, uploads
 from core.common import PlatformError, NotPublishedError
@@ -59,7 +60,7 @@ def done_keys(pub_id) -> set:
     row = _pub_row(pub_id)
     if not row:
         raise PlatformError("Публикация не найдена")
-    return {d["key"] for d in json.loads(row["dests"] or "[]") if d.get("state") == "done"}
+    return {d["key"] for d in B.destinations(row["dests"]) if d.get("state") == "done"}
 
 
 def extend_draft(pub_id) -> dict:
@@ -73,7 +74,7 @@ def extend_draft(pub_id) -> dict:
         d = None
     if not isinstance(d, dict):   # опубликовано до этой версии — восстанавливаем, что можем
         d = {"title": row["title"] or "", "text": row["text"] or "", "rating": row["rating"], "signature": True,
-             "exclude": ["e6ai"], "hashtags": None, "e6ai_tags": {}, "e6ai_meta": {},
+             "exclude": list(B.PLATFORMS), "hashtags": None, "e6ai_tags": {}, "e6ai_meta": {},
              "files": [f["id"] if isinstance(f, dict) else f for f in json.loads(row["files"] or "[]")]}
     files, missing = [], []
     names = {f["id"]: f.get("name", "") for f in json.loads(row["files"] or "[]") if isinstance(f, dict)}
@@ -85,7 +86,7 @@ def extend_draft(pub_id) -> dict:
                           "size": info["size"], "duration": info.get("duration"), "format": info.get("format", "")})
         except Exception:  # noqa: BLE001 — оригинал уже удалён (хранится неделю после публикации)
             missing.append(names.get(uid) or uid)
-    dests = json.loads(row["dests"] or "[]")
+    dests = B.destinations(row["dests"])
     return {"pub_id": int(pub_id), "title": row["title"] or "", "files": files, "missing": missing,
             "done": [x["name"] for x in dests if x.get("state") == "done"],
             "failed": [x["name"] for x in dests if x.get("state") == "error"],
@@ -144,15 +145,17 @@ def _kind(files) -> str:
     return "mixed"
 
 
-def e6_tags(cfg, draft, file_id: str) -> list[str]:
-    """Итоговые теги картинки для e6ai: постоянные из настроек + выбранные в посте."""
-    chosen = ((draft.get("e6ai_tags") or {}).get(file_id)) or []
+def e6_tags(cfg, draft, file_id: str, platform="e6ai") -> list[str]:
+    """Tags and aliases belong to the destination, never to a global site selector."""
+    chosen = (B.fields(cfg, draft, platform).get("tags") or {}).get(file_id) or []
     from app import e6tags
-    tags = E6.clean_tags(list(cfg["e6ai"].get("constant_tags") or []) + list(chosen))
-    if e6tags.ready():   # старые названия → действующие (loona → loona_(helluva_boss)), без «родителей»
-        tags = E6.clean_tags([i["name"] for i in e6tags.info(tags).values()])
-        tags = e6tags.drop_implied(tags, keep=E6.clean_tags(cfg["e6ai"].get("constant_tags") or []))
-    try:   # анимации e6ai требует помечать тегом animated
+    consts = E6.clean_tags(cfg[platform].get("constant_tags") or [])
+    tags = E6.clean_tags(consts + list(chosen))
+    with B.tag_context(platform):
+        if e6tags.ready():
+            tags = E6.clean_tags([i["name"] for i in e6tags.info(tags).values()])
+            tags = e6tags.drop_implied(tags, keep=consts)
+    try:
         if uploads.describe(uploads.path_of(file_id))["kind"] in ("gif", "video") and "animated" not in tags:
             tags.append("animated")
     except (ValueError, OSError):
@@ -191,7 +194,8 @@ def variant(cfg, draft, platform: str) -> tuple[str, str, str]:
         v = (draft.get("variants") or {}).get(lang) or {}
         if (v.get("text") or "").strip() or (v.get("title") or "").strip():
             title, text, used = (v.get("title") or "").strip(), (v.get("text") or "").strip(), lang
-    custom = (draft.get('platform_texts') or {}).get(platform) or {}
+    key = 'e6ai' if not isinstance(draft.get('booru_posts'), dict) and platform == cfg.get('legacy_booru_site', 'e6ai') else platform
+    custom = (draft.get('platform_texts') or {}).get(key) or {}
     if (cfg.get('platform_texts_enabled') or {}).get(platform) is True and custom.get('enabled'):
         title, text = custom.get('title', title).strip(), custom.get('text', text).strip()
     return title, text, used
@@ -271,13 +275,13 @@ def plan(draft: dict) -> dict:
         return True, why or ""
     what_anim = ("GIF" if kind == "gif" else "видео") + (f" {round(ainfo['duration'])} с" if ainfo.get("duration") else "")
     mature = rating in ("erotic", "explicit")
-    off = set(draft.get("exclude") or [])
+    off = B.excludes(cfg, draft)
     done = set()
     uncertain = set()
     if draft.get("extend"):   # досылка к уже опубликованному посту: где он уже вышел — не трогаем
         done = done_keys(draft["extend"])
         row = _pub_row(int(draft["extend"]))
-        uncertain = {d["key"] for d in json.loads(row["dests"] or "[]") if needs_verification(d)} if row else set()
+        uncertain = {d["key"] for d in B.destinations(row["dests"]) if needs_verification(d)} if row else set()
         off |= done
         off |= uncertain
     dests = []
@@ -478,48 +482,50 @@ def plan(draft: dict) -> dict:
             what = "GIF" if kind == "gif" else (f"{n} работ{'а' if n == 1 else 'ы' if n < 5 else ''}" + (" PNG-оригиналами" if da.get("originals", True) else " JPEG-превью"))
             add("deviantart", "deviantart", name, True, details=[what + (" · Mature" if mature else "") + (" · отмечено как ИИ" if da.get("is_ai_generated", True) else "")])
 
-    # e6ai — последним: в источники пойдут ссылки на уже вышедшие посты
-    use("e6ai")
-    e6 = cfg["e6ai"]
-    if e6.get("enabled") and e6.get("username") and e6.get("api_key"):
-        configured.append("e6ai")
-        name = f"{E6.name(e6)} · {e6['username']}"
-        ok6, why6 = media_need("e6ai") if anim else (True, "")
-        if not ok6:
-            add("e6ai", "e6ai", name, False, why6, toggle=False)
-        elif files:
-            from app.publish import e6check
-            per = [e6_tags(cfg, draft, f["id"]) for f in files]
-            metas = draft.get("e6ai_meta") or {}
-            checks = [e6check.check((draft.get("e6ai_tags") or {}).get(f["id"]) or [],
-                                    list(cfg["e6ai"].get("constant_tags") or []) + (["animated"] if f["kind"] in ("gif", "video") else []),
-                                    metas.get(f["id"]), rating) for f in files]
-            few = [f["name"] for f, t in zip(files, per) if len(t) < E6.MIN_TAGS]
-            need = []
-            legacy = "e6ai_meta" not in draft   # запланировано до появления проверки — как раньше
-            for f, c in zip(files, checks):
-                for b in ([] if legacy else e6check.blockers(c)):
-                    label = b + (f" ({f['name']})" if len(files) > 1 else "")
-                    if label not in need:
-                        need.append(label)
-            if few and not need:
-                need.append(f"хотя бы {E6.MIN_TAGS} тега")
-            if need:
-                short = need if len(need) <= 4 else need[:4] + [f"ещё {len(need) - 4}"]
-                add("e6ai", "e6ai", name, False, "нужно: " + ", ".join(short), need=need)
-                if "e6ai" not in off and not draft.get("_scheduled_run"):   # в запланированном — просто пропустим e6ai
-                    errors.append(f"{E6.name(e6)}: теги не готовы — нужно: " + ", ".join(short) + f". Заполните форму тегов или выключите {E6.name(e6)} для этого поста")
-            else:
-                n = len(files)
-                add("e6ai", "e6ai", name, True, details=[
-                    (what_anim + (f" · {why6}" if why6 else " как есть") if anim else
-                     f"{n} оригинал{'' if n == 1 else 'а' if n < 5 else 'ов'} без сжатия" + (", связаны как родитель/дети" if n > 1 else "")),
-                    f"рейтинг {E6.RATING.get(rating, '?')}", f"тегов: {min(c['total'] for c in checks)}" + (f"–{max(c['total'] for c in checks)}" if n > 1 else "")])
-        else:
-            add("e6ai", "e6ai", name, True)
+    # Each booru is an independent target. Its tags are validated against its own database.
+    for platform in B.PLATFORMS:
+        with B.tag_context(platform):
+            use(platform)
+            e6 = cfg[platform]
+            if e6.get("enabled") and e6.get("username") and e6.get("api_key"):
+                configured.append(platform)
+                name = f"{E6.name(e6)} · {e6['username']}"
+                ok6, why6 = media_need(platform) if anim else (True, "")
+                if not ok6:
+                    add(platform, platform, name, False, why6, toggle=False)
+                elif files:
+                    from app.publish import e6check
+                    per = [e6_tags(cfg, draft, f["id"], platform) for f in files]
+                    metas = B.fields(cfg, draft, platform).get("meta") or {}
+                    checks = [e6check.check((B.fields(cfg, draft, platform).get("tags") or {}).get(f["id"]) or [],
+                                            list(cfg[platform].get("constant_tags") or []) + (["animated"] if f["kind"] in ("gif", "video") else []),
+                                            metas.get(f["id"]), rating) for f in files]
+                    few = [f["name"] for f, t in zip(files, per) if len(t) < E6.MIN_TAGS]
+                    need = []
+                    legacy = "e6ai_meta" not in draft and "booru_posts" not in draft   # запланировано до появления проверки — как раньше
+                    for f, c in zip(files, checks):
+                        for b in ([] if legacy else e6check.blockers(c)):
+                            label = b + (f" ({f['name']})" if len(files) > 1 else "")
+                            if label not in need:
+                                need.append(label)
+                    if few and not need:
+                        need.append(f"хотя бы {E6.MIN_TAGS} тега")
+                    if need:
+                        short = need if len(need) <= 4 else need[:4] + [f"ещё {len(need) - 4}"]
+                        add(platform, platform, name, False, "нужно: " + ", ".join(short), need=need)
+                        if platform not in off and not draft.get("_scheduled_run"):   # в запланированном — просто пропустим e6ai
+                            errors.append(f"{E6.name(e6)}: теги не готовы — нужно: " + ", ".join(short) + f". Заполните форму тегов или выключите {E6.name(e6)} для этого поста")
+                    else:
+                        n = len(files)
+                        add(platform, platform, name, True, details=[
+                            (what_anim + (f" · {why6}" if why6 else " как есть") if anim else
+                             f"{n} оригинал{'' if n == 1 else 'а' if n < 5 else 'ов'} без сжатия" + (", связаны как родитель/дети" if n > 1 else "")),
+                            f"рейтинг {E6.RATING.get(rating, '?')}", f"тегов: {min(c['total'] for c in checks)}" + (f"–{max(c['total'] for c in checks)}" if n > 1 else "")])
+                else:
+                    add(platform, platform, name, True)
 
     missing = [n for k, n in (("telegram", "Telegram"), ("discord", "Discord"), ("vk", "ВКонтакте"), ("bluesky", "Bluesky"),
-                              ("deviantart", "DeviantArt"), ("e6ai", E6.name(cfg["e6ai"])), ("reddit", "Reddit"), ("joyreactor", "JoyReactor"))
+                              ("deviantart", "DeviantArt"), ("e6ai", "blep.art"), ("e621", "e621"), ("floofgens", "floofgens.net"), ("reddit", "Reddit"), ("joyreactor", "JoyReactor"))
                if k not in configured and cfg["modules"].get(k, True)]
     if not configured:
         errors.append("Ни одна площадка не настроена — откройте «Настройки» → «Публикация»")
@@ -540,7 +546,7 @@ def plan(draft: dict) -> dict:
         errors.append("С этим рейтингом пост никуда не уйдёт")
     return {"kind": _kind(all_files) if all_files else "images", "mature": mature, "rating": rating, "dests": dests, "errors": errors,
             "not_configured": missing, "configured": configured, "notes": notes,
-            "texts": {p: signed_text(cfg, draft, p) for p in tuple(p for p in S.PLATFORM_MODULES if p != "e6ai")},
+            "texts": {p: signed_text(cfg, draft, p) for p in tuple(p for p in S.PLATFORM_MODULES if p not in B.PLATFORMS)},
             # заголовок и язык текста каждой площадки: предпросмотр показывает ровно то, что уйдёт
             "titles": {p: title_for(cfg, draft, p) for p in S.PLATFORM_MODULES},
             "base_texts": {p: variant(cfg, draft, p)[1] for p in S.PLATFORM_MODULES},
@@ -676,7 +682,7 @@ def extend(draft: dict, report) -> None:
         raise PlatformError(p["errors"][0])
     new = [dict(d, state="queued", message="", link="", note="") for d in p["dests"] if d["will"]]
     keys = {d["key"] for d in new}
-    old = [d for d in json.loads(row["dests"] or "[]") if d["key"] not in keys]   # прежние ошибки на этих местах заменятся
+    old = [d for d in B.destinations(row["dests"]) if d["key"] not in keys]   # прежние ошибки на этих местах заменятся
     clean = {k: v for k, v in draft.items() if k != "extend"}
     with _state_lock:
         _state.clear()
@@ -749,7 +755,7 @@ def _load_pub(pub_id: int) -> None:
         _state.clear()
         _state.update({"pub_id": int(pub_id), "created": row["created"], "title": row["title"] or "", "text": row["text"] or "",
                        "rating": row["rating"], "files": json.loads(row["files"] or "[]"), "draft": draft or {},
-                       "dests": json.loads(row["dests"] or "[]"), "skipped": [], "running": False, "kind": ""})
+                       "dests": B.destinations(row["dests"]), "skipped": [], "running": False, "kind": ""})
 
 
 def resend_originals(pub_id: int, report) -> None:
@@ -809,7 +815,7 @@ def retry(report, confirm_unknown: bool = False, pub_id: int | None = None) -> N
         draft = json.loads(row.get("draft") or "null")
         if not isinstance(draft, dict):
             raise PlatformError("Черновик публикации не сохранён — автоматический повтор недоступен")
-        dests = json.loads(row["dests"] or "[]")
+        dests = B.destinations(row["dests"])
         with _state_lock:
             _state.clear()
             _state.update(dict(row, pub_id=row["id"], draft=draft, dests=dests,
@@ -861,7 +867,7 @@ def _run(draft, report, only):
         info = uploads.probe_cached(f["path"]) if f["kind"] == "video" else {}
         if not M.need_for(platform, f, info, limit):
             return f["path"], f["kind"], info
-        if platform == "e6ai":
+        if platform in B.PLATFORMS:
             return M.to_webm(f["id"], f["path"], log), "video", info
         big = limit and f["size"] > limit
         out = M.to_mp4(f["id"], f["path"], limit if big else None, log)
@@ -974,23 +980,26 @@ def _run(draft, report, only):
                     _set(key, message="отправляю…"); prog(0.3)
                     D.post(dict(dc, webhook_urls=[w["url"]]), media, post)
                     _set(key, state="done", message="", note="отправлено в канал")
-                elif key == "e6ai":
-                    e6 = cfg["e6ai"]
+                elif key in B.PLATFORMS:
+                    e6 = cfg[key]
+                    if not e6.get("enabled") or not e6.get("username") or not e6.get("api_key"):
+                        raise NotPublishedError(f"{E6.name(e6)}: площадка выключена или не подключена")
                     cur = state()
                     sources = []
                     if e6.get("with_sources", True):   # публичные ссылки на этот пост в других местах
                         sources = [x["link"] for x in cur["dests"] if x["state"] == "done" and str(x.get("link", "")).startswith("http")
-                                   and "/c/" not in x["link"] and x["key"] != "e6ai"]
+                                   and "/c/" not in x["link"] and x["key"] != key]
                     desc = ""
                     if e6.get("with_description", True):
-                        e_title, t, _ = variant(cfg, draft, "e6ai")
+                        e_title, t, _ = variant(cfg, draft, key)
                         desc = ((f"[b]{e_title}[/b]\n" if e_title else "") + t).strip()
                     parent, first, dup = None, None, 0
+                    post_refs = []
                     for i, f in enumerate(files):
                         _set(key, message=f"загружаю оригинал {i + 1} из {len(files)}…")
-                        tags6 = e6_tags(cfg, draft, f["id"])
+                        tags6 = e6_tags(cfg, draft, f["id"], key)
                         if kind in ("gif", "video"):
-                            path, _, _ = anim_file("e6ai", log=lambda m: _set(key, message=m + "…"))
+                            path, _, _ = anim_file(key, log=lambda m: _set(key, message=m + "…"))
                             _set(key, message=f"загружаю на {E6.name(e6)}…")
                             try:
                                 res = E6.upload(e6, str(path), tags6, draft["rating"], sources, desc, parent, Path(f["name"]).stem + path.suffix)
@@ -1006,11 +1015,14 @@ def _run(draft, report, only):
                         if not res.get("duplicate"):   # через сутки сверим с правками модераторов
                             try:
                                 from app.insights import e6learn
-                                e6learn.record(state()["pub_id"], res["post_id"], tags6 if kind in ("gif", "video") else e6_tags(cfg, draft, f["id"]),
+                                e6learn.record(state()["pub_id"], res["post_id"], tags6 if kind in ("gif", "video") else e6_tags(cfg, draft, f["id"], key),
                                                E6.history_site(e6))
                             except Exception:
                                 from app.applog import log
                                 log("e6ai: не удалось запомнить загрузку для сверки правок")
+                        post_refs.append({'post_id':res['post_id'], 'url':res['url'], 'sent_at':datetime.now(timezone.utc).isoformat(), 'duplicate':bool(res.get('duplicate'))})
+                        _set(key, post_refs=list(post_refs))
+                        _save_pub()   # Keep confirmed remote IDs even if a later image fails.
                         parent = parent or res["post_id"]
                         first = first or res["url"]
                         dup += res["duplicate"]
@@ -1174,8 +1186,8 @@ def _run(draft, report, only):
     from concurrent.futures import ThreadPoolExecutor
     keys = {d["key"] for d in todo}
     posted = {d["key"]: threading.Event() for d in todo if d["key"].startswith("telegram:") and d["key"] != "telegram:group"}
-    first_wave = [(n, d) for n, d in enumerate(todo) if d["key"] != "e6ai"]
-    last = [(n, d) for n, d in enumerate(todo) if d["key"] == "e6ai"]
+    first_wave = [(n, d) for n, d in enumerate(todo) if d["key"] not in B.PLATFORMS]
+    last = [(n, d) for n, d in enumerate(todo) if d["key"] in B.PLATFORMS]
     if first_wave:
         with ThreadPoolExecutor(max_workers=len(first_wave), thread_name_prefix="publish") as ex:
             list(ex.map(lambda nd: one(*nd), first_wave))
@@ -1223,7 +1235,7 @@ def history(limit: int = 50) -> list[dict]:
     rows = db.query("SELECT * FROM publications ORDER BY id DESC LIMIT ?", (limit,))
     for r in rows:
         r["files"] = json.loads(r["files"] or "[]")
-        r["dests"] = json.loads(r["dests"] or "[]")
+        r["dests"] = B.destinations(r["dests"])
         r.pop("draft", None)
     return rows
 

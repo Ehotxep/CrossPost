@@ -18,6 +18,8 @@ import io
 import sqlite3
 import threading
 import time
+from contextvars import ContextVar
+from contextlib import contextmanager
 from pathlib import Path
 
 from app.paths import data_dir, sub
@@ -35,15 +37,42 @@ _lock = threading.Lock()
 
 
 _local = threading.local()     # одно соединение на поток — не открываем базу на каждый тег
-_memo = {"mt": None, "path": None, "ready": None, "info": {}, "impl": {}}
-_dir = None
+class _ThreadMemo:
+    def _value(self):
+        key = (str(data_dir()), site())
+        memos = getattr(_local, "memos", None)
+        if memos is None:
+            memos = _local.memos = {}
+        return memos.setdefault(key, {"mt": None, "path": None, "ready": None, "info": {}, "impl": {}})
+
+    def __getitem__(self, key):
+        return self._value()[key]
+
+    def __setitem__(self, key, value):
+        self._value()[key] = value
+
+    def update(self, **values):
+        self._value().update(values)
+
+
+_memo = _ThreadMemo()
+_site_context = ContextVar("booru_tag_site", default=None)
 
 
 def _data() -> Path:
-    global _dir
-    if _dir is None:
-        _dir = data_dir()
-    return _dir
+    return data_dir()
+
+
+@contextmanager
+def for_site(value):
+    from app.publish.settings import BOORU
+    if value not in BOORU:
+        raise ValueError("Неизвестный сайт тегов")
+    token = _site_context.set(value)
+    try:
+        yield
+    finally:
+        _site_context.reset(token)
 
 
 _site_memo = {"t": 0.0, "v": "e6ai"}
@@ -51,6 +80,8 @@ _site_memo = {"t": 0.0, "v": "e6ai"}
 
 def site() -> str:
     """Для какого сайта база: куда сейчас загружаем (перечитываем настройку не чаще раза в 3 секунды)."""
+    if _site_context.get() is not None:
+        return _site_context.get()
     if time.time() - _site_memo["t"] > 3:
         try:
             from app.publish import settings as PS
@@ -78,9 +109,9 @@ def _ptr(s: str | None = None) -> Path:
 def _fresh():
     """Базу пересобрали (указатель сменился) или сменили сайт — сбросить запомненное."""
     try:
-        mt = (site(), _ptr().stat().st_mtime)
+        mt = ((str(_data()), site()), _ptr().stat().st_mtime)
     except OSError:
-        mt = (site(), "legacy")
+        mt = ((str(_data()), site()), "legacy")
     if _memo["mt"] != mt:
         path = _data() / f"{_prefix()}.db"
         if mt[1] != "legacy":

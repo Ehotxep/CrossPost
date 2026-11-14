@@ -19,7 +19,7 @@ RATINGS = ("sfw", "erotic", "explicit")          # рейтинг поста
 DEST_RATINGS = ("sfw", "nsfw", "all")            # рейтинг места: только SFW / только 18+ / любой
 ORIGINALS = ("reply", "comments", "none")
 
-PLATFORM_MODULES = ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "reddit", "joyreactor")
+PLATFORM_MODULES = ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "e621", "floofgens", "reddit", "joyreactor")
 
 
 def platform_order(cfg: dict | None = None) -> list:
@@ -137,6 +137,16 @@ DEFAULTS = {
 }
 
 
+# One adapter, three independent publication destinations.
+BOORU_PLATFORMS = ("e6ai", "e621", "floofgens")
+for _site in ("e621", "floofgens"):
+    DEFAULTS[_site] = {k: copy.deepcopy(v) for k, v in DEFAULTS["e6ai"].items()
+                       if k not in ("blep_api_key", "accounts", "site")}
+    DEFAULTS["modules"][_site] = False
+    DEFAULTS["text_lang"][_site] = "main"
+    DEFAULTS["versions"][_site] = []
+
+
 def _path():
     return data_dir() / "publish.json"
 
@@ -167,6 +177,26 @@ def _migrate(data: dict) -> dict:
     le = data.pop("light_export", None)   # прежняя «папка для копий JPEG» → общая папка готовых файлов
     if isinstance(le, dict) and le.get("dir") and "outputs" not in data:
         data["outputs"] = {"dir": le["dir"], "by_date": bool(le.get("by_date"))}
+    if not data.get("booru_split"):
+        old = data.setdefault("e6ai", {})
+        selected = old.get("site") if old.get("site") in BOORU_PLATFORMS else "e6ai"
+        active = bool(old.get("enabled"))
+        modules = data.setdefault("modules", {})
+        module_on = modules.get("e6ai", True)
+        data["legacy_booru_site"] = selected
+        for site in ("e621", "floofgens"):
+            account = (old.get("accounts") or {}).get(site) or {}
+            shared = {k: copy.deepcopy(old[k]) for k in ("preselect", "show_min", "with_sources", "with_description", "never_suggest") if k in old}
+            data.setdefault(site, dict(shared, **copy.deepcopy(account), enabled=active and selected == site))
+            modules.setdefault(site, module_on and (site == selected or bool(account.get("username"))))
+            for field in ("text_lang", "versions", "platform_texts_enabled"):
+                values = data.setdefault(field, {})
+                if site == selected and "e6ai" in values:
+                    values.setdefault(site, copy.deepcopy(values["e6ai"]))
+        if selected != "e6ai":
+            old["enabled"] = False
+            modules["e6ai"] = module_on and bool(old.get("username") and old.get("blep_api_key"))
+        data["booru_split"] = True
     return data
 
 
@@ -182,16 +212,10 @@ def load(raw: bool = False) -> dict:
         cfg['modules'].update({k: False for k in ('stats', 'trends', 'tagger', 'collect', 'news', 'forecast')})
     if not raw:
         e6 = cfg["e6ai"]
-        site = booru_site(cfg)
-        if site == "e6ai":
-            e6["api_key"] = e6.get("blep_api_key", "")
-            e6["base"] = BOORU[site]
-        if site != "e6ai":   # выбранный сайт — в те же поля, весь остальной код работает как с e6ai
-            acc = (e6.get("accounts") or {}).get(site) or {}
-            for k in PER_SITE:
-                e6[k] = acc.get(k, [] if k == "constant_tags" else "")
-            e6["base"] = BOORU[site]
-        e6["site_name"] = site
+        e6["api_key"] = e6.get("blep_api_key", "")
+        for site in BOORU_PLATFORMS:
+            cfg[site]["base"] = BOORU[site]
+            cfg[site]["site_name"] = site
         for k in PLATFORM_MODULES:
             if not cfg["modules"].get(k, True) and isinstance(cfg.get(k), dict):
                 cfg[k]["enabled"] = False
@@ -230,18 +254,13 @@ def booru_site(cfg: dict | None = None) -> str:
     return e6.get("site") if e6.get("site") in BOORU else "e6ai"
 
 
-def site_changes(changes: dict) -> dict:
-    """Правки раздела e6ai: аккаунт и постоянные теги — в ячейку выбранного сайта (e6ai — как раньше, сверху)."""
-    site = booru_site()
-    if site == "e6ai":
-        changes = dict(changes)
-        if "api_key" in changes:
-            changes["blep_api_key"] = changes.pop("api_key")
-        return changes
-    out = {k: v for k, v in changes.items() if k not in PER_SITE}
-    mine = {k: v for k, v in changes.items() if k in PER_SITE}
-    if mine:
-        out["accounts"] = {site: mine}
+def site_changes(changes: dict, site: str = "e6ai") -> dict:
+    """Legacy blep API-key field; other destinations save directly to their own sections."""
+    if site not in BOORU:
+        raise ValueError("Неизвестный сайт")
+    out = dict(changes)
+    if site == "e6ai" and "api_key" in out:
+        out["blep_api_key"] = out.pop("api_key")
     return out
 
 
@@ -291,6 +310,9 @@ def public(cfg: dict) -> dict:
     for acc in (out["e6ai"].get("accounts") or {}).values():   # ключи второго сайта тоже не отдаём
         acc["has_key"] = bool(acc.get("api_key"))
         acc["api_key"] = ""
+    for site in ("e621", "floofgens"):
+        out[site]["has_key"] = bool(out[site].get("api_key"))
+        out[site]["api_key"] = ""
     out["vk"]["access_token"] = ""
     from app.publish.browser_targets import FLAIRS
     out["reddit"]["flairs"] = copy.deepcopy(FLAIRS)

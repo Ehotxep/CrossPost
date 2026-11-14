@@ -16,6 +16,8 @@ OPTIONS = {
     'vk': ('include_title',), 'bluesky': ('include_title', 'alt_from_title', 'langs'),
     'deviantart': ('is_ai_generated', 'noai', 'originals', 'tags_from'),
     'e6ai': ('constant_tags', 'with_description', 'with_sources'),
+    'e621': ('constant_tags', 'with_description', 'with_sources'),
+    'floofgens': ('constant_tags', 'with_description', 'with_sources'),
 }
 
 
@@ -34,6 +36,9 @@ def clean_profile(profile):
 def effective(cfg, draft):
     from app.publish.settings import _merge
     profile = clean_profile(draft.get('profile'))
+    if not isinstance(draft.get('booru_posts'), dict):
+        from app.publish.booru import legacy_profile
+        profile = legacy_profile(cfg, profile)
     selected = profile.pop('platforms', None)
     result = _merge(cfg, profile)
     if selected is not None:
@@ -48,7 +53,7 @@ def _path():
 
 
 def _targets(cfg):
-    out = {k: k for k in ('vk', 'bluesky', 'deviantart', 'e6ai', 'joyreactor')}
+    out = {k: k for k in ('vk', 'bluesky', 'deviantart', 'e6ai', 'e621', 'floofgens', 'joyreactor')}
     for i, ch in enumerate(cfg['telegram']['channels']):
         out[f'telegram:{i}'] = 'telegram:' + str(ch['id'])
     out['telegram:group'] = 'telegram:group:' + str(cfg['telegram']['group'].get('id', ''))

@@ -24,27 +24,19 @@ class BlepMigration(unittest.TestCase):
             self.assertEqual(get.call_args.kwargs['auth'], ('artist', 'new-key'))
             post_stats._e6_cache.clear()
 
-    def test_floofgens_switch_requires_its_own_account(self):
-        from app.api import Api
+    def test_floofgens_has_its_own_account(self):
         from app.publish import settings
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, CROSSPOST_DATA=folder):
             settings.update('e6ai', {'blep_api_key': 'blep-secret', 'username': 'artist'})
-            api = Api.__new__(Api)
-            with patch.object(Api, 'pub_settings', side_effect=lambda: settings.public(settings.load())):
-                public = api.pub_e6_site('floofgens')
+            public = settings.public(settings.load())
             self.assertTrue(public['booru_sites']['floofgens']['available'])
-            self.assertEqual(settings.load()['e6ai']['base'], 'https://floofgens.net')
-            self.assertEqual(settings.load()['e6ai']['api_key'], '')
-            self.assertEqual(settings.load()['e6ai']['username'], '')
-            settings.update('e6ai', settings.site_changes({'username': 'floof-artist', 'api_key': 'floof-secret', 'constant_tags': ['floof_tag']}))
+            self.assertEqual(settings.load()['floofgens']['base'], 'https://floofgens.net')
+            self.assertEqual(settings.load()['floofgens']['api_key'], '')
+            settings.update('floofgens', {'username': 'floof-artist', 'api_key': 'floof-secret', 'constant_tags': ['floof_tag']})
             self.assertNotIn('floof-secret', str(settings.public(settings.load())))
-            settings.update('e6ai', {'site': 'e621'})
-            self.assertEqual(settings.load()['e6ai']['api_key'], '')
-            settings.update('e6ai', {'site': 'e6ai'})
             self.assertEqual(settings.load()['e6ai']['api_key'], 'blep-secret')
-            settings.update('e6ai', {'site': 'floofgens'})
-            self.assertEqual(settings.load()['e6ai']['api_key'], 'floof-secret')
-            self.assertEqual(settings.load()['e6ai']['constant_tags'], ['floof_tag'])
+            self.assertEqual(settings.load()['e621']['api_key'], '')
+            self.assertEqual(settings.load()['floofgens']['constant_tags'], ['floof_tag'])
 
     def test_old_key_never_used_for_blep_and_new_key_is_isolated(self):
         from app.publish import settings
@@ -61,11 +53,8 @@ class BlepMigration(unittest.TestCase):
             public = settings.public(settings.load())['e6ai']
             self.assertTrue(public['has_key'])
             self.assertNotIn('blep-secret', str(public))
-            settings.update('e6ai', {'site': 'e621'})
-            self.assertEqual(settings.load()['e6ai']['api_key'], '')
-            settings.update('e6ai', settings.site_changes({'api_key': 'e621-secret'}))
-            self.assertEqual(settings.load()['e6ai']['api_key'], 'e621-secret')
-            settings.update('e6ai', {'site': 'e6ai'})
+            settings.update('e621', {'api_key': 'e621-secret'})
+            self.assertEqual(settings.load()['e621']['api_key'], 'e621-secret')
             self.assertEqual(settings.load()['e6ai']['api_key'], 'blep-secret')
 
 

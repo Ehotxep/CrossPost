@@ -15,12 +15,14 @@ import numpy as np
 import pandas as pd
 
 from app.trends.aggregate import out_dir, week_of, week_start
+from app.trends import topics
 
 K = 8            # сглаживание отклика: столько «средних» постов добавляем к тегу
 PHI = 0.8        # затухание тренда в прогнозе
 MIN = {          # минимум постов в окне, чтобы тег участвовал
     "e6ai": {"pop": 12, "rise": 8, "niche": 10, "fc": 4},
     "e621": {"pop": 40, "rise": 25, "niche": 40, "fc": 12},
+    "floofgens": {"pop": 12, "rise": 8, "niche": 10, "fc": 4},
 }
 YEAR_RE = re.compile(r"(?:^|[_(])(?:19|20)\d{2}(?:[)_]|$)")  # теги конкретного года не повторяются
 CAT_RU = {"species": "вид", "character": "персонаж", "franchise": "франшиза", "general": "тема"}
@@ -103,6 +105,9 @@ KEEP_MODELS = 2   # в памяти — только последние откр
 
 
 def get_model(source: str, rating: str) -> Model | None:
+    from app.trends.dumps import SOURCES
+    if source not in SOURCES or rating not in ('all','s','q','e'):
+        raise ValueError('Неизвестный источник или рейтинг трендов')
     od = out_dir(source)
     meta = od / "meta.json"
     if not meta.exists():
@@ -240,38 +245,41 @@ def backtest(model: Model) -> dict:
 # --- Обзор -----------------------------------------------------------------------
 
 def overview(model: Model, category: str = "all", style: list[str] | None = None, mine_only: bool = False,
-             hidden: list[str] | None = None) -> dict:
+             hidden: list[str] | None = None, show_common: bool = False, period: str = "quarter") -> dict:
     style = set(style or [])
     mins = model.mins
-    hidden = set(hidden or [])
-    mask = np.array([t not in hidden for t in model.tags], dtype=bool)
-    if category != "all":
-        mask &= model.cat == category
-    is_mine = np.array([t in style for t in model.tags])
-    if mine_only:
-        mask &= is_mine
+    mask, suppressed = topics.mask(model, category, style, mine_only, hidden or (), show_common)
+    is_mine = np.array([t in style for t in model.tags], dtype=bool)
+    if period not in ('month','quarter'):
+        raise ValueError('Неизвестный период трендов')
+    window = 4 if period == 'month' else 13
 
     def item(i, **extra):
-        return {"tag": str(model.tags[i]), "category": str(model.cat[i]), "mine": bool(is_mine[i]), **extra}
+        return {"tag": str(model.tags[i]), "category": str(model.cat[i]), "group":topics.group(str(model.tags[i]),str(model.cat[i])), "mine": bool(is_mine[i]), **extra}
 
     # Популярно сейчас: отклик за последние 4 недели
-    s4, s13, s26 = model.cols(4), model.cols(13), model.cols(26, 13)
-    n4, n13, n26 = model.N[:, s4].sum(1), model.N[:, s13].sum(1), model.N[:, s26].sum(1)
-    lift4, lift13, lift26 = model.lift(s4), model.lift(s13), model.lift(s26)
+    s4, s13 = model.cols(4), model.cols(13)
+    n4, n13 = model.N[:, s4].sum(1), model.N[:, s13].sum(1)
+    lift4, lift13 = model.lift(s4), model.lift(s13)
     ok = mask & (n4 >= mins["pop"])
     # ранжируем осторожно: отклик, «сжатый» к среднему сильнее, чем для показа, — у тега из 10 работ
     # высокий отклик может быть случайностью, у тега из 200 — уже нет
     k_rank = 3 * mins["pop"]
     cautious = np.exp(model.D[:, s4].sum(1) / (n4 + k_rank))
-    popular = [item(i, lift=round(float(lift4[i]), 3), per_month=int(round(n13[i] / 3)), spark=model.spark(i))
+    popular = [item(i, lift=round(float(lift4[i]), 3), per_month=int(round(n13[i] / 3)), sample=int(n4[i]),
+                    reason="Отклик выше среднего для того же рейтинга" if lift4[i] > 1 else "Отклик не выше среднего для того же рейтинга",
+                    spark=model.spark(i))
                for i in np.argsort(-np.where(ok, cautious, -1))[:8] if ok[i]]
 
-    # Набирает популярность: последние 13 недель против предыдущих 13
-    shB, shA = model.share(s13), model.share(s26)
-    ok = mask & ~model.dated & (n13 >= mins["rise"]) & (n26 >= mins["rise"])
-    resp = np.where(ok, lift13 / lift26, 1.0)
+    # Compare equal windows; short growth never reuses the quarter denominator.
+    recent, previous = model.cols(window), model.cols(window*2, window)
+    n_recent, n_previous = model.N[:,recent].sum(1), model.N[:,previous].sum(1)
+    shB, shA = model.share(recent), model.share(previous)
+    min_growth = max(4, int(math.ceil(mins['rise'] * window / 13)))
+    ok = mask & ~model.dated & (n_recent >= min_growth) & (n_previous >= min_growth)
+    resp = np.where(ok, model.lift(recent) / model.lift(previous), 1.0)
     supply = np.where(ok & (shA > 0), shB / np.maximum(shA, 1e-12), 1.0)
-    weight = np.minimum(1.0, np.sqrt(n13 / (4 * mins["rise"])))
+    weight = np.minimum(1.0, np.sqrt(n_recent / (4 * min_growth)))
     score = (np.log(resp) + 0.4 * np.log(np.maximum(supply, 1e-6))) * weight
     seasonal = _seasonal(model, mask & ~model.dated)
     seasonal_tags = {s["tag"] for s in seasonal}
@@ -282,12 +290,15 @@ def overview(model: Model, category: str = "all", style: list[str] | None = None
         badge = ""
         if model.tags[i] in seasonal_tags:
             badge = "сезон"
-        elif n13[i] < 3 * mins["rise"] and supply[i] > 1.5:
+        elif n_recent[i] < 3 * min_growth and supply[i] > 1.5:
             badge = "ранний сигнал"
         elif is_mine[i]:
             badge = "ваш стиль"
         rising.append(item(i, response=round(float(resp[i] - 1), 3), supply=round(float(supply[i] - 1), 3),
-                           per_month=int(round(n13[i] / 3)), spark=model.spark(i), badge=badge))
+                           per_month=int(round(n13[i] / 3)), sample=int(n_recent[i]), previous_sample=int(n_previous[i]),
+                           reason="Растут отклик и доля работ" if resp[i] > 1 and supply[i] > 1 else "Растёт отклик" if resp[i] > 1 else "Растёт доля работ; отклик не растёт",
+                           confidence="малая выборка" if n_recent[i] < 3*min_growth else "достаточная выборка",
+                           spark=model.spark(i), badge=badge))
 
     # Ниши: спрос (отклик) против конкуренции (постов в месяц)
     ok = mask & (n13 >= mins["niche"])
@@ -321,6 +332,8 @@ def overview(model: Model, category: str = "all", style: list[str] | None = None
         "dump_date": model.meta["dump_date"], "posts": model.meta["posts"],
         "week_end": _fmt_date(week_start(model.wend)),
         "popular": popular, "rising": rising,
+        "filters": {"show_common":bool(show_common), "hidden_common":suppressed, "period":period, "growth_weeks":window, "category":category},
+        "coverage": {"growth_current":int(model.site_n[recent].sum()), "growth_previous":int(model.site_n[previous].sum())},
         "niches": {"points": pts, "x_median": x_med}, "niche_top": niche_top,
         "seasonal": seasonal[:4],
         "backtest": backtest(model),
@@ -354,14 +367,14 @@ def _seasonal(model: Model, mask: np.ndarray) -> list[dict]:
 
 
 def leads(m621: Model, m6: Model, style: list[str] | None = None, limit: int = 4,
-          hidden: list[str] | None = None) -> dict:
+          hidden: list[str] | None = None, show_common: bool = False, category: str = "all", mine_only: bool = False) -> dict:
     """Опережающие сигналы: работ с тегом на e621 становится заметно больше, а на e6ai — нет.
 
     Рост считается с поправкой на общий объём сайта и со сглаживанием: тег, у которого было
     2 работы, а стало 30, не получает «+1400%» и не вытесняет устойчивые тренды.
     """
     style = set(style or [])
-    hidden = set(hidden or [])
+    eligible, _ = topics.mask(m621, category, style, mine_only, hidden or (), show_common)
     B, A = m621.cols(13), m621.cols(26, 13)
     n_b, n_a = m621.N[:, B].sum(1), m621.N[:, A].sum(1)
     vol = m621.site_n[B].sum() / max(m621.site_n[A].sum(), 1)       # сайт тоже растёт
@@ -373,7 +386,7 @@ def leads(m621: Model, m6: Model, style: list[str] | None = None, limit: int = 4
     k6 = m6.mins["rise"]
     out = []
     for i, tag in enumerate(m621.tags):
-        if m621.dated[i] or tag in hidden or n_b[i] < k or gap621[i] < math.log(1.3):
+        if m621.dated[i] or not eligible[i] or n_b[i] < k or gap621[i] < math.log(1.3):
             continue
         j = m6.ti.get(tag)
         g6 = float(np.log((n6_b[j] + k6) / (n6_a[j] * vol6 + k6))) if j is not None else 0.0

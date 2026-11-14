@@ -19,7 +19,7 @@ from app.paths import sub
 EPOCH = pd.Timestamp("2000-01-03", tz="UTC")  # понедельник: недели считаем от него
 WEEKS_BACK = 120                               # ~2.3 года: хватает на сезонность прошлого года
 CATEGORIES = {0: "general", 3: "franchise", 4: "character", 5: "species"}  # остальное (авторы, мета) не берём
-MIN_TOTAL = {"e6ai": 8, "e621": 20}            # меньше постов за весь период — тег не храним
+MIN_TOTAL = {"e6ai": 8, "e621": 20, "floofgens": 8}            # меньше постов за весь период — тег не храним
 CHUNK = 150_000
 NEED = {"created_at", "rating", "tag_string", "fav_count", "is_deleted"}
 

@@ -53,18 +53,18 @@ def composition(draft):
                 warnings.append('Текст Bluesky будет сокращён до лимита площадки')
         elif platform in ('vk', 'joyreactor'):
             text = (f'{title}\n\n{text}' if include else text).strip()
-        elif platform == 'e6ai':
-            text = ((f'[b]{title}[/b]\n' if title else '') + runner.variant(cfg, draft, platform)[1]).strip() if cfg['e6ai'].get('with_description', True) else ''
+        elif platform in ('e6ai', 'e621', 'floofgens'):
+            text = ((f'[b]{title}[/b]\n' if title else '') + runner.variant(cfg, draft, platform)[1]).strip() if cfg[platform].get('with_description', True) else ''
             fmt = 'DText'
-            if cfg['e6ai'].get('with_sources', True):
+            if cfg[platform].get('with_sources', True):
                 warnings.append('Ссылки на опубликованные копии добавятся после отправки на другие площадки')
         if platform in ('reddit', 'joyreactor'):
             warnings += ['Браузерная интеграция экспериментальная; выполните пробный прогон в настройках']
             warnings += [d['name'] + ': ' + '; '.join(d['details']) for d in dests]
         previews = []
         for f in selected:
-            tags = runner.e6_tags(cfg, draft, f['id']) if platform == 'e6ai' else []
-            original = platform == 'e6ai'
+            tags = runner.e6_tags(cfg, draft, f['id'], platform) if platform in ('e6ai', 'e621', 'floofgens') else []
+            original = platform in ('e6ai', 'e621', 'floofgens')
             if platform == 'deviantart':
                 from platforms import deviantart
                 original = cfg['deviantart'].get('originals', True) and f['size'] <= deviantart.FILE_MAX_BYTES
