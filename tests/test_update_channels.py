@@ -29,6 +29,12 @@ class UpdateChannels(unittest.TestCase):
         with self.assertRaises(ValueError):
             updates.release_version(release('0.2.15-experimental.2', True), 'stable')
 
+    def test_new_experimental_base_upgrades_old_build_and_allows_stable_return(self):
+        self.assertTrue(updates.eligible('0.2.17-experimental.13', 'experimental', '0.2.15-experimental.12'))
+        self.assertFalse(updates.eligible('0.2.15-experimental.99', 'experimental', '0.2.17-experimental.13'))
+        self.assertTrue(updates.eligible('0.2.17-experimental.13', 'experimental', '0.2.16'))
+        self.assertTrue(updates.eligible('0.2.16', 'stable', '0.2.17-experimental.13'))
+
     def test_fetch_ignores_other_prereleases_and_chooses_newest_build(self):
         older = release('0.2.15-experimental.2', True)
         newer = release('0.2.15-experimental.10', True)
