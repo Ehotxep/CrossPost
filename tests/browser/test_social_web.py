@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from PIL import Image
 from playwright.sync_api import sync_playwright
+from diagnostics import capture_failure, watch_page
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -59,7 +60,7 @@ class SocialBrowser(unittest.TestCase):
     @contextmanager
     def fixture(self, platform, html=None):
         context = self.browser.new_context()
-        page = context.new_page()
+        page = watch_page(context.new_page())
         source = html or (REDDIT if platform == 'reddit' else X_FORM if platform == 'x' else JOY)
         # All requests are fulfilled locally, including the pretend confirmation page.
         context.route('**/*', lambda route: route.fulfill(content_type='text/html; charset=utf-8', body=source if route.request.url.rstrip('/').endswith(('submit', 'add', '/compose/post')) else '<p>Published fixture</p>'))
@@ -70,6 +71,9 @@ class SocialBrowser(unittest.TestCase):
         try:
             with patch.object(W.B, 'session', session), patch.object(W.B, 'save_cookies'), patch.object(W.B, 'dump', return_value='fixture.png'):
                 yield page
+        except BaseException:
+            capture_failure(page, self.id() + "-" + platform)
+            raise
         finally:
             context.close()
 

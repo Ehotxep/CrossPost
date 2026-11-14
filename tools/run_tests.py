@@ -20,17 +20,26 @@ def main():
 
 def report_result(result):
     """Expose sanitized failures for regression and browser suites in CI."""
+    from app.jobs import mask_secrets
+    text = f'## Test results\n\nRun: {result.testsRun}; failures: {len(result.failures)}; errors: {len(result.errors)}; skipped: {len(result.skipped)}.\n'
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
-    if summary:
-        from app.jobs import mask_secrets
-        text = f'## Regression tests\n\nRun: {result.testsRun}; failures: {len(result.failures)}; errors: {len(result.errors)}; skipped: {len(result.skipped)}.\n'
-        for case, detail in result.failures + result.errors:
-            safe_detail=mask_secrets(detail)[:16000]
-            text += f'\n### {case.id()}\n\n```text\n{safe_detail}\n```\n'
-            annotation=safe_detail.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+    for case, detail in result.failures + result.errors:
+        safe_detail = mask_secrets(detail)[:16000]
+        text += f'\n### {case.id()}\n\n```text\n{safe_detail}\n```\n'
+        if summary:
+            annotation = safe_detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
             print(f'::error title={case.id()}::{annotation}', flush=True)
-        with open(summary, 'a', encoding='utf-8') as output:
-            output.write(text)
+    try:
+        if result.failures or result.errors:
+            folder = ROOT / 'test-artifacts'
+            folder.mkdir(exist_ok=True)
+            with open(folder / 'test-failures.log', 'a', encoding='utf-8') as output:
+                output.write(text)
+        if summary:
+            with open(summary, 'a', encoding='utf-8') as output:
+                output.write(text)
+    except OSError as error:
+        print(f'Test report unavailable: {mask_secrets(str(error))}', file=sys.stderr)
     return 0 if result.wasSuccessful() else 1
 
 

@@ -27,6 +27,12 @@ jobs:
             requirements-constraints.txt
       - run: python -m pip install -r requirements-app.txt
       - run: python tools/run_tests.py
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: regression-failure-${{ matrix.os }}-py${{ matrix.python }}
+          path: test-artifacts/
+          retention-days: 7
   interface:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -50,3 +56,4 @@ jobs:
         with:
           name: interface-failure
           path: test-artifacts/
+          retention-days: 7

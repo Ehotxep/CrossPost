@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from PIL import Image
 import requests
 from playwright.sync_api import sync_playwright
+from diagnostics import close_page, watch_page
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -69,13 +70,16 @@ main()
         cls.process.stdout.close()
         cls.tmp.cleanup()
 
+    def new_page(self, **kwargs):
+        return watch_page(self.browser.new_page(**kwargs))
+
     def api(self, name, **args):
         result = self.session.post(self.base+'/api/'+name, headers=self.headers, json=args, timeout=30).json()
         self.assertTrue(result['ok'], result)
         return result['result']
 
     def test_booru_sites_have_independent_settings_and_post_switches(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         try:
             for site in ('e621','floofgens'):
                 self.api('modules_set',key=site,on=True)
@@ -134,10 +138,10 @@ main()
             for site in ('e621','floofgens'):
                 self.api('pub_save',section=site,changes={'enabled':False})
                 self.api('modules_set',key=site,on=False)
-            page.close()
+            close_page(page, self.id())
 
     def test_platform_catalog_search_hides_disabled_platform_and_preserves_settings(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         try:
             page.goto(self.base, wait_until='networkidle')
             page.evaluate("async()=>{await CP.loadInfo();CP.S.view='settings';CP.S.platSec='features';await Pub.load('settings');CP.render()}")
@@ -163,10 +167,10 @@ main()
             page.locator('.platnav [data-psec="reddit"]').wait_for(state='visible')
             self.assertTrue(page.locator('.platnav [data-psec="reddit"]').is_visible())
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_error_motion_sorting_and_line_chart_respect_reduced_motion(self):
-        page=self.browser.new_page(reduced_motion='no-preference')
+        page=self.new_page(reduced_motion='no-preference')
         try:
             page.goto(self.base,wait_until='networkidle')
             page.evaluate("""()=>{
@@ -198,10 +202,10 @@ main()
             page.evaluate('testSeries[0].points[1].v=300;Charts.lineChart(testChart,testSeries)')
             self.assertEqual(page.evaluate("testChart.querySelector('path').getAnimations().length"),0)
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_multiplatform_post_opens_full_statistics_without_manual_merge_label(self):
-        page=self.browser.new_page()
+        page=self.new_page()
         try:
             page.goto(self.base,wait_until='networkidle')
             page.evaluate("""async()=>{
@@ -216,10 +220,10 @@ main()
             page.wait_for_function("()=>CP.S.pstatOpen===window.expectedPub")
             self.assertEqual(page.get_by_role('dialog',name='Статистика поста').count(),1)
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_list_merge_and_split_are_visible_and_persistent(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         page.on("dialog", lambda dialog: dialog.accept())
         atoms = []
         try:
@@ -241,10 +245,10 @@ main()
         finally:
             if atoms:
                 self.api("cal_split", atoms=atoms)
-            page.close()
+            close_page(page, self.id())
 
     def test_telegram_editor_sends_only_selected_destination(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         saved = []
         def reply(route, value):
             route.fulfill(content_type="application/json", body=json.dumps({"ok":True,"result":value}))
@@ -263,10 +267,10 @@ main()
             page.wait_for_function("()=>CP.S.tgEdit===null")
             self.assertEqual(saved, [{"pub_id":1,"key":"telegram:test","text":"Updated caption","revision":"revision"}])
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_missing_publication_dependency_shows_original_error_without_error_loop(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         try:
             page.route("**/static/post-state.js", lambda route: route.abort())
             page.goto(self.base)
@@ -278,10 +282,10 @@ main()
             self.assertEqual(page.locator("#acts").inner_text(), "")
             self.assertEqual(page.get_by_role("button", name="Перезагрузить интерфейс").count(), 1)
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_booru_checkpoint_comparison_and_missing_measurements_are_clear(self):
-        page=self.browser.new_page(viewport={'width':1480,'height':1000})
+        page=self.new_page(viewport={'width':1480,'height':1000})
         try:
             page.goto(self.base,wait_until='networkidle')
             page.evaluate("""async()=>{
@@ -308,7 +312,7 @@ main()
             self.assertIn('не доказательство причины',box.inner_text())
             self.assertGreater(box.bounding_box()['width'],200)
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_editor_history_queue_settings_and_preservation(self):
         buffer = io.BytesIO()
@@ -317,7 +321,7 @@ main()
         draft = dict(files=[upload], title='Новый пост', text='Main text', variants={'en': {'text': 'Keep English'}},
                      multi=True, marks={upload['id']: 'en'}, rating='sfw', signature=False, hashtags=[])
         self.api('ui_set', changes={'draft': draft})
-        page = self.browser.new_page(viewport={'width': 1360, 'height': 900})
+        page = self.new_page(viewport={'width': 1360, 'height': 900})
         errors = []
         (ROOT/'test-artifacts').mkdir(exist_ok=True)
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -412,12 +416,8 @@ main()
             self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
             page.screenshot(path=str(ROOT/'test-artifacts'/'editor-mobile.png'), full_page=True)
             self.assertFalse(errors, errors)
-        except BaseException:
-            (ROOT/'test-artifacts').mkdir(exist_ok=True)
-            page.screenshot(path=str(ROOT/'test-artifacts'/'workflow.png'), full_page=True)
-            raise
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_trends_floofgens_topics_filters_and_refresh_settings(self):
         sys.path.insert(0,str(ROOT))
@@ -425,7 +425,7 @@ main()
         from trend_fixture import write_fixture
         old=self.api('modules').get('trends',True)
         self.api('modules_set',key='trends',on=True)
-        page=self.browser.new_page(viewport={'width':1480,'height':1000})
+        page=self.new_page(viewport={'width':1480,'height':1000})
         errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
         try:
             page.goto(self.base,wait_until='networkidle')
@@ -464,10 +464,10 @@ main()
             self.assertFalse(errors,errors)
         finally:
             self.api('modules_set',key='trends',on=old)
-            page.close()
+            close_page(page, self.id())
 
     def test_update_channel_selector_changes_channel_without_installing(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         calls = []
         try:
             page.goto(self.base, wait_until='domcontentloaded')
@@ -485,10 +485,10 @@ main()
             self.assertEqual(page.locator('#update-channel').input_value(), 'experimental')
             self.assertIn('резервную копию', page.locator('#update-channel').locator('..').inner_text())
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_add_and_disable_reddit_community_from_settings(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         try:
             page.goto(self.base, wait_until='domcontentloaded')
             page.wait_for_function('window.CP?.S.info && CP.S.pub')
@@ -500,10 +500,10 @@ main()
             page.wait_for_function("CP.S.pub.reddit.communities.ArtCommunity === false")
             self.assertFalse(self.api('pub_settings')['reddit']['communities']['ArtCommunity'])
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_translation_columns_stay_aligned_with_many_platforms(self):
-        page = self.browser.new_page(viewport={'width':1100, 'height':900})
+        page = self.new_page(viewport={'width':1100, 'height':900})
         try:
             page.goto(self.base, wait_until='domcontentloaded')
             page.wait_for_function('window.CP?.S.info && CP.S.pub')
@@ -524,10 +524,10 @@ main()
             page.set_viewport_size({'width':390, 'height':844})
             self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_view_transition_runs_only_on_navigation_and_respects_reduced_motion(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
+        page = self.new_page(reduced_motion='no-preference')
         try:
             page.goto(self.base, wait_until='domcontentloaded')
             page.wait_for_function('window.CP?.S.info && CP.S.pub')
@@ -547,10 +547,10 @@ main()
             self.assertEqual(page.evaluate('window.viewAnimations'), 1)
             self.assertTrue(page.locator('#ptitle').is_visible())
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_interface_motion_respects_reduced_motion_preference(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
+        page = self.new_page(reduced_motion='no-preference')
         try:
             page.goto(self.base, wait_until='domcontentloaded')
             page.wait_for_function('window.CP?.S.info && CP.S.pub')
@@ -564,10 +564,10 @@ main()
             toggle = page.locator('.tgl input[type=checkbox]').first
             self.assertEqual(toggle.evaluate("el => getComputedStyle(el, '::after').transitionDuration"), '0s')
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_publication_animation_tracks_real_progress_and_reduced_motion(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
+        page = self.new_page(reduced_motion='no-preference')
         try:
             page.goto(self.base, wait_until='networkidle')
             page.wait_for_function('window.CP?.S.info && CP.S.pub')
@@ -602,10 +602,10 @@ main()
             self.assertEqual(page.locator('.send-dest.done').count(), 1)
             self.assertEqual(page.locator('.send-dest.uncertain').count(), 2)
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_sending_celebrates_only_new_confirmed_success(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
+        page = self.new_page(reduced_motion='no-preference')
         try:
             page.goto(self.base, wait_until='networkidle')
             page.evaluate("""() => {
@@ -633,10 +633,10 @@ main()
             page.evaluate('CP.render()')
             self.assertEqual(page.locator('.send-dest.just-sent').count(), 0)
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_history_hover_motion_respects_reduced_motion(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
+        page = self.new_page(reduced_motion='no-preference')
         try:
             page.set_content('<div class="hitem" style="width:400px;height:60px"><span>Post</span><span class="chev">›</span></div>')
             page.add_style_tag(path=str(ROOT/'app/web/style.css'))
@@ -646,11 +646,11 @@ main()
             self.assertEqual(page.locator('.hitem .chev').evaluate("el=>getComputedStyle(el).transform"), 'none')
             self.assertEqual(page.locator('.hitem .chev').evaluate("el=>getComputedStyle(el).transitionDuration"), '0s')
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_first_post_guide_can_be_dismissed(self):
         self.api('ui_set', changes={'lang': 'ru'})
-        page = self.browser.new_page()
+        page = self.new_page()
         try:
             page.goto(self.base, wait_until='networkidle')
             page.evaluate("()=>{CP.store.set('onboardingDone',false);CP.S.draft={files:[],title:'',text:'',rating:null,exclude:[]};CP.S.plan={...CP.S.plan,configured:[]};CP.render()}")
@@ -661,12 +661,12 @@ main()
             self.assertFalse(page.locator('.onboarding').count())
             self.assertTrue(page.evaluate("CP.store.get('onboardingDone',false)"))
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_settings_autosave_preserves_focus_hidden_fields_and_recovers_errors(self):
         self.api('ui_set', changes={'lang':'ru','settingsPending':None})
         self.api('pub_save',section='signatures',changes={'platforms':{'telegram':{'en':{'sfw':'Keep hidden English'}}}})
-        page=self.browser.new_page(viewport={'width':1360,'height':900})
+        page=self.new_page(viewport={'width':1360,'height':900})
         errors=[]
         page.on('pageerror',lambda error:errors.append(str(error)))
         page.on('dialog',lambda dialog:dialog.accept())
@@ -729,16 +729,13 @@ main()
             self.assertFalse(self.api('pub_settings')['translate']['has_key'])
             self.assertEqual(page.locator('#trkey').input_value(),'not-saved-automatically')
             self.assertFalse(errors,errors)
-        except BaseException:
-            page.screenshot(path=str(ROOT/'test-artifacts'/'settings-autosave-failure.png'),full_page=True)
-            raise
         finally:
-            page.close()
+            close_page(page, self.id())
             self.api('modules_set',key='translation',on=False)
 
     def test_setup_guide_resumes_uses_real_settings_and_does_not_publish(self):
         self.api('ui_set', changes={'lang': 'ru', 'setupGuide': None})
-        page = self.browser.new_page(viewport={'width':1360,'height':1000})
+        page = self.new_page(viewport={'width':1360,'height':1000})
         errors, calls = [], []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.on('request', lambda request: calls.append(request.url.split('/api/')[-1]) if '/api/' in request.url else None)
@@ -794,14 +791,11 @@ main()
             self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
             self.assertFalse(set(calls)&{'post_publish','post_schedule','pipeline_add','pipeline_set'})
             self.assertFalse(errors,errors)
-        except BaseException:
-            page.screenshot(path=str(ROOT/'test-artifacts'/'setup-guide-failure.png'),full_page=True)
-            raise
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_translation_preserves_user_content_on_initial_render_and_mutation(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         try:
             page.set_content('<button id="ui">Новый пост</button><b translate="no" id="title">Новый пост</b><textarea>Новый пост</textarea>')
             page.evaluate("window.UI_STATE={lang:'en'}")
@@ -817,7 +811,7 @@ main()
             page.evaluate("I18N.confirm('Новый пост','\\nНовый пост')")
             self.assertEqual(messages[-1], 'New post\nНовый пост')
         finally:
-            page.close()
+            close_page(page, self.id())
 
 
 if __name__ == '__main__':
