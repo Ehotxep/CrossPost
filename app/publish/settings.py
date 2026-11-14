@@ -200,15 +200,29 @@ def load(raw: bool = False) -> dict:
     return cfg
 
 
-# All entries share the e621ng adapter. Planned sites are visible in settings
-# but cannot become publication targets until their API has been verified.
+# All entries share the e621ng adapter with separate accounts and tag databases.
 BOORU_SITES = {
     "e6ai": {"name": "blep.art", "base": "https://blep.art", "available": True},
     "e621": {"name": "e621", "base": "https://e621.net", "available": True},
-    "floofgens": {"name": "floofgens.net", "base": "https://floofgens.net", "available": False},
+    "floofgens": {"name": "floofgens.net", "base": "https://floofgens.net", "available": True},
 }
 BOORU = {key: site["base"] for key, site in BOORU_SITES.items() if site["available"]}
 PER_SITE = ("username", "api_key", "constant_tags")   # своё у каждого сайта
+
+
+def booru_site_for_url(url: str) -> str | None:
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url or "")
+        if parsed.scheme != "https" or parsed.port not in (None, 443) or parsed.username or parsed.password:
+            return None
+        for key, base in BOORU.items():
+            host = urlparse(base).hostname
+            if parsed.hostname in (host, "www." + host):
+                return key
+    except ValueError:
+        pass
+    return None
 
 
 def booru_site(cfg: dict | None = None) -> str:

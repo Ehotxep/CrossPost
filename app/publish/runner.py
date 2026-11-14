@@ -519,7 +519,7 @@ def plan(draft: dict) -> dict:
             add("e6ai", "e6ai", name, True)
 
     missing = [n for k, n in (("telegram", "Telegram"), ("discord", "Discord"), ("vk", "ВКонтакте"), ("bluesky", "Bluesky"),
-                              ("deviantart", "DeviantArt"), ("e6ai", ("e621" if cfg["e6ai"].get("site_name") == "e621" else "blep")), ("reddit", "Reddit"), ("joyreactor", "JoyReactor"))
+                              ("deviantart", "DeviantArt"), ("e6ai", E6.name(cfg["e6ai"])), ("reddit", "Reddit"), ("joyreactor", "JoyReactor"))
                if k not in configured and cfg["modules"].get(k, True)]
     if not configured:
         errors.append("Ни одна площадка не настроена — откройте «Настройки» → «Публикация»")
@@ -1007,7 +1007,7 @@ def _run(draft, report, only):
                             try:
                                 from app.insights import e6learn
                                 e6learn.record(state()["pub_id"], res["post_id"], tags6 if kind in ("gif", "video") else e6_tags(cfg, draft, f["id"]),
-                                               "e621" if cfg["e6ai"].get("site_name") == "e621" else "blep")
+                                               E6.history_site(e6))
                             except Exception:
                                 from app.applog import log
                                 log("e6ai: не удалось запомнить загрузку для сверки правок")

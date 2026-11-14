@@ -1,6 +1,6 @@
 /* Путеводитель использует обычные экраны настроек и не публикует тестовые посты. */
 (function () {
-  const platforms = [['telegram','Telegram'],['discord','Discord'],['vk','ВКонтакте'],['bluesky','Bluesky'],['deviantart','DeviantArt'],['e6ai','blep.art / e621'],['reddit','Reddit'],['joyreactor','JoyReactor']];
+  const platforms = [['telegram','Telegram'],['discord','Discord'],['vk','ВКонтакте'],['bluesky','Bluesky'],['deviantart','DeviantArt'],['e6ai','blep.art / e621 / floofgens.net'],['reddit','Reddit'],['joyreactor','JoyReactor']];
   const steps = ['Площадки','Оформление','Расписание','Дополнительные функции'];
   const C = () => window.CP;
   const esc = value => C().esc(value == null ? '' : value);

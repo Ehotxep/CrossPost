@@ -53,25 +53,26 @@ def e6ai_stats(link: str) -> dict | None:
     import requests
     from app.publish import settings as PS
     from app.trends.dumps import user_agent
-    m = re.search(r"/posts/(\d+)", link or "")
+    from urllib.parse import urlparse
+    key = PS.booru_site_for_url(link)
+    if not key:
+        return None
+    m = re.fullmatch(r"/posts/([0-9]+)/?", urlparse(link).path)
     if not m:
         return None
     pid = m.group(1)
-    site = "e621" if "e621.net" in (link or "") else "blep" if "blep.art" in (link or "") else "e6ai"   # цифры — с того сайта, где лежит пост
-    if site == "e6ai":  # The retired domain must not receive saved credentials.
-        return None
+    site = "blep" if key == "e6ai" else key
     hit = _e6_cache.get((site, pid))
     if hit and time.time() - hit[0] < 600:
         return hit[1]
     raw = PS.load(raw=True)["e6ai"]
-    acc = raw if site in ("e6ai", "blep") else ((raw.get("accounts") or {}).get(site) or {})
-    cfg = {"username": acc.get("username", ""), "api_key": acc.get("blep_api_key", "") if "blep.art" in (link or "") else acc.get("api_key", "")}
-    hm = re.match(r"(https?://[^/]+)", link or "")
-    base = hm.group(1) if hm else PS.BOORU["e6ai" if site == "blep" else site]
+    acc = raw if key == "e6ai" else ((raw.get("accounts") or {}).get(key) or {})
+    cfg = {"username": acc.get("username", ""), "api_key": acc.get("blep_api_key", "") if key == "e6ai" else acc.get("api_key", "")}
+    base = PS.BOORU[key]
     auth = (cfg["username"], cfg["api_key"]) if cfg.get("username") and cfg.get("api_key") else None
     try:
         r = requests.get(f"{base}/posts/{pid}.json", headers={"User-Agent": user_agent(cfg.get("username"))},
-                         auth=auth, timeout=20)
+                         auth=auth, timeout=20, allow_redirects=False)
         if r.status_code != 200:
             raise RuntimeError(f"{site} ответил {r.status_code}")
         p = r.json().get("post") or {}
@@ -81,7 +82,7 @@ def e6ai_stats(link: str) -> dict | None:
         out = {"error": str(e)}
     except Exception as e:  # noqa: BLE001
         out = {"error": f"{site} не ответил: {e.__class__.__name__}"}
-    out["site"] = "blep.art" if site == "blep" else site
+    out["site"] = PS.BOORU_SITES[key]["name"]
     _prune()
     _e6_cache[(site, pid)] = (time.time(), out)
     return out

@@ -2752,3 +2752,19 @@ window.EN_DICT = {
 for (const [key, value] of Object.entries(window.EN_DICT)) {
   if (key.includes("e6ai")) window.EN_DICT[key.replaceAll("e6ai", "blep.art")] = value.replaceAll("e6ai", "blep.art");
 }
+
+Object.assign(window.EN_DICT, {
+  "Для floofgens.net нужны собственные имя пользователя и API-ключ. Аккаунты, ключи, постоянные теги и базы тегов сайтов сохраняются отдельно.": "floofgens.net requires its own username and API key. Accounts, keys, permanent tags and tag databases are stored separately for each site."
+});
+
+Object.assign(window.EN_DICT, {
+  "Мои площадки": "My platforms",
+  "Выбрать площадки": "Choose platforms",
+  "Поиск площадок": "Search platforms",
+  "Найти площадку…": "Find a platform…",
+  "Площадки не выбраны": "No platforms selected",
+  "Площадка не найдена": "No matching platform",
+  "Поиск booru-сайта": "Search booru sites",
+  "Найти сайт…": "Find a site…",
+  "Выберите нужные площадки. Убранные площадки не отображаются в меню и редакторе и не участвуют в отправке. Ключи и история сохраняются.": "Choose the platforms you need. Removed platforms are hidden from the menu and editor and excluded from publishing. Credentials and history are kept."
+});

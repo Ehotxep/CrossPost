@@ -73,6 +73,63 @@ main()
         self.assertTrue(result['ok'], result)
         return result['result']
 
+    def test_floofgens_site_can_be_selected_without_reusing_another_key(self):
+        page = self.browser.new_page()
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("async()=>{await CP.loadInfo();CP.S.view='settings';CP.S.platSec='e6ai';await Pub.load('settings');CP.render()}")
+            page.locator('.platform-picker summary').click()
+            page.get_by_role('searchbox', name='Поиск booru-сайта').fill('floof')
+            target = page.locator('[data-pa="e6-site"][data-val="floofgens"]')
+            self.assertTrue(target.is_enabled())
+            target.click()
+            page.wait_for_function("CP.S.pub.e6ai.site_name === 'floofgens'")
+            page.locator('label[for="e6user"]').filter(has_text='floofgens.net').wait_for()
+            self.assertIn('floofgens.net', page.locator('label[for="e6user"]').inner_text())
+            self.assertEqual(page.locator('#e6user').input_value(), '')
+            self.assertEqual(page.locator('#e6key').input_value(), '')
+            self.assertFalse(self.api('pub_settings')['e6ai']['has_key'])
+            page.locator('.platform-picker summary').click()
+            page.get_by_role('searchbox', name='Поиск booru-сайта').fill('e621')
+            page.locator('[data-pa="e6-site"][data-val="e621"]').click()
+            page.wait_for_function("CP.S.pub.e6ai.site_name === 'e621'")
+            page.locator('.callout.warn').filter(has_text='На e621 ИИ-арт запрещён').wait_for()
+            self.assertIn('На e621 ИИ-арт запрещён', page.locator('.callout.warn').inner_text())
+            page.locator('.platform-picker summary').click()
+            page.locator('[data-pa="e6-site"][data-val="e6ai"]').click()
+            page.wait_for_function("CP.S.pub.e6ai.site_name === 'e6ai'")
+        finally:
+            page.close()
+
+    def test_platform_catalog_search_hides_disabled_platform_and_preserves_settings(self):
+        page = self.browser.new_page()
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("async()=>{await CP.loadInfo();CP.S.view='settings';CP.S.platSec='features';await Pub.load('settings');CP.render()}")
+            page.locator('[data-platform-catalog]').click()
+            search = page.get_by_role('searchbox', name='Поиск площадок', exact=True)
+            search.fill('reddit')
+            self.assertTrue(page.locator('#platform-picker [data-mod="reddit"]').is_visible())
+            self.assertFalse(page.locator('#platform-picker [data-mod="telegram"]').is_visible())
+            page.locator('#platform-picker [data-mod="reddit"]').uncheck()
+            page.wait_for_function("CP.S.pub.modules.reddit === false")
+            page.locator('.platnav [data-psec="reddit"]').wait_for(state='detached')
+            self.assertEqual(page.locator('.platnav [data-psec="reddit"]').count(), 0)
+            self.assertEqual(page.locator('[data-platform-remove="reddit"]').count(), 0)
+            page.reload(wait_until='networkidle')
+            page.locator('#nav [data-view="settings"]').click()
+            page.wait_for_function("CP.S.pub && CP.S.pub.modules.reddit === false")
+            page.locator('.platnav [data-psec="reddit"]').wait_for(state='detached')
+            self.assertEqual(page.locator('.platnav [data-psec="reddit"]').count(), 0)
+            page.locator('[data-platform-catalog]').click()
+            page.get_by_role('searchbox', name='Поиск площадок', exact=True).fill('reddit')
+            page.locator('#platform-picker [data-mod="reddit"]').check()
+            page.wait_for_function("CP.S.pub.modules.reddit === true")
+            page.locator('.platnav [data-psec="reddit"]').wait_for(state='visible')
+            self.assertTrue(page.locator('.platnav [data-psec="reddit"]').is_visible())
+        finally:
+            page.close()
+
     def test_error_motion_sorting_and_line_chart_respect_reduced_motion(self):
         page=self.browser.new_page(reduced_motion='no-preference')
         try:

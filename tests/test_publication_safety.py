@@ -177,29 +177,32 @@ class PublicationSafety(unittest.TestCase):
         self.assertEqual(self.runner.state()['dests'][0]['state'], 'done')
         self.assertEqual(publish.call_args.args[1], [('art.png', b'original-image', 'image/png')])
 
-    def test_blep_animation_uses_file_name_and_records_new_site(self):
+    def test_booru_animation_records_the_correct_site(self):
         import copy
         from app.insights import e6learn
         from app.publish import media
-        cfg = copy.deepcopy(self.runner.S.DEFAULTS)
-        cfg['e6ai'].update(with_sources=False, site_name='e6ai')
-        draft = {'rating':'sfw', 'title':'Artwork', 'text':'', 'signature':False, 'hashtags':[]}
-        path = Path(self.tmp.name) / 'animation.gif'
-        path.write_bytes(b'gif-data')
-        file = {'id':'0123456789abcdef', 'path':path, 'name':'animation.gif', 'kind':'gif', 'size':path.stat().st_size}
-        self.runner._state.update(pub_id=1, dests=[{'key':'e6ai', 'platform':'e6ai', 'name':'blep.art', 'state':'queued'}], draft=draft)
-        result = {'url':'https://blep.art/posts/123', 'post_id':123, 'duplicate':False}
-        with patch.object(self.runner.S, 'load', return_value=cfg), \
-             patch.object(self.runner, '_files', return_value=[file]), \
-             patch.object(self.runner, '_save_pub'), \
-             patch.object(self.runner, 'e6_tags', return_value=['animated']), \
-             patch.object(media, 'need_for', return_value=''), \
-             patch.object(self.runner.E6, 'upload', return_value=result) as upload, \
-             patch.object(e6learn, 'record') as record:
-            self.runner._run(draft, Mock(), only=None)
-        self.assertEqual(self.runner.state()['dests'][0]['state'], 'done')
-        self.assertEqual(upload.call_args.args[-1], 'animation.gif')
-        self.assertEqual(record.call_args.args[-1], 'blep')
+        for site, host, label, recorded in [('e6ai', 'blep.art', 'blep.art', 'blep'),
+                                            ('floofgens', 'floofgens.net', 'floofgens.net', 'floofgens')]:
+            with self.subTest(site=site):
+                cfg = copy.deepcopy(self.runner.S.DEFAULTS)
+                cfg['e6ai'].update(with_sources=False, site_name=site)
+                draft = {'rating':'sfw', 'title':'Artwork', 'text':'', 'signature':False, 'hashtags':[]}
+                path = Path(self.tmp.name) / 'animation.gif'
+                path.write_bytes(b'gif-data')
+                file = {'id':'0123456789abcdef', 'path':path, 'name':'animation.gif', 'kind':'gif', 'size':path.stat().st_size}
+                self.runner._state.update(pub_id=1, dests=[{'key':'e6ai', 'platform':'e6ai', 'name':label, 'state':'queued'}], draft=draft)
+                result = {'url':f'https://{host}/posts/123', 'post_id':123, 'duplicate':False}
+                with patch.object(self.runner.S, 'load', return_value=cfg), \
+                     patch.object(self.runner, '_files', return_value=[file]), \
+                     patch.object(self.runner, '_save_pub'), \
+                     patch.object(self.runner, 'e6_tags', return_value=['animated']), \
+                     patch.object(media, 'need_for', return_value=''), \
+                     patch.object(self.runner.E6, 'upload', return_value=result) as upload, \
+                     patch.object(e6learn, 'record') as record:
+                    self.runner._run(draft, Mock(), only=None)
+                self.assertEqual(self.runner.state()['dests'][0]['state'], 'done')
+                self.assertEqual(upload.call_args.args[-1], 'animation.gif')
+                self.assertEqual(record.call_args.args[-1], recorded)
 
     def test_telegram_media_rejection_after_text_is_not_a_total_refusal(self):
         from core.common import NotPublishedError, PublicationUnknown

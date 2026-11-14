@@ -930,7 +930,7 @@ class Api:
         return out
 
     def pub_e6_site(self, site: str):
-        """Куда загружать: e6ai или e621. Аккаунт, ключ и постоянные теги у каждого сайта свои."""
+        """Выбрать booru-сайт с отдельным аккаунтом, ключом и базой тегов."""
         from app.publish import settings as PS
         if site in PS.BOORU_SITES and not PS.BOORU_SITES[site]["available"]:
             raise ValueError(f'{PS.BOORU_SITES[site]["name"]}: в разработке, публикация пока недоступна')

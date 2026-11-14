@@ -231,7 +231,7 @@
   };
   // площадки: буквы на цветном квадрате (свои значки, без чужих логотипов)
   const PLAT = { telegram: ["TG", "#2A9FD8", "Telegram"], discord: ["DS", "#5865F2", "Discord"], vk: ["VK", "#2D7BE5", "ВКонтакте"],
-    e6ai: ["BA", "#24508F", "blep.art"], reddit: ["R", "#F0541E", "Reddit"], deviantart: ["DA", "#14A85A", "DeviantArt"], bluesky: ["BS", "#1185FE", "Bluesky"], joyreactor: ["JR", "#C2410C", "Joyreactor"], x: ["X", "#3A3F4B", "X"] };
+    e6ai: ["BA", "#24508F", "Booru"], reddit: ["R", "#F0541E", "Reddit"], deviantart: ["DA", "#14A85A", "DeviantArt"], bluesky: ["BS", "#1185FE", "Bluesky"], joyreactor: ["JR", "#C2410C", "Joyreactor"], x: ["X", "#3A3F4B", "X"] };
   const pbadge = (platform, { cls = "", tip = "", link = "", sm = false } = {}) => {
     const [t, c, name] = PLAT[platform] || [String(platform || "?").slice(0, 2).toUpperCase(), "#555", platform];
     const attrs = `class="pb ${sm ? "sm" : ""} ${cls}" style="--pc:${c}" data-tip="${esc(tip || name)}" aria-label="${esc(tip || name)}"`;
@@ -1144,24 +1144,24 @@
 
   // меню настроек: группа, пункты, когда группа видна (по включённым функциям)
   const PSECS = [["Программа", [["app", "Общие"], ["features", "Функции"], ["worker", "Фоновая отправка"]], () => true],
-    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art / e621"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"], ["x", "X (проверка)"]], () => true],
+    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "Booru"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]], () => true],
     ["Оформление поста", [["signatures", "Подписи"], ["hashtags", "Хэштеги"], ["translate", "Перевод", () => modOn("translation")]], () => modOn("crosspost")],
     ["Файлы", [["light", "JPEG-превью"], ["media", "Видео и GIF"], ["versions", "Умное таргетирование", () => modOn("targeting")], ["files", "Хранение файлов"]], () => modOn("crosspost")],
     ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || modOn("e6ai")],
     ["Статистика и тренды", [["collect", "Сбор статистики", () => statsOn()], ["trends", "Тренды", () => modOn("trends")]], () => statsOn() || modOn("trends")],
-    ["Дополнительно", [["net", "Прокси и соединение"], ["diag", "Диагностика"]], () => true]];
+    ["Дополнительно", [["x", "X (проверка)"], ["net", "Прокси и соединение"], ["diag", "Диагностика"]], () => true]];
   // четыре функции приложения; у каждой — модули, которые она включает и выключает разом
   const FEATURES = [
     ["crosspost", "Кросспостинг", "Публикация одного поста сразу на несколько площадок, отложенная отправка по расписанию и история публикаций.", ["crosspost", "history"]],
-    ["tags", "Подбор тегов", "Автоматически предлагает теги по картинке — для хэштегов и для blep.art / e621. Без неё теги вводятся вручную.", ["tagger"]],
+    ["tags", "Подбор тегов", "Автоматически предлагает теги по картинке — для хэштегов и для blep.art / e621 / floofgens.net. Без неё теги вводятся вручную.", ["tagger"]],
     ["stats", "Статистика", "Просмотры и реакции по площадкам, лучшие работы и время публикации, уведомления о всплесках и прогноз.", ["stats", "collect", "news", "forecast"]],
     ["trends", "Тренды", "Что сейчас популярно на blep.art и e621: растущие теги, ниши и сравнение с вашим стилем.", ["trends"]],
     ["targeting", "Умное таргетирование", "Для постов в нескольких версиях (например, комикс с русскими и английскими надписями): отметьте версию у каждого файла, и на каждую площадку уйдут подходящие.", ["targeting"]],
     ["translation", "Языки и перевод", "Отдельный английский текст и подписи для англоязычных площадок. Автоперевод — через DeepSeek, по кнопке.", ["translation"]]];
   const featOn = (f) => f[3].some((k) => modOn(k));
   const statsOn = () => modOn("stats") || modOn("collect");
-  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "blep.art / e621", "загрузка, теги, теггер и база тегов"]],
-    extras: [["tagger", "Теггер", "предлагает теги по картинке для blep.art / e621 и хэштегов; без него теги вводятся вручную"],
+  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "blep.art / e621 / floofgens.net", "загрузка, теги, теггер и база тегов"]],
+    extras: [["tagger", "Теггер", "предлагает теги по картинке для blep.art / e621 / floofgens.net и хэштегов; без него теги вводятся вручную"],
       ["collect", "Сбор статистики", "регулярно сохраняет просмотры и реакции опубликованных постов, учитывает правки модераторов и догружает превью"],
       ["news", "Новости по свежим артам", "уведомления в колокольчике: популярные работы, всплески реакций, новые комментарии"],
       ["forecast", "Прогноз", "ожидаемые просмотры и подсказка лучшего времени публикации"]],
@@ -1177,8 +1177,36 @@
     if (!viewOn(S.view)) { S.view = ["post", "history", "stats", "trends", "settings"].find(viewOn); store.set("view", S.view); return true; }
     return false;
   }
+  function platformPickerHtml() {
+    const selected = MODS.platforms.filter(([key]) => modOn(key));
+    return `<section class="card setc"><h2>Мои площадки</h2>
+      <p class="muted small">Выберите нужные площадки. Убранные площадки не отображаются в меню и редакторе и не участвуют в отправке. Ключи и история сохраняются.</p>
+      <div class="chips">${selected.map(([key, name]) => `<button class="chip on" data-platform-remove="${key}" aria-label="Убрать площадку ${esc(name)}">${pbadge(key, {sm:true})} ${esc(name)} ×</button>`).join('') || '<span class="muted">Площадки не выбраны</span>'}</div>
+      <details class="platform-picker" id="platform-picker" ${S.platformPickerOpen ? 'open' : ''}>
+        <summary>Выбрать площадки</summary>
+        <input type="search" data-platform-search aria-label="Поиск площадок" placeholder="Найти площадку…" value="${esc(S.platformPickerQuery || '')}">
+        <div class="platform-options">${MODS.platforms.map(([key, name, desc]) => `<label class="platform-option" data-platform-match="${esc(name.toLocaleLowerCase())}" ${(S.platformPickerQuery && !name.toLocaleLowerCase().includes(S.platformPickerQuery.toLocaleLowerCase())) ? 'hidden' : ''}>
+          <input type="checkbox" data-mod="${key}" ${modOn(key) ? 'checked' : ''}><span><b>${esc(name)}</b><span class="muted small">${esc(desc)}</span></span></label>`).join('')}</div>
+        <p class="muted small" data-platform-empty hidden>Площадка не найдена</p>
+      </details></section>`;
+  }
+  document.addEventListener('toggle', e => {
+    if (e.target.id === 'platform-picker') S.platformPickerOpen = e.target.open;
+  }, true);
+  document.addEventListener('input', e => {
+    if (!e.target.matches('[data-platform-search]')) return;
+    const box = e.target.closest('.platform-picker'), q = e.target.value.trim().toLocaleLowerCase();
+    if (box.id === 'platform-picker') S.platformPickerQuery = e.target.value;
+    let count = 0;
+    box.querySelectorAll('[data-platform-match]').forEach(row => {
+      row.hidden = !row.dataset.platformMatch.includes(q);
+      if (!row.hidden) count++;
+    });
+    const empty = box.querySelector('[data-platform-empty]');
+    if (empty) empty.hidden = count > 0;
+  });
   function featuresHtml() {
-    return `<section class="card setc"><div class="head"><h2>Функции ${hint("Выключенная функция не работает ни в окне, ни в фоновой отправке и не обращается к сайтам; её экраны и настройки скрываются. Накопленные данные и ключи не удаляются — включите обратно, и всё на месте. Площадки включаются и выключаются переключателями в меню слева, в группе «Площадки».")}</h2></div>
+    return platformPickerHtml() + `<section class="card setc"><div class="head"><h2>Функции ${hint("Выключенная функция не работает ни в окне, ни в фоновой отправке и не обращается к сайтам; её экраны и настройки скрываются. Накопленные данные и ключи не удаляются — включите обратно, и всё на месте. Площадки выбираются в списке «Мои площадки» выше.")}</h2></div>
         <div class="featlist">${FEATURES.map((f) => { const on = featOn(f); return `<label class="feat ${on ? "on" : ""}">
           <span class="tgl"><input type="checkbox" data-feat="${f[0]}" ${on ? "checked" : ""} aria-label="${f[1]}"></span>
           <span><b>${f[1]}</b><span class="muted small">${esc(f[2])}</span></span></label>`; }).join("")}</div></section>`;
@@ -1205,7 +1233,7 @@
       return window.Pub.platStatus(k);
     };
     const isPlat = (k) => MODS.platforms.some((m) => m[0] === k);
-    return `<nav class="platnav" aria-label="Разделы настроек">${PSECS.filter((g) => g[2]()).map(([g, items0]) => { const items = g === "Площадки" ? window.Pub.byOrder(items0) : items0.filter((x) => !x[2] || x[2]()); return `${g ? `<h3>${g}</h3>` : ""}${items.map(([k, l], ix) => {
+    return `<nav class="platnav" aria-label="Разделы настроек">${PSECS.filter((g) => g[2]()).map(([g, items0]) => { const items = g === "Площадки" ? window.Pub.byOrder(items0.filter(([k]) => !isPlat(k) || modOn(k))) : items0.filter((x) => !x[2] || x[2]()); return `${g ? `<h3>${g}</h3>` : ""}${g === "Площадки" ? `<button class="btn small" data-platform-catalog>Выбрать площадки</button>` : ""}${items.map(([k, l], ix) => {
       const off = isPlat(k) && !modOn(k);
       const [lamp, sub] = off ? ["", "выключена"] : st(k);
       const btn = `<button class="pn ${S.platSec === k || (k === "telegram" && S.platSec === "import") ? "on" : ""} ${off ? "off" : ""} ${isPlat(k) ? "hassw" : ""}" data-psec="${k}" aria-current="${S.platSec === k || (k === "telegram" && S.platSec === "import")}"><span class="lamp ${lamp}"></span><span><b>${l}</b>${sub ? `<span>${esc(sub)}</span>` : ""}</span></button>`;
@@ -1594,6 +1622,13 @@
       [o[i], o[j]] = [o[j], o[i]];
       try { await window.Pub.setOrder(o); } catch (err) { alert(err.message); }
       render(); return;
+    }
+    const catalog = e.target.closest('[data-platform-catalog]');
+    if (catalog) { S.platSec = 'features'; store.set('platSec', 'features'); S.platformPickerOpen = true; render(); document.querySelector('#platform-picker input')?.focus(); return; }
+    const removePlatform = e.target.closest('[data-platform-remove]');
+    if (removePlatform) {
+      S.info.modules = await api('modules_set', {key: removePlatform.dataset.platformRemove, on: false});
+      applyModules(); S.plan = null; await window.Pub.load('settings'); render(); return;
     }
     const mon = e.target.closest("[data-modon]");
     if (mon) { S.info.modules = await api("modules_set", { key: mon.dataset.modon, on: true }); S.plan = null; await window.Pub.load("settings"); render(); return; }

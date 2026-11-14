@@ -82,11 +82,13 @@ def _fetch(post_id: int, site: str = "e6ai") -> dict | None:
     raw = PS.load(raw=True)["e6ai"]
     if site == "e6ai":  # Historical e6ai post IDs do not identify blep.art posts.
         return None
+    if site != "blep" and site not in PS.BOORU:
+        return None
     acc = raw if site == "blep" else ((raw.get("accounts") or {}).get(site) or {})
     cfg = dict(raw, username=acc.get("username", ""), api_key=acc.get("blep_api_key", "") if site == "blep" else acc.get("api_key", ""), site_name=site,
-               base=os.environ.get("CROSSPOST_E6AI_BASE") or PS.BOORU.get(site, PS.BOORU["e6ai"]))
+               base=os.environ.get("CROSSPOST_E6AI_BASE") or PS.BOORU["e6ai" if site == "blep" else site])
     auth = (cfg["username"], cfg["api_key"]) if cfg.get("username") and cfg.get("api_key") else None
-    r = requests.get(f"{E6.base(cfg)}/posts/{post_id}.json", headers=E6._ua(cfg), auth=auth, timeout=20)
+    r = requests.get(f"{E6.base(cfg)}/posts/{post_id}.json", headers=E6._ua(cfg), auth=auth, timeout=20, allow_redirects=False)
     if r.status_code != 200:
         return None
     return (r.json().get("post") or {}).get("tags") or None

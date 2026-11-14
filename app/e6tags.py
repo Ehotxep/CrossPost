@@ -151,8 +151,8 @@ def find_exports(ua: str, s: str | None = None) -> dict:
     """Адреса трёх файлов выгрузки сайта: {"tags": url, "tag_aliases": url, "tag_implications": url, "day": ...}."""
     import re
     import requests
-    from app.trends.dumps import SOURCES
-    base = SOURCES[s or site()]
+    from app.publish.settings import BOORU
+    base = BOORU[s or site()]
     headers = {"User-Agent": ua}
     try:
         r = requests.get(f"{base}/db_exports.json", headers=headers, timeout=30)
