@@ -15,6 +15,11 @@ def main():
         sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     suite = unittest.defaultTestLoader.discover(str(ROOT / 'tests'), pattern='test_*.py')
     result = unittest.TextTestRunner(verbosity=2).run(suite)
+    return report_result(result)
+
+
+def report_result(result):
+    """Expose sanitized failures for regression and browser suites in CI."""
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary:
         from app.jobs import mask_secrets

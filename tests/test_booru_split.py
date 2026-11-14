@@ -78,12 +78,14 @@ class BooruSplit(unittest.TestCase):
     def test_tag_databases_and_categories_do_not_leak_between_concurrent_sites(self):
         from app import e6tags
         import sqlite3
+        from contextlib import closing
         from concurrent.futures import ThreadPoolExecutor
         for site, category in [('e6ai',1),('e621',5),('floofgens',4)]:
             path = Path(self.tmp.name) / f'{e6tags._prefix(site)}.db'
-            with sqlite3.connect(path) as conn:
+            with closing(sqlite3.connect(path)) as conn:
                 conn.executescript('CREATE TABLE tags(name TEXT PRIMARY KEY,cat INTEGER,n INTEGER); CREATE TABLE aliases(a TEXT PRIMARY KEY,c TEXT);')
                 conn.execute('INSERT INTO tags VALUES (?,?,1)', ('shared_tag',category))
+                conn.commit()
         def read(site):
             try:
                 with e6tags.for_site(site):

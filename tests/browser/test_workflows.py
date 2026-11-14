@@ -819,4 +819,7 @@ main()
 
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    sys.path.insert(0, str(ROOT))
+    from tools.run_tests import report_result
+    program = unittest.main(verbosity=2, exit=False)
+    sys.exit(report_result(program.result))
