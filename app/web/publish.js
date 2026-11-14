@@ -164,19 +164,20 @@
     if (!f || !f.items || !f.items.length) return s.fcErr ? `<p class="err small">${esc(s.fcErr)}</p>` : "";
     let bestShown = false;
     return f.items.map((x) => {
-      if (!x.ok) return `<div class="fc"><div class="fchead"><span>Прогноз · ${esc(x.channel || "")}</span></div><span class="muted small">${esc(x.why)}</span></div>`;
+      if (!x.ok) return `<div class="fc"><div class="fchead"><span>Прогноз · ${esc(x.channel || "")}</span></div><span class="muted small">${esc(x.why)}</span>${window.Charts.forecastQuality(x.quality, true)}</div>`;
       const q = x.quality || {};
       const fac = (x.factors || []).filter((y) => Math.abs(y.mult - 1) >= 0.03);
       const up = fac.filter((y) => y.mult >= 1).slice(0, 4), down = fac.filter((y) => y.mult < 1).slice(0, 4);
-      const bt = bestShown || s.when === "later" ? null : (x.best_times || []).find((b) => b.gain >= 1.05);
+      const bt = q.level === "low" || bestShown || s.when === "later" ? null : (x.best_times || []).find((b) => b.gain >= 1.05);
       if (bt) bestShown = true;   // время одно на весь пост — подсказываем по первому каналу
       const li = (y) => `<li><span data-tip="${y.kind === "tag" ? "Тег картинки" : y.kind === "time" ? "Время публикации" : "Тип поста"}" translate="no">${esc(y.name.replace(/^Время: /, ""))}</span><b>${pct(y.mult)}</b></li>`;
       return `<div class="fc">
         <div class="fchead"><span>Прогноз · ${esc(x.channel)}</span>${q.level === "low" ? `<span class="pill" data-tip="${esc(q.text || "")}">слабый</span>` : q.level === "mid" ? `<span class="pill" data-tip="${esc(q.text || "")}">ориентир</span>` : ""}</div>
         <div class="fcbig">≈ ${n(x.expected)}<span>${esc(x.unit)}</span></div>
-        <div class="fcrow"><span>обычно ${n(x.low)}–${n(x.high)}</span><span><b>${mult(x.index)}</b> к норме ${n(x.base)}</span><span>хит <b>${Math.round(x.p_hit * 100)}%</b></span>${x.percentile !== null ? `<span>лучше <b>${Math.round(x.percentile * 100)}%</b> постов</span>` : ""}</div>
-        ${up.length || down.length ? `<div class="drivers"><div class="u"><h4>Прибавляет</h4><ul>${up.map(li).join("") || `<li><span class="muted">—</span></li>`}</ul></div>
-          <div class="d"><h4>Убавляет</h4><ul>${down.map(li).join("") || `<li><span class="muted">—</span></li>`}</ul></div></div>` : ""}
+        <div class="fcrow"><span>обычно ${n(x.low)}–${n(x.high)}</span><span><b>${mult(x.index)}</b> к норме ${n(x.base)}</span>${q.level !== "low" ? `<span>оценка шанса на хит <b>${Math.round(x.p_hit * 100)}%</b></span>` : ""}${x.percentile !== null ? `<span>лучше <b>${Math.round(x.percentile * 100)}%</b> постов</span>` : ""}</div>
+        ${up.length || down.length ? `<div class="drivers"><div class="u"><h4>Связано с ростом</h4><ul>${up.map(li).join("") || `<li><span class="muted">—</span></li>`}</ul></div>
+          <div class="d"><h4>Связано со снижением</h4><ul>${down.map(li).join("") || `<li><span class="muted">—</span></li>`}</ul></div></div>` : ""}
+        ${window.Charts.forecastQuality(q, true)}
         ${bt ? `<button class="besttime" data-pa="fc-when" data-at="${esc(bt.at)}">${C().ICON.clock}<span class="bt">Лучше опубликовать ${esc(fmtWhen(new Date(bt.at)))}</span><b>${pct(bt.gain)}</b></button>` : ""}
         ${x.tags_known ? "" : `<span class="muted small">${f.tagging ? "Теггер смотрит картинки — прогноз уточнится…" : "Содержание картинки не учтено: теггер не установлен."}</span>`}
       </div>`;

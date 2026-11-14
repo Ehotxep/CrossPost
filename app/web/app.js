@@ -1524,7 +1524,7 @@
     const tg = ins.tagging || {}, job = S.info.ins_job, run = job && job.state === "running";
     const pl = (n) => `${num(n)} ${plural(n, "пост", "поста", "постов")}`;
     const tagRow = (t) => `<div class="grow-row"><span class="gname">${esc(t.label)}<br><span class="muted small">${pl(t.n)}${t.days ? `, последний ${num(t.days)} ${plural(t.days, "день", "дня", "дней")} назад` : ""}</span></span>${dbar(t.mult)}<b class="gval">${mult(t.mult)}</b></div>`;
-    let h = `<section class="card"><div class="head"><h2>Что на картинке заходит лучше ${hint("По тегам, которые теггер нашёл на превью постов. ×1,4 — посты с этим тегом в среднем на 40% лучше вашего обычного поста при прочих равных: то же время, тот же тип поста. Редкие теги подтянуты к ×1.")}</h2></div>`;
+    let h = `<section class="card"><div class="head"><h2>Что на картинке заходит лучше ${hint("Модель оценивает связи тегов с результатом с учётом времени и типа поста. Это не доказательство влияния тега: персонаж, стиль и качество могут отличаться. Редкие признаки подтянуты к ×1.")}</h2></div>`;
     if (run) h += `<div id="insprog"><div class="progress"><div data-bar style="width:${Math.round(job.progress * 100)}%"></div></div><p class="muted small" data-msg>${esc(job.message || "")}</p></div>`;
     else if (job && job.state === "error") h += `<p class="err">${esc(job.error || "")}</p>`;
     if (!run && tg.todo) {
@@ -1534,9 +1534,10 @@
         : `<p class="muted">Чтобы разобрать содержание работ, <a href="#" data-view-link="platforms" data-tab="tags">установите теггер</a>.</p>`;
     }
     if (!tg.with_preview && !tg.tagged) h += `<p class="muted small">У импортированных постов нет превью. Переимпортируйте канал из выгрузки Telegram Desktop с фото или через API.</p>`;
-    if (ins.too_few) h += `<p class="muted">Для выводов нужно хотя бы 30 постов старше недели (сейчас ${num(ins.n)}).</p>`;
+    h += `<p class="muted small">Связи в истории не доказывают влияние тега: вместе с ним могли меняться персонаж, композиция и качество работы.</p>`;
+    if (ins.too_few) h += `<p class="muted">Для выводов нужно хотя бы 30 постов старше недели с предшествующей нормой канала (сейчас ${num(ins.n)}).</p>`;
     if (ins.tags_up && ins.tags_up.length) {
-      h += `<div class="groups"><div class="grp"><h3>Поднимает охват</h3>${ins.tags_up.slice(0, 10).map(tagRow).join("")}</div>
+      h += `<div class="groups"><div class="grp"><h3>Связано с большим откликом</h3>${ins.tags_up.slice(0, 10).map(tagRow).join("")}</div>
         <div class="grp"><h3>Заходит слабее</h3>${ins.tags_down.length ? ins.tags_down.map(tagRow).join("") : `<p class="muted small">Явно проседающих тем нет.</p>`}</div>
         ${ins.forgotten && ins.forgotten.length ? `<div class="grp"><h3>Заходило, но давно не было ${hint("Темы, которые давали больше обычного, а вы их не публиковали месяц и дольше. Кандидаты на следующий арт.")}</h3>${ins.forgotten.map(tagRow).join("")}</div>` : ""}</div>`;
     } else if (st.hashtags.length) {
@@ -1549,12 +1550,9 @@
       h += `<div class="split">`;
       if (c) h += `<section class="card"><div class="head"><h2>Как пост набирает ${st.metric === "reactions" ? "реакции" : "просмотры"} ${hint((c.own ? "По вашим замерам. " : "Светлые столбики — примерная кривая Telegram: своих замеров пока мало. Они копятся сами, пока работает фоновая отправка. ") + "По этой кривой карточка поста в «Истории» оценивает итог уже через пару часов.")}</h2><span class="muted small">доля от итога за неделю</span></div>
         <div class="curve">${c.points.map((p) => `<div class="cv"><div class="cvb"><span style="height:${Math.round(p.frac * 100)}%" class="${p.own ? "" : "est"}"></span></div><b>${Math.round(p.frac * 100)}%</b><span class="muted small">${hl(p.h)}</span></div>`).join("")}</div></section>`;
-      if (q) h += `<section class="card"><div class="head"><h2>Прогноз популярности ${hint("Проверка честная: модель угадывает посты, которых не видела при обучении. Чем больше постов и тегов, тем точнее. Сам прогноз — в «Новом посте».")}</h2><span class="muted small">учится на ${pl(q.n)}</span></div>
-        <p><span class="badge ${q.level === "good" ? "ok" : q.level === "mid" ? "warn" : "off"}" style="padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600">${q.level === "good" ? "Работает" : q.level === "mid" ? "Грубый ориентир" : "Пока слабый"}</span> <span class="muted" translate="no">${esc(q.text)}</span></p>
-        <div class="kvlist"><div><span>Угадывает «лучше или хуже обычного»</span><b>${Math.round(q.direction * 100)}% постов</b></div>
-          <div><span>Обычная ошибка в цифре</span><b>в ${q.typical_err.toFixed(1).replace(".", DEC)} раза</b></div>
-          <div><span>Постов с тегами картинки</span><b>${num(q.n_tagged)} из ${num(q.n)}</b></div>
-          ${acc && acc.n ? `<div><span>Прогнозы при публикации попали в диапазон</span><b>${acc.inside} из ${acc.n}</b></div>` : ""}</div>
+      if (q) h += `<section class="card"><div class="head"><h2>Прогноз популярности</h2><span class="muted small">учится на ${pl(q.n)}</span></div>
+        ${window.Charts.forecastQuality(q)}
+        ${acc && acc.n ? `<p>Сохранённые прогнозы при публикации попали в диапазон: <b>${acc.inside} из ${acc.n}</b></p>` : ""}
         ${acc && acc.items && acc.items.length ? `<h3>Прогноз и факт</h3><div class="kvlist">${acc.items.slice(0, 6).map((i) => `<div><span class="clip">${esc(i.title || "без названия")} <span class="muted small">${esc(i.channel || "")}</span></span><span>${num(i.expected)} → <b>${num(i.actual)}</b>${i.mature ? "" : ` <span class="muted small">набирает</span>`}</span></div>`).join("")}</div>` : ""}</section>`;
       h += `</div>`;
     }

@@ -1323,3 +1323,9 @@ input[aria-invalid="true"] { border-color: var(--bad); }
 .booru-checkpoint { margin:8px 0; padding:10px; background:var(--card-2); border-radius:8px; }
 .booru-checkpoint .row { gap:12px; justify-content:space-between; }
 .booru-checkpoint .more { margin-top:8px; }
+
+/* Evidence stays readable inside the narrow publication sidebar. */
+.forecast-quality { min-width: 0; }
+.forecast-quality .kvlist > div { flex-wrap: wrap; gap: 4px 12px; }
+.forecast-quality .kvlist b { overflow-wrap: anywhere; }
+.forecast-quality summary { cursor: pointer; }

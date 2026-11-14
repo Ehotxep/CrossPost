@@ -2784,3 +2784,33 @@ Object.assign(window.EN_DICT, {
   "Дата поста пока не получена":"The post date has not been retrieved yet",
   "Ожидается замер":"Waiting for an observation", "Пропущен":"Missed"
 });
+
+Object.assign(window.EN_DICT, {
+  "Недостаточно более поздних постов для проверки прогноза":"Not enough later posts to validate the forecast",
+  "Обычный результат канала почти не менялся: преимущество модели не оценено":"The channel baseline barely varied: model advantage could not be measured",
+  "На более поздних постах модель не точнее обычного результата канала":"On later posts the model is no more accurate than the channel baseline",
+  "Есть предварительное преимущество; проверочная выборка пока мала":"There is a preliminary advantage, but the validation sample is small",
+  "Небольшое преимущество перед обычным результатом канала":"A small advantage over the channel baseline",
+  "На проверенном периоде модель точнее обычного результата канала":"The model outperforms the channel baseline during the tested period",
+  "Сохранённый прогноз рассчитан по прежней методике.":"This saved forecast used the previous methodology.",
+  "Преимущество не оценено":"Advantage not evaluated",
+  "Модель не точнее обычного результата":"The model is no more accurate than the baseline",
+  "Ошибка модели ниже на {n}%":"Model error is {n}% lower",
+  "Проверено более поздних постов":"Later posts evaluated",
+  "Периоды проверки":"Validation periods",
+  "Медианная ошибка модели / обычного результата":"Median error: model / baseline",
+  "Сравнение средней абсолютной ошибки лог-индекса":"Comparison of mean absolute log-index error",
+  "На чём основан прогноз":"Forecast evidence",
+  "Обучение на прошлом, проверка на более поздних периодах; между ними — 7 дней для созревания постов. Обычный результат — предшествующая норма каждого канала.":"Training uses the past and validation uses later periods, with a 7-day maturity gap. The baseline is each channel's preceding typical result.",
+  "Проверка общая для подключённых к обучению каналов. Точность для отдельного канала может отличаться.":"Validation pools the channels used for training. Accuracy for a particular channel may differ.",
+  "Ретроспективная проверка по текущим итогам истории. Это не архив прогнозов, сохранённых перед отправкой. Похожие работы могут повторяться в разных периодах.":"Retrospective validation uses currently stored historical totals. It is not an archive of predictions saved before publishing. Similar artworks may recur in different periods.",
+  "Связано с ростом":"Associated with higher results", "Связано со снижением":"Associated with lower results",
+  "Связано с большим откликом":"Associated with stronger response",
+  "оценка шанса на хит":"estimated hit chance",
+  "Связи в истории не доказывают влияние тега: вместе с ним могли меняться персонаж, композиция и качество работы.":"Historical associations do not prove a tag's effect: character, composition and artwork quality may also have changed."
+});
+
+Object.assign(window.EN_DICT, {
+  "Для прогноза нужно хотя бы 30 постов старше недели с предшествующей нормой канала (сейчас":"A forecast needs at least 30 posts older than a week with a preceding channel baseline (currently",
+  "Для выводов нужно хотя бы 30 постов старше недели с предшествующей нормой канала (сейчас":"Insights need at least 30 posts older than a week with a preceding channel baseline (currently"
+});

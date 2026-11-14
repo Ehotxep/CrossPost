@@ -284,6 +284,43 @@ main()
         finally:
             close_page(page, self.id())
 
+    def test_forecast_evidence_handles_weak_missing_and_old_validation(self):
+        page = self.new_page(viewport={'width': 1360, 'height': 1000})
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("""() => {
+                window.qualityFixture = {level:'low',text:'На более поздних постах модель не точнее обычного результата канала',n:90,n_tagged:60,
+                    validation:{ready:true,n:32,minimum:10,windows:[{}],start:'2025-04-01',end:'2025-05-01',skill:-.2,typical_err:1.8,baseline_typical_err:1.5}};
+                CP.S.view='post'; CP.S.draft.rating='sfw';
+                CP.S.plan={configured:['telegram:0'],errors:[],not_configured:[],dests:[{key:'telegram:0',platform:'telegram',name:'Telegram test',will:true,details:[]}]};
+                CP.S.fc={items:[{ok:true,channel:'Fixture',expected:120,low:80,high:170,unit:'просмотров',index:1.2,base:100,p_hit:.4,percentile:null,
+                    tags_known:true,quality:qualityFixture,factors:[],best_times:[{gain:1.2,at:'2027-01-01'}]}]};
+                CP.render();
+            }""")
+            quality = page.locator('#fcbox .forecast-quality')
+            self.assertEqual(quality.get_attribute('data-quality'), 'low')
+            self.assertEqual(page.locator('#fcbox .besttime').count(), 0)
+            self.assertNotIn('шанс', page.locator('#fcbox').inner_text())
+            quality.locator('summary').click()
+            self.assertIn('32 / минимум 10', quality.inner_text())
+            self.assertIn('×1.80 / ×1.50', quality.inner_text())
+            page.set_viewport_size({'width':390,'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
+            page.evaluate("""() => {
+                qualityFixture.validation={ready:false,n:0,minimum:10,windows:[],skill:null};
+                document.querySelector('#fcbox').innerHTML=Charts.forecastQuality(qualityFixture);
+            }""")
+            self.assertIn('Преимущество не оценено', page.locator('#fcbox').inner_text())
+            self.assertNotIn('NaN', page.locator('#fcbox').inner_text())
+            page.evaluate("document.querySelector('#fcbox').innerHTML=Charts.forecastQuality({level:'good'})")
+            self.assertIn('прежней методике', page.locator('#fcbox').inner_text())
+            self.assertFalse(errors, errors)
+        finally:
+            close_page(page, self.id())
+
     def test_booru_checkpoint_comparison_and_missing_measurements_are_clear(self):
         page=self.new_page(viewport={'width':1480,'height':1000})
         try:

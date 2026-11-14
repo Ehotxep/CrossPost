@@ -9,8 +9,9 @@
 упоминание соавтора, длинный текст и теги картинки от теггера JTP. «Гребень» подтягивает
 вклад редких признаков к нулю: тег, который встречался в 5 постах, не получит огромный вес случайно.
 
-Насколько верить. Точность честно меряется перекрёстной проверкой: модель учится на 4/5 постов и
-угадывает оставшуюся 1/5. Отсюда и разброс прогноза, и шанс на «хит» (индекс ≥ ×2).
+Насколько верить. Обучение на прошлом и проверка на более поздних периодах,
+с недельным зазором для созревания постов. Норма и словарь признаков не используют
+более поздние публикации. Проверка ретроспективная: счётчики взяты из текущей базы.
 """
 import math
 import re
@@ -21,10 +22,10 @@ import numpy as np
 import pandas as pd
 
 from app import db, stats
+from app.insights import validation as V
 
 LAMBDA = 4.0            # сила «подтягивания к нулю» (как PRIOR в статистике: ~4 воображаемых обычных поста)
 TAG_PROB = 0.5          # тег картинки считаем, если теггер уверен хотя бы на 50%
-MAX_TAGS = 400
 HIT = 2.0
 SLOTS = 8               # окна по 3 часа
 AGES = [1, 3, 6, 12, 24, 48, 72, 120, 168]   # часы — точки кривой набора просмотров
@@ -117,7 +118,7 @@ def _history() -> pd.DataFrame:
     df = stats._load(None)
     if df.empty:
         return df
-    df = stats._with_index(df)
+    df = V.causal_index(df, stats.MIN_AGE)
     now = datetime.now(timezone.utc)
     df["mature"] = (df["dt"] <= now - stats.MIN_AGE) & df["index"].notna() & (df["index"] > 0)
     return df
@@ -164,53 +165,20 @@ def _fit():
             f["untagged"] = 1.0
         rows.append(f)
         tag_lists.append(tags.get(pid, []))
-    # какие теги брать признаками: не редкие и не «на каждом посте»
-    n_tagged = sum(1 for f in rows if "untagged" not in f)
-    vocab = []
-    if n_tagged >= 20:
-        cnt = pd.Series([t for tl in tag_lists for t in set(tl)]).value_counts()
-        lo, hi = max(5, int(0.015 * n_tagged)), 0.7 * n_tagged
-        vocab = [t for t, c in cnt.items() if lo <= c <= hi][:MAX_TAGS]
-    vs = set(vocab)
-    for f, tl in zip(rows, tag_lists):
-        for t in tl:
-            if t in vs:
-                f["tag:" + t] = 1.0
-    names = sorted({k for f in rows for k in f})
-    idx = {k: i for i, k in enumerate(names)}
-    X = np.zeros((len(rows), len(names)))
-    for i, f in enumerate(rows):
-        for k, v in f.items():
-            X[i, idx[k]] = v
+    X, names, vocab = V.design(rows, tag_lists)
+    idx = {name: i for i, name in enumerate(names)}
     y = np.log(mat["index"].to_numpy(dtype=float))
-
-    # честная проверка точности: 5 частей, каждая угадывается моделью, обученной на остальных
-    rng = np.random.default_rng(7)
-    fold = rng.integers(0, 5, len(y))
-    pred_cv = np.zeros_like(y)
-    for k in range(5):
-        tr, te = fold != k, fold == k
-        if te.sum() == 0 or tr.sum() < 10:
-            continue
-        b, xm, ym = _ridge(X[tr], y[tr], LAMBDA)
-        pred_cv[te] = ym + (X[te] - xm) @ b
-    res = y - pred_cv
-    sigma = float(max(np.std(res), 0.15))
-    var_y = float(np.var(y)) or 1e-9
-    r2 = float(1 - np.mean(res ** 2) / var_y)
-    # насколько чаще модель угадывает «лучше/хуже обычного», чем монетка
-    direction = float(np.mean(np.sign(pred_cv - np.median(y)) == np.sign(y - np.median(y))))
+    validation, residuals = V.forward_check(mat, rows, tag_lists, _ridge, LAMBDA, stats.MIN_AGE)
+    sigma = float(max(np.sqrt(np.mean(residuals ** 2)), .15)) if len(residuals) else None
     beta, xm, ym = _ridge(X, y, LAMBDA)
     counts = X.sum(axis=0)
     last_seen = {}
-    for f, dt in zip(rows, mat["dt"]):
-        for k in f:
-            if k.startswith("tag:"):
-                last_seen[k] = max(last_seen.get(k, dt), dt)
-    return {"too_few": False, "n": int(len(y)), "n_tagged": n_tagged, "names": names, "idx": idx, "beta": beta,
-            "xm": xm, "ym": float(ym), "sigma": sigma, "r2": r2, "direction": direction,
-            "typical_err": float(math.exp(np.median(np.abs(res)))), "counts": counts, "last_seen": last_seen,
-            "vocab": vocab, "df": df}
+    for tags_, dt in zip(tag_lists, mat["dt"]):
+        for tag in tags_:
+            last_seen["tag:" + tag] = max(last_seen.get("tag:" + tag, dt), dt)
+    return {"too_few": False, "n": int(len(y)), "n_tagged": sum("untagged" not in f for f in rows),
+            "names": names, "idx": idx, "beta": beta, "xm": xm, "ym": float(ym), "sigma": sigma,
+            "validation": validation, "counts": counts, "last_seen": last_seen, "vocab": vocab, "df": df}
 
 
 # --- прогноз ------------------------------------------------------------------------------
@@ -284,7 +252,7 @@ def forecast(*, chat_id: str, when: datetime | None, kind: str, n_media: int, ra
     if cb is None:
         return {"ok": False, "why": "Этот канал не подключён к статистике — импортируйте его, чтобы видеть прогноз"}
     if m.get("too_few"):
-        return {"ok": False, "why": f"Для прогноза нужно хотя бы 30 постов старше недели (сейчас {m['n']})"}
+        return {"ok": False, "why": f"Для прогноза нужно хотя бы 30 постов старше недели с предшествующей нормой канала (сейчас {m['n']})"}
     tz = _tz()
     when = (when or datetime.now(timezone.utc)).astimezone(tz)
     feats = base_features(local_dt=when, kind=kind, n_media=n_media,
@@ -294,6 +262,8 @@ def forecast(*, chat_id: str, when: datetime | None, kind: str, n_media: int, ra
     else:
         for t in tags:
             feats["tag:" + t] = 1.0
+    if not m["validation"]["ready"]:
+        return {"ok": False, "channel": cb["title"], "why": "Недостаточно более поздних постов для проверки прогноза", "quality": quality(m)}
     yhat, contrib = _predict_log(m, feats)
     s = m["sigma"]
     z = 0.674 * s
@@ -337,15 +307,23 @@ def forecast(*, chat_id: str, when: datetime | None, kind: str, n_media: int, ra
 
 def quality(m) -> dict:
     """Насколько модели можно верить — простыми словами."""
-    r2, d = m["r2"], m["direction"]
-    if r2 < 0.03:
-        level, text = "low", "пока почти не лучше угадывания: данных мало или успех мало зависит от этих признаков"
-    elif r2 < 0.12:
-        level, text = "mid", "грубый ориентир: угадывает направление, но не точную цифру"
+    validation = m["validation"]
+    skill = validation.get("skill")
+    if not validation["ready"]:
+        level, text = "low", "Недостаточно более поздних постов для проверки прогноза"
+    elif skill is None:
+        level, text = "low", "Обычный результат канала почти не менялся: преимущество модели не оценено"
+    elif skill <= 0:
+        level, text = "low", "На более поздних постах модель не точнее обычного результата канала"
+    elif validation["n"] < 30:
+        level, text = "mid", "Есть предварительное преимущество; проверочная выборка пока мала"
+    elif skill < .1:
+        level, text = "mid", "Небольшое преимущество перед обычным результатом канала"
     else:
-        level, text = "good", "неплохо угадывает, какие посты зайдут лучше"
-    return {"level": level, "text": text, "r2": round(r2, 3), "direction": round(d, 2),
-            "typical_err": round(m["typical_err"], 2), "n": m["n"], "n_tagged": m["n_tagged"]}
+        level, text = "good", "На проверенном периоде модель точнее обычного результата канала"
+    return {"level": level, "text": text, "n": m["n"], "n_tagged": m["n_tagged"],
+            "typical_err": validation.get("typical_err"), "direction": validation.get("direction"),
+            "validation": validation}
 
 
 # --- кривая набора просмотров -----------------------------------------------------------
