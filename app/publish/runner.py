@@ -993,7 +993,7 @@ def _run(draft, report, only):
                     if e6.get("with_description", True):
                         e_title, t, _ = variant(cfg, draft, key)
                         desc = ((f"[b]{e_title}[/b]\n" if e_title else "") + t).strip()
-                    parent, first, dup = None, None, 0
+                    parent, first, dup, recovered = None, None, 0, 0
                     post_refs = []
                     for i, f in enumerate(files):
                         _set(key, message=f"загружаю оригинал {i + 1} из {len(files)}…")
@@ -1026,9 +1026,11 @@ def _run(draft, report, only):
                         parent = parent or res["post_id"]
                         first = first or res["url"]
                         dup += res["duplicate"]
+                        recovered += bool(res.get("recovered"))
                         prog((i + 1) / len(files))
                     _set(key, state="done", message="", link=first or "",
-                         note=(f"{len(files)} {'поста' if len(files) < 5 else 'постов'}, связаны как родитель/дети" if len(files) > 1 else "") + (f"; уже были на {E6.name(e6)}: {dup}" if dup else ""))
+                         note=(f"{len(files)} {'поста' if len(files) < 5 else 'постов'}, связаны как родитель/дети" if len(files) > 1 else "") + (f"; уже присутствуют на {E6.name(e6)}: {dup}" if dup else "") +
+                              (f"; после обрыва найдены по хешу файла: {recovered}; проверьте теги, описание и родительский пост" if recovered else ""))
                 elif key == "bluesky":
                     from platforms import bluesky as BS
                     bs = cfg["bluesky"]

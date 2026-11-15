@@ -498,6 +498,21 @@ main()
             page.locator('#nav [data-view="trends"]').click()
             page.wait_for_function("CP.S.data?.source==='floofgens' && CP.S.data.filters.period==='month' && !CP.S.loading")
             self.assertEqual(page.evaluate("CP.S.data.filters.category"),'clothing')
+            # A publication forecast must never replace the trend's time series.
+            page.locator('#fc-chart svg').wait_for()
+            page.evaluate("window.savedTrendForecast=CP.S.trendForecast; CP.S.fc={items:[],marker:'post-forecast'}; CP.render()")
+            page.locator('#fc-chart svg').wait_for()
+            self.assertEqual(page.evaluate("CP.S.fc.marker"), 'post-forecast')
+            self.assertTrue(page.evaluate("CP.S.trendForecast===window.savedTrendForecast"))
+            for _ in range(2):
+                page.locator('#nav [data-view="post"]').click()
+                page.locator('#ptitle').wait_for()
+                page.locator('#nav [data-view="trends"]').click()
+                page.locator('#fc-chart svg').wait_for()
+                self.assertTrue(page.evaluate("CP.S.trendForecast===window.savedTrendForecast"))
+            self.assertNotIn("reading 'length'", page.locator('body').inner_text())
+
+
             self.assertFalse(errors,errors)
         finally:
             self.api('modules_set',key='trends',on=old)

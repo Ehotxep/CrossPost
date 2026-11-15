@@ -179,7 +179,7 @@
     view: "post",   // при запуске всегда «Новый пост»; выбранный раздел помним только до закрытия
     src: store.get("src", "e6ai"),
     rating: store.get("rating", "all"), cat: store.get("cat", "all"), mine: store.get("mine", false), trendCommon:store.get("trendCommon",false), trendPeriod:store.get("trendPeriod","quarter"),
-    sel: null, info: null, data: null, fc: null, loading: false, error: null, flash: "",
+    sel: null, info: null, data: null, fc: null, trendForecast: null, loading: false, error: null, flash: "",
     manual: false,
     tg: null, tgCh: [], tgErr: "", tgBusy: false, tgJson: "", netDraft: null, netRes: null, netOpen: false,
     platSec: store.get("platSec", "telegram"),
@@ -325,7 +325,7 @@
   async function loadOverview() {
     const request = ++trendRequest;
     const query = {source:S.src,rating:S.rating,category:S.cat,mine_only:S.mine,show_common:S.trendCommon,period:S.trendPeriod};
-    S.data = null; S.fc = null; S.error = null;
+    S.data = null; S.trendForecast = null; S.error = null;
     if (!S.info.trends[query.source]?.ready) { S.loading=false; return; }
     S.loading = true; render();
     try {
@@ -335,8 +335,9 @@
       const all = (result?.rising || []).concat(result?.popular || []);
       if (!S.sel || !all.some(x => x.tag === S.sel)) S.sel = all[0]?.tag || null;
       if (S.sel) {
-        const forecast = await api('trends_forecast', {source:query.source,tag:S.sel,rating:query.rating});
-        if (request === trendRequest) S.fc = forecast;
+        const tag = S.sel;
+        const forecast = await api('trends_forecast', {source:query.source,tag,rating:query.rating});
+        if (request === trendRequest && S.sel === tag) S.trendForecast = forecast;
       }
     } catch (e) { if (request === trendRequest) S.error = e.message; }
     finally { if (request === trendRequest) S.loading=false; }
@@ -792,7 +793,10 @@
   }
   async function pick(tag) {
     S.sel = tag;
-    S.fc = await api("trends_forecast", { source: S.src, tag, rating: S.rating }).catch(() => null);
+    const source = S.src, rating = S.rating;
+    const forecast = await api("trends_forecast", { source, tag, rating }).catch(() => null);
+    if (S.src !== source || S.rating !== rating || S.sel !== tag) return;
+    S.trendForecast = forecast;
     render();
     const el = document.getElementById("forecast");
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -871,9 +875,9 @@
       const el = document.getElementById("growth-chart");
       if (el) window.Charts.lineChart(el, S.stats.channels.map((c, i) => ({ name: c.title, color: ["var(--s1)", "var(--s2)", "var(--s3)"][i % 3], points: c.monthly })));
     }
-    if (S.view === "trends" && S.data && S.fc) {
+    if (S.view === "trends" && S.data && S.trendForecast) {
       const fcEl = document.getElementById("fc-chart");
-      if (fcEl) forecastChart(fcEl, S.fc);
+      if (fcEl) forecastChart(fcEl, S.trendForecast);
     }
     if (S.view === "trends" && S.data) {
       const nEl = document.getElementById("niche-chart");
@@ -1001,8 +1005,8 @@
     </div>`;
 
     // прогноз
-    if (S.fc) {
-      const f = S.fc, ch = f.change;
+    if (S.trendForecast) {
+      const f = S.trendForecast, ch = f.change;
       const verdict = ch > 0.08 ? "Рост " + pct(ch) : ch < -0.08 ? "Спад " + pct(ch) : "Без изменений";
       const last = f.forecast[f.forecast.length - 1];
       const bt = f.backtest && f.backtest.total ? `Проверка на истории: направление угадано в ${Math.round(f.backtest.accuracy * 100)}% случаев (${f.backtest.hits} из ${f.backtest.total}).` : "";
