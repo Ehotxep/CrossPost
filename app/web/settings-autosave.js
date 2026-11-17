@@ -93,6 +93,8 @@
     if(tr[id])return {key:'translate',patch:tr[id]};
     const source=/^e6source-(e6ai|e621|floofgens)-(telegram|discord|vk|bluesky|deviantart|e6ai|e621|floofgens|reddit|joyreactor)$/.exec(id);
     if(source)return {key:source[1],patch:{source_platforms:{[source[2]]:on}}};
+    const linkMode=/^e6link-(e6ai|e621|floofgens)-(post|resource)$/.exec(id);
+    if(linkMode)return {key:linkMode[1],patch:{source_link_mode:linkMode[2]}};
     const e6={e6const:{constant_tags:words(v).map(t=>t.toLowerCase())},e6pre:{preselect:Number(v)/100},e6src:{with_sources:on},e6resource:{source_link_mode:on?'resource':'post'},e6desc:{with_description:on}};
     const booru=/^(e6const|e6pre|e6src|e6resource|e6desc)-(e6ai|e621|floofgens)$/.exec(id);
     if(booru)return {key:booru[2],patch:e6[booru[1]]};
@@ -144,6 +146,7 @@
   }
   function capture(el){
     const spec=describe(el);if(!spec)return false;
+    if(el.type==='radio'&&!el.checked)return true;
     const id=fieldKey(el),value={value:el.value,checked:!!el.checked};
     if(seen.get(id)===JSON.stringify(value))return true;
     seen.set(id,JSON.stringify(value));lastSaved=false;
@@ -151,8 +154,17 @@
       invalid.set(id,{value,scope:spec.key});el.setAttribute('aria-invalid','true');persist();paint();return true;
     }
     invalid.delete(id);el.removeAttribute('aria-invalid');
-    queue.edit(spec.key,spec.patch,{[id]:value});
-    clearTimeout(timer);timer=setTimeout(()=>queue.flush(),el.type==='checkbox'||el.tagName==='SELECT'?0:750);
+    const values={[id]:value};
+    if(el.type==='radio') {
+      for(const other of document.querySelectorAll('input[type="radio"]')) {
+        if(other.name===el.name&&describe(other)) {
+          values[other.id]={value:other.value,checked:!!other.checked};
+          seen.set(other.id,JSON.stringify(values[other.id]));
+        }
+      }
+    }
+    queue.edit(spec.key,spec.patch,values);
+    clearTimeout(timer);timer=setTimeout(()=>queue.flush(),['checkbox','radio'].includes(el.type)||el.tagName==='SELECT'?0:750);
     return true;
   }
   async function flush(){clearTimeout(timer);await queue.flush();return !dirty();}

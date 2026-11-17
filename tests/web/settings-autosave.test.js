@@ -53,3 +53,11 @@ test('source link mode toggles are scoped to their booru site',()=>{
   assert.equal(spec.key,site);assert.equal(spec.patch.source_link_mode,checked?'resource':'post');
  }
 });
+
+test('explicit source choices retain site and mode without on-off decoding',()=>{
+ const {describe}=load();
+ for(const site of ['e6ai','e621','floofgens'])for(const mode of ['post','resource']){
+  const spec=describe({id:`e6link-${site}-${mode}`,checked:true,value:mode});
+  assert.equal(spec.key,site);assert.equal(spec.patch.source_link_mode,mode);
+ }
+});

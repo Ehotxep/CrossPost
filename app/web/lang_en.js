@@ -2837,8 +2837,14 @@ Object.assign(window.EN_DICT, {
 
 Object.assign(window.EN_DICT, {
   "Добавлять ссылки в источники":"Include links as sources",
-  "Вести на канал, группу или ресурс":"Link to the channel, group or resource",
-  "Выключено — ссылка на конкретный пост с изображением. Включено — канал, профиль, сообщество или сайт. Например: t.me/channel/123 → t.me/channel. Если автора нельзя определить по ссылке, используется адрес сайта.":"Off: link to the specific image post. On: link to its channel, profile, community or website. For example: t.me/channel/123 → t.me/channel. When the author cannot be determined from the link, the website address is used.",
+  "Куда должна вести ссылка?":"Where should the link lead?",
+  "На пост с изображением":"To the image post",
+  "Откроется конкретная публикация":"Opens the specific post",
+  "На канал или профиль":"To the channel or profile",
+  "Откроется страница автора или сообщества":"Opens the author or community page",
+  "Если в ссылке на пост нет автора, будет указан сайт целиком.":"If the post link does not identify its author, the website address is used.",
+  "С каких площадок брать ссылки?":"Which platforms should provide links?",
+  "Добавляются только публичные ссылки на уже опубликованные посты.":"Only public links to already published posts are included.",
   "Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Добавлять ссылки в источники» должен быть включён.":"Only successfully published posts with a public link are included. Private Telegram links are excluded. Links from sites published later are not yet available. Enable the main include-links-as-sources switch.",
   "Неизвестный вид ссылки-источника":"Unknown source link type"
 });

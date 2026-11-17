@@ -1838,11 +1838,17 @@
             <div class="tgls" style="flex:1 1 360px"><label class="tgl"><input type="checkbox" id="e6src-${BN()}" ${e6.with_sources ? "checked" : ""}><span>Добавлять ссылки в источники</span></label>
               <label class="tgl"><input type="checkbox" id="e6desc-${BN()}" ${e6.with_description ? "checked" : ""}><span>Текст поста — в описание</span></label></div></div>
           <details class="more" data-detail-key="sources-${BN()}"><summary>Площадки-источники</summary>
-            <label class="tgl"><input type="checkbox" id="e6resource-${BN()}" ${e6.source_link_mode === 'resource' ? 'checked' : ''}><span>Вести на канал, группу или ресурс</span></label>
-            <p class="muted small">Выключено — ссылка на конкретный пост с изображением. Включено — канал, профиль, сообщество или сайт. Например: t.me/channel/123 → t.me/channel. Если автора нельзя определить по ссылке, используется адрес сайта.</p>
-            <p class="muted small">Выберите, ссылки на какие площадки добавлять в источники. Для каждого сайта выбор сохраняется отдельно.</p>
-            <div class="tgls">${porder().filter(k => k !== BN() && C().PLAT[k]).map(k => `<label class="tgl"><input type="checkbox" id="e6source-${BN()}-${k}" ${(e6.source_platforms || {})[k] !== false ? "checked" : ""}><span>${C().pbadge(k)} ${esc(C().PLAT[k][2])}</span></label>`).join("")}</div>
-            <p class="muted small">Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Добавлять ссылки в источники» должен быть включён.</p>
+            <fieldset class="source-choice-group"><legend>Куда должна вести ссылка?</legend>
+              <div class="source-link-options">
+                <label class="source-link-choice"><input type="radio" name="e6link-${BN()}" id="e6link-${BN()}-post" value="post" ${e6.source_link_mode !== 'resource' ? 'checked' : ''}><span><strong>На пост с изображением</strong><small>Откроется конкретная публикация</small><code>t.me/channel/123</code></span></label>
+                <label class="source-link-choice"><input type="radio" name="e6link-${BN()}" id="e6link-${BN()}-resource" value="resource" ${e6.source_link_mode === 'resource' ? 'checked' : ''}><span><strong>На канал или профиль</strong><small>Откроется страница автора или сообщества</small><code>t.me/channel</code></span></label>
+              </div>
+              <p class="muted small">Если в ссылке на пост нет автора, будет указан сайт целиком.</p>
+            </fieldset>
+            <fieldset class="source-choice-group"><legend>С каких площадок брать ссылки?</legend>
+              <div class="source-platform-options">${porder().filter(k => k !== BN() && C().PLAT[k]).map(k => `<label class="source-platform-choice"><input type="checkbox" id="e6source-${BN()}-${k}" ${(e6.source_platforms || {})[k] !== false ? "checked" : ""}>${C().pbadge(k)}<span>${esc(C().PLAT[k][2])}</span></label>`).join("")}</div>
+            </fieldset>
+            <p class="muted small">Добавляются только публичные ссылки на уже опубликованные посты.</p>
           </details>
           <div class="cardfoot"><button class="btn primary" data-pa="e6-opts">Сохранить</button></div></section>
         <p class="muted small">Теггер, база тегов и правки модераторов — в разделе <a href="#" data-view-link="settings" data-tab="tags">«Теги»</a>.</p>`;
@@ -2247,7 +2253,7 @@
     };
     // значения полей запоминаем сразу: перерисовка (guard) пересоздаёт поля ввода
     const snap = {};
-    document.querySelectorAll("#main input, #main textarea, #main select").forEach((el) => { if (el.id) snap[el.id] = el.type === "checkbox" ? el.checked : el.value; });
+    document.querySelectorAll("#main input, #main textarea, #main select").forEach((el) => { if (el.id) snap[el.id] = ["checkbox","radio"].includes(el.type) ? el.checked : el.value; });
     const val = (id) => String(snap[id] == null ? "" : snap[id]).trim();
     const saveSec = async (sec, ch) => { s.pub = await api("pub_save", { section: sec, changes: ch }); };
     const backupFile = document.getElementById("backup-file")?.files[0];
@@ -2755,7 +2761,7 @@
       case "e6-opts": await guard("e6:" + BN(), async () => {
         const pre = Math.min(95, Math.max(20, +val("e6pre-" + BN()) || 35)) / 100;
         s.pub = await api("pub_save", { section: BN(), changes: { constant_tags: val("e6const-" + BN()).split(/[\s,]+/).filter(Boolean).map((t) => t.toLowerCase()),
-          preselect: pre, source_link_mode: snap["e6resource-" + BN()] ? "resource" : "post", source_platforms: Object.fromEntries(porder().filter(k => k !== BN() && C().PLAT[k]).map(k => [k, !!snap["e6source-" + BN() + "-" + k]])), with_sources: !!snap["e6src-" + BN()], with_description: !!snap["e6desc-" + BN()] } });
+          preselect: pre, source_link_mode: snap["e6link-" + BN() + "-resource"] ? "resource" : "post", source_platforms: Object.fromEntries(porder().filter(k => k !== BN() && C().PLAT[k]).map(k => [k, !!snap["e6source-" + BN() + "-" + k]])), with_sources: !!snap["e6src-" + BN()], with_description: !!snap["e6desc-" + BN()] } });
         s.pubOk["e6:" + BN()] = "Сохранено";
       }); return true;
       case "tag-check": await guard("e6", async () => { s.tagger = await api("tagger_check"); C().render(); }); return true;
