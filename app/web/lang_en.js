@@ -2848,3 +2848,11 @@ Object.assign(window.EN_DICT, {
   "Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Добавлять ссылки в источники» должен быть включён.":"Only successfully published posts with a public link are included. Private Telegram links are excluded. Links from sites published later are not yet available. Enable the main include-links-as-sources switch.",
   "Неизвестный вид ссылки-источника":"Unknown source link type"
 });
+
+Object.assign(window.EN_DICT, {
+  "Самые медленные запросы за сеанс": "Slowest requests this session",
+  "Время работы сервера; отчёт также включает ожидание ответа в интерфейсе, отрисовку и блокировки дольше 50 мс. 95-й процентиль — время, в которое укладываются 95% сохранённых замеров.": "Server processing time. The report also includes UI request times, rendering and main-thread blocks over 50 ms. The 95th percentile is the time within which 95% of retained measurements complete.",
+  "Откройте медленные вкладки и сохраните отчёт. Замеры запросов и отрисовки собираются только локально в этой сессии; тексты, ссылки и ключи не записываются. Файл отправляется только вами.": "Open the slow tabs, then save a report. Request and rendering timings are collected locally for this session; text, links and keys are not recorded. Only you can share the file."
+});
+
+Object.assign(window.EN_DICT, {"среднее {mean} мс · P95 {p95} мс · макс. {max} мс":"mean {mean} ms · P95 {p95} ms · max {max} ms"});

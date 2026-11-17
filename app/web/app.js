@@ -120,6 +120,8 @@
   }
 
   async function api(name, args = {}, options = {}) {
+    const timing = window.PerfUI?.request(name);
+    let timingOk = false;
     // вызов от действия человека: в течение полсекунды после клика или пока идут вызовы этого же действия
     const user = !options.silent && name !== "activity" && FB.el && (performance.now() - FB.at < 600 || FB.pending > 0);
     const el = user ? FB.el : null;
@@ -130,7 +132,7 @@
     try {
       const r = await fetch("/api/" + name, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Token": window.API_TOKEN },
+        headers: { "Content-Type": "application/json", "X-Token": window.API_TOKEN, ...(timing ? {"X-Perf-ID": timing.id} : {}) },
         body: JSON.stringify(args),
       });
       let j;
@@ -143,11 +145,13 @@
         FB.toasted = kind === "ok";   // одно «✓» на одно действие, пояснения — всегда
         toast(text, kind);
       }
+      timingOk = true;
       return j.result;
     } catch (e) {
       if (user) toast(e.message === "Failed to fetch" ? "Нет связи с приложением — оно запущено?" : e.message, "error");
       throw e;
     } finally {
+      timing?.finish(timingOk);
       if (user) {
         FB.pending = Math.max(0, FB.pending - 1);
         if (!FB.pending) { busy(false); FB.el = null; }
@@ -332,11 +336,13 @@
       const result = await api('trends_overview', query);
       if (request !== trendRequest) return;
       S.data = result;
+      S.loading = false;
       const all = (result?.rising || []).concat(result?.popular || []);
       if (!S.sel || !all.some(x => x.tag === S.sel)) S.sel = all[0]?.tag || null;
+      if (S.view === "trends") render();
       if (S.sel) {
         const tag = S.sel;
-        const forecast = await api('trends_forecast', {source:query.source,tag,rating:query.rating});
+        const forecast = await api('trends_forecast', {source:query.source,tag,rating:query.rating}).catch(() => null);
         if (request === trendRequest && S.sel === tag) S.trendForecast = forecast;
       }
     } catch (e) { if (request === trendRequest) S.error = e.message; }
@@ -763,22 +769,31 @@
 
   // «Статистика»: сразу сохранённый результат, а если данные поменялись — тихо подтягиваем пересчитанный
   let statsPoll = null;
+  let statsRequest = 0;
   async function fetchStats() {
+    const request = ++statsRequest, sp = S.sp, sc = S.sc;
+    const current = () => request === statsRequest && sp === S.sp && sc === S.sc;
     const [st, ins] = await Promise.all([
-      api("stats_overview", { period: S.sp, chat_id: S.sc || null }).catch((e) => ({ error: e.message })),
-      api("insights_overview").catch((e) => ({ error: e.message })),
+      api("stats_overview", { period: sp, chat_id: sc || null }).catch(e => ({ error: e.message })).then(st => {
+        if (current()) { S.stats = st; S.statsLoading = false; if (S.view === "stats") quietRender(); }
+        return st;
+      }),
+      api("insights_overview").catch(e => ({ error: e.message })).then(ins => {
+        if (current()) { S.ins = ins; if (S.view === "stats") quietRender(); }
+        return ins;
+      }),
     ]);
-    S.stats = st; S.ins = ins;
-    return (st && st._cache && st._cache.stale) || (ins && ins._cache && ins._cache.stale);
+    return current() && (st?._cache?.stale || ins?._cache?.stale);
   }
   async function loadStats() {
     clearTimeout(statsPoll);
     S.statsLoading = true;
     if (!S.stats) render();
-    const stale = await fetchStats();
-    S.statsLoading = false;
-    await window.Pub.loadInsights();
-    if (stale) pollStats(0);
+    const [stale] = await Promise.all([
+      fetchStats(),
+      window.Pub.loadInsights().then(() => { if (S.view === "stats") quietRender(); }),
+    ]);
+    if (stale && S.view === "stats") pollStats(0);
   }
   function pollStats(n) {
     clearTimeout(statsPoll);
@@ -821,6 +836,10 @@
     });
   }
   function softRender() {
+    const finish = window.PerfUI?.rendering(S.view);
+    try { return softRenderImpl(); } finally { finish?.(); }
+  }
+  function softRenderImpl() {
     if (S.pstatOpen || S.viewFile || document.querySelector(".bigprev")) return;   // поверх страницы открыто окно — её не трогаем
     const positions=destinationPositions();
     softMode = true; softPending = null;
@@ -839,6 +858,10 @@
   }
   let lastRenderedView = null, viewTransition = null;
   function render() {
+    const finish = window.PerfUI?.rendering(S.view);
+    try { return renderImpl(); } finally { finish?.(); }
+  }
+  function renderImpl() {
     const previousView = lastRenderedView, positions=destinationPositions();
     renderMain();
     animateDestinations(positions);
@@ -1150,13 +1173,16 @@
         <p class="muted small">Память компьютера занята на ${n.system.ram_used}% из ${String(n.system.ram_gb).replace(".", DEC)} ГБ.</p>`;
       if (n.groups.some((g) => /Браузер/.test(g.name))) h += `<div class="callout"><p>Открыт браузер Crosspost (сбор статистики ВК или публикация). Если сейчас ничего не идёт — его можно закрыть.</p><button class="btn small" data-action="perf-kill">Закрыть браузер</button></div>`;
     }
+    const timings = S.perf.timings?.server || [];
+    h += `<h3>Самые медленные запросы за сеанс</h3><p class="muted small">Время работы сервера; отчёт также включает ожидание ответа в интерфейсе, отрисовку и блокировки дольше 50 мс. 95-й процентиль — время, в которое укладываются 95% сохранённых замеров.</p>
+      <div class="kvlist">${timings.filter(t => t.kind === 'server_api' && !t.name.startsWith('perf_')).slice(0,8).map(t => `<div><span>${esc(t.name)} · ${t.n}</span><span>среднее ${num(t.mean_ms)} мс · P95 ${num(t.p95_ms)} мс · макс. ${num(t.max_ms)} мс</span></div>`).join('')}</div>`;
     const mem = (sm.memory || []).filter((m) => m.hours >= 0.5);
     if (mem.length) h += `<h3>Память за сутки</h3><div class="kvlist">${mem.map((m) => `<div><span>${roleName[m.role] || m.role}</span><span>было ${num(m.first)} МБ → сейчас ${num(m.last)} МБ, максимум ${num(m.max)} МБ · процессор в среднем ${String(m.cpu_avg).replace(".", DEC)}%</span></div>`).join("")}</div>`;
     const slow = (sm.tasks || []).slice(0, 6);
     if (slow.length) h += `<h3>Фоновые задачи за сутки</h3><div class="kvlist">${slow.map((t) => `<div><span>${esc(t.name)} <span class="muted small">${roleName[t.role] || t.role}</span></span><span>${t.n} раз · всего ${String(t.s).replace(".", DEC)} с · дольше всего ${String(t.max_s).replace(".", DEC)} с${t.errors ? ` · <span class="err">ошибок ${t.errors}</span>` : ""}</span></div>`).join("")}</div>`;
     h += `<div class="cardfoot"><button class="btn" data-action="perf-report">Сохранить отчёт</button>
       ${(n.groups || []).some((g) => g.name === "Теггер") ? `<button class="btn ghost" data-action="perf-tagger">Выгрузить теггер</button>` : ""}
-      <span class="muted small">Чтобы поймать тормоза, оставьте Crosspost открытым на час, потом сохраните отчёт.</span></div></section>`;
+      <span class="muted small">Откройте медленные вкладки и сохраните отчёт. Замеры запросов и отрисовки собираются только локально в этой сессии; тексты, ссылки и ключи не записываются. Файл отправляется только вами.</span></div></section>`;
     return h;
   }
   function trendsSecHtml() {
@@ -1626,7 +1652,7 @@
     if (pfb) {
       const a = pfb.dataset.action;
       try {
-        if (a === "perf-report") await api("perf_report");
+        if (a === "perf-report") await api("perf_report", {client:window.PerfUI?.snapshot() || []});
         if (a === "perf-kill") { const r = await api("perf_kill_browsers"); toast(r.killed ? `Закрыто процессов браузера: ${r.killed}` : "Лишних процессов браузера нет", "ok"); }
         if (a === "perf-tagger") await api("tagger_unload");
       } catch (err) { /* ошибка уже показана */ }

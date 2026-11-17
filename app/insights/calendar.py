@@ -48,11 +48,11 @@ def _int(v):
     return int(v)
 
 
-def _level(v) -> str:
+def _level(v, levels=None) -> str:
     if v is None or (isinstance(v, float) and math.isnan(v)):
         return ""
     from app.insights import norms
-    lv = norms.levels()   # ступени — из вашей истории (по всем каналам)
+    lv = levels if levels is not None else norms.levels()   # ступени — из вашей истории (по всем каналам)
     return "l4" if v >= lv["super"] else "l3" if v >= lv["hit"] else "l2" if v >= lv["good"] else "l0" if v < 0.77 else "l1"
 
 
@@ -224,7 +224,7 @@ def _suggest(groups: list, splits: set, limit: int = 5) -> list:
     return [r[1:] for r in res[:limit]]
 
 
-def _collapse(g: list) -> dict:
+def _collapse(g: list, joined=None) -> dict:
     """Группа → работа: данные свежей публикации, без суммирования повторов."""
     # Destinations of one CrossPost publication are one source. A later mirror
     # without an index must not hide available statistics of that same post.
@@ -253,7 +253,8 @@ def _collapse(g: list) -> dict:
     it["atoms"] = list(dict.fromkeys([x["key"] for x in sorted(g, key=lambda x: x["ts"])] +
                                     [f'u{x["pub_id"]}' for x in g if x.get("pub_id")]))
     it["pub_ids"] = sorted({x["pub_id"] for x in g if x.get("pub_id")})
-    joined = {frozenset(j) for j in _rules()[0]}
+    if joined is None:
+        joined = {frozenset(j) for j in _rules()[0]}
     it["manual"] = any(frozenset((a, b)) in joined for a in it["atoms"] for b in it["atoms"] if a != b)
     return it
 
@@ -270,6 +271,9 @@ def month(ym: str, all_history: bool = False) -> dict:
     t1 = datetime(grid_end.year, grid_end.month, grid_end.day, tzinfo=tz)
 
     df = stats.indexed(None)
+    from app.insights import norms
+    levels = norms.levels()
+    joined = {frozenset(j) for j in _rules()[0]}
     items = []
     pubmap = _pub_map()
     if not df.empty:
@@ -290,7 +294,7 @@ def month(ym: str, all_history: bool = False) -> dict:
                 "channels": [r["channel"]], "rating": r["ch_rating"], "link": r["link"] if isinstance(r["link"], str) else "",
                 "views": views, "reactions": int(r["reactions"] or 0), "forwards": _int(r["forwards"]) or 0,
                 "proj": _int(r["proj"]) if est and r["by_views"] else None,
-                "index": idx, "est": est, "level": _level(idx), "by_views": bool(r["by_views"]),
+                "index": idx, "est": est, "level": _level(idx, levels), "by_views": bool(r["by_views"]),
                 "n_media": int(r["n_media"] or 1), "age_h": round(float(r.get("age_h", 0) or 0), 1),
                 "kind": _kind(r.get("media_type")), "media": str(r.get("media_type") or ""),
             })
@@ -333,7 +337,7 @@ def month(ym: str, all_history: bool = False) -> dict:
     merged = []
     by_group = {}
     for g in groups:
-        it = _collapse(g)
+        it = _collapse(g, joined)
         by_group[id(g)] = it
         merged.append(it)
     suggestions = [{"a": [x["key"] for x in g1], "b": [x["key"] for x in g2], "ka": by_group[id(g1)]["key"], "kb": by_group[id(g2)]["key"],
@@ -367,7 +371,7 @@ def month(ym: str, all_history: bool = False) -> dict:
         "ym": ym, "start": grid_start.isoformat(), "end": grid_end.isoformat(),
         "today": datetime.now(tz).date().isoformat(),
         "days": days, "sched": sched, "leaders": leaders, "suggestions": suggestions,
-        "summary": {"posts": len(in_month), "hits": sum(1 for i in scored if i["index"] >= __import__("app.insights.norms", fromlist=["x"]).levels()["hit"]),
+        "summary": {"posts": len(in_month), "hits": sum(1 for i in scored if i["index"] >= levels["hit"]),
                     "typical": round(geo, 2) if geo else None, "est": sum(1 for i in in_month if i["est"])},
     }
 

@@ -25,6 +25,7 @@ python tools/run_tests.py
 node tests/web/post-state.test.js
 node tests/web/setup-guide.test.js
 node tests/web/settings-autosave.test.js
+node tests/web/diagnostics.test.js
 python tests/browser/test_workflows.py
 python tests/browser/test_social_web.py
 ```

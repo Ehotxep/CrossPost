@@ -31,6 +31,47 @@ class MergeAndEdit(unittest.TestCase):
             return c.execute("INSERT INTO publications(created,title,text,rating,files,dests,draft) VALUES (?,?,?,?,?,?,?)",
                              (date, title, 'Body', 'sfw', '[]', json.dumps(dests or []), '{}')).lastrowid
 
+    def test_calendar_reads_shared_rules_and_thresholds_once_for_many_posts(self):
+        for i in range(80):
+            self.pub('2026-09-11T12:00:00+00:00', f'Art {i}')
+        with patch.object(self.calendar, '_rules', wraps=self.calendar._rules) as rules, \
+                patch('app.insights.norms.levels', return_value={'good':1.3,'hit':2,'super':3}) as levels, \
+                patch('app.insights.ext_posts.items_between', return_value=[]):
+            result = self.calendar.month('2026-09')
+        self.assertEqual(result['summary']['posts'], 80)
+        self.assertEqual(levels.call_count, 1)
+        self.assertLessEqual(rules.call_count, 2)
+
+    def test_summary_ranks_all_months_from_one_history_grouping(self):
+        from app.insights import warmup
+        ids = [self.pub(f'2026-{month:02d}-11T12:00:00+00:00', 'Art') for month in (1,2,3)]
+        works = {'days': {f'2026-{month:02d}-11': [
+            {'day':f'2026-{month:02d}-11','pub_id':pid,'index':1},
+            {'day':f'2026-{month:02d}-11','pub_id':None,'index':2},
+        ] for month,pid in zip((1,2,3),ids)}}
+        with patch('app.insights.post_stats.summary', return_value={str(pid):{'value':10} for pid in ids}), \
+                patch.object(self.calendar, 'month', return_value=works) as month:
+            result = warmup.summary_compute()
+        self.assertEqual(month.call_count, 1)
+        self.assertTrue(month.call_args.kwargs['all_history'])
+        self.assertEqual([result[str(pid)]['rank'] for pid in ids], [2,2,2])
+
+    def test_summary_reuses_channel_baseline_without_changing_post_values(self):
+        from app.insights import post_stats
+        ids = []
+        with self.db.tx() as c:
+            c.execute("INSERT INTO channels(platform,chat_id,title,selected) VALUES ('telegram','42','Test',1)")
+            for i in range(20):
+                pid = c.execute("INSERT INTO posts(platform,chat_id,msg_id,date_utc,media_type,views,reactions) VALUES ('telegram','42',?,'2026-01-01T12:00:00+00:00','photo',?,1)", (i+1,100+i)).lastrowid
+                c.execute("INSERT INTO messages(platform,chat_id,msg_id,post_id) VALUES ('telegram','42',?,?)",(i+1,pid))
+        for i in range(20):
+            ids.append(self.pub('2026-01-01T12:00:00+00:00', 'Art', [{'platform':'telegram','key':'telegram:42','chat_id':'42','message_ids':[i+1],'state':'done'}]))
+        with patch.object(post_stats.M, 'channel_base', wraps=post_stats.M.channel_base) as baseline:
+            result = post_stats.summary(ids)
+        self.assertEqual(baseline.call_count, 1)
+        self.assertEqual([result[str(pid)]['value'] for pid in ids], list(range(100,120)))
+        self.assertTrue(all('index' in result[str(pid)] for pid in ids))
+
     def test_arbitrary_dates_and_platforms_merge_in_calendar_list_and_stats(self):
         from app.insights import post_stats
         a = self.pub('2025-01-03T12:00:00+00:00', 'First', [{'key':'discord:1','platform':'discord','state':'done','name':'DS'}])

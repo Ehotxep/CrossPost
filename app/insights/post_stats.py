@@ -136,7 +136,7 @@ def _channel_frame(chat_id: str):
     return stats.indexed(chat_id)
 
 
-def tg_stats(dest: dict, curve: dict) -> dict:
+def tg_stats(dest: dict, curve: dict, context: dict | None = None) -> dict:
     chat_id, ids = str(dest["chat_id"]), dest["message_ids"]
     p = M.post_for(chat_id, ids)
     ch = db.query("SELECT title, selected FROM channels WHERE platform='telegram' AND chat_id=?", (chat_id,))
@@ -166,10 +166,16 @@ def tg_stats(dest: dict, curve: dict) -> dict:
             series.append({"h": round(h, 2), "v": int(v)})
     out["series"] = series
     # сравнение с каналом
-    df = _channel_frame(chat_id)
+    if context is not None:
+        if chat_id not in context:
+            df = _channel_frame(chat_id)
+            context[chat_id] = (df, M.channel_base(df, chat_id) if not df.empty else None)
+        df, cb = context[chat_id]
+    else:
+        df = _channel_frame(chat_id)
+        cb = M.channel_base(df, chat_id) if not df.empty else None
     if not df.empty:
         row = df[df["id"] == p["id"]]
-        cb = M.channel_base(df, chat_id)
         if cb:
             out["channel_median"] = round(cb["base"])
             # для свежего поста — проекция на неделю по кривой набора просмотров
@@ -322,6 +328,7 @@ def summary(pub_ids: list[int]) -> dict:
     """Коротко для списка «Истории»: главная цифра Telegram и как идёт пост."""
     out = {}
     curve = None
+    context = {}
     for pid in pub_ids or []:
         rows = _pubs(pub_id=pid)
         if not rows:
@@ -331,7 +338,7 @@ def summary(pub_ids: list[int]) -> dict:
             if d.get("key") == "telegram:group":
                 continue
             curve = curve or M.growth_curve()
-            st = tg_stats(d, curve)
+            st = tg_stats(d, curve, context)
             if st.get("ok"):
                 v = st["views"] if st["by_views"] else st["reactions"]
                 if best is None or (v or 0) > (best["value"] or 0):

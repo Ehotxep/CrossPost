@@ -42,15 +42,24 @@ def summary_compute():
     import app.publish.runner  # noqa: F401
     rows = db.query("SELECT id, created FROM publications ORDER BY id DESC LIMIT 300")
     out = post_stats.summary([r["id"] for r in rows])
-    # место в «Лидерах месяца» (1–3) — для медалей в списке «Истории»
-    for ym in sorted({str(r["created"])[:7] for r in rows}):
+    # Group the history once; rebuilding every month repeats the same full scan.
+    if rows and out:
+        from app.insights import calendar
         try:
-            data = cache.get(calendar_name(ym), calendar_compute(ym), calendar_key(), max_age=1800)["data"]
-        except Exception:
-            continue
-        for i, it in enumerate((data.get("leaders") or [])[:3]):
-            if it.get("pub_id") and str(it["pub_id"]) in out:
-                out[str(it["pub_id"])]["rank"] = i + 1
+            data = calendar.month(datetime.now().strftime("%Y-%m"), all_history=True)
+        except Exception:  # medals must not hide available statistics
+            return out
+        months = {str(r["created"])[:7] for r in rows}
+        by_month = {}
+        for items in data["days"].values():
+            for it in items:
+                ym = it["day"][:7]
+                if ym in months and it["index"] is not None:
+                    by_month.setdefault(ym, []).append(it)
+        for items in by_month.values():
+            for i, it in enumerate(sorted(items, key=lambda x: -x["index"])[:3]):
+                if it.get("pub_id") and str(it["pub_id"]) in out:
+                    out[str(it["pub_id"])]["rank"] = i + 1
     return out
 
 

@@ -48,6 +48,7 @@ jobs:
       - run: node tests/web/post-state.test.js
       - run: node tests/web/setup-guide.test.js
       - run: node tests/web/settings-autosave.test.js
+      - run: node tests/web/diagnostics.test.js
       - run: python -m playwright install --with-deps chromium
       - run: python tests/browser/test_workflows.py
       - run: python tests/browser/test_social_web.py

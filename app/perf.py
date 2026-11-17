@@ -264,7 +264,7 @@ def gpu_info() -> dict:
     return gpu.detect()
 
 
-def report() -> str:
+def report(client=None) -> str:
     """Сохранить отчёт (JSON) в папку reports. Ключей, токенов, названий и текстов постов в нём нет."""
     from app import db
     from app.publish import settings as PS
@@ -299,9 +299,12 @@ def report() -> str:
                            for p in data_dir().iterdir() if p.is_dir()}
     except Exception:  # noqa: BLE001
         pass
+    from app import diagnostics
+    info["timings"] = diagnostics.snapshot(client)
     info["now"] = snapshot()
     info["summary"] = summary(24)
-    info["journal"] = journal(6)
+    # Exception messages in old task logs can contain user-provided text.
+    info["journal"] = [{**row, "err": bool(row.get("err"))} for row in journal(6)]
     out = data_dir() / "reports"
     out.mkdir(exist_ok=True)
     f = out / f"perf-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"

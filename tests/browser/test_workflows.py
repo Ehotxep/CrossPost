@@ -78,6 +78,70 @@ main()
         self.assertTrue(result['ok'], result)
         return result['result']
 
+    def test_statistics_show_primary_data_before_slow_optional_panels(self):
+        page = self.new_page()
+        held = []
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("CP.S.tgCh=[{chat_id:'test',title:'Test',selected:true,posts:100}];CP.S.stats=null")
+            page.route('**/api/insights_overview', lambda route: held.append(route))
+            page.route('**/api/calendar_month', lambda route: held.append(route))
+            page.route('**/api/stats_overview', lambda route: route.fulfill(
+                content_type='application/json', body=json.dumps({'ok':True,'result':{'error':'Primary statistics ready'}})))
+            page.locator('#nav [data-view="stats"]').click()
+            page.get_by_text('Primary statistics ready', exact=True).wait_for()
+            page.wait_for_function('CP.S.statsLoading===false')
+            self.assertEqual(len(held), 2)
+            page.locator('#nav [data-view="post"]').click()
+            for route in held:
+                route.fulfill(content_type='application/json', body=json.dumps({'ok':True,'result':{}}))
+            held.clear()
+            page.wait_for_timeout(100)
+            self.assertEqual(page.evaluate('CP.S.view'), 'post')
+        finally:
+            for route in held:
+                route.abort()
+            close_page(page, self.id())
+
+    def test_history_fetches_summary_only_once_per_open(self):
+        page = self.new_page()
+        calls = []
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.on('request', lambda request: calls.append(request.url) if request.url.endswith('/api/pub_stats_summary') else None)
+            page.evaluate("async()=>{CP.S.view='history';await Pub.load('history');CP.render()}")
+            self.assertEqual(len(calls), 1)
+        finally:
+            close_page(page, self.id())
+
+    def test_performance_report_collects_view_and_request_timings_without_post_content(self):
+        page = self.new_page()
+        captured = []
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.locator('#nav [data-view="history"]').click()
+            page.wait_for_function("CP.S.hist && !document.querySelector('#nav .busy')")
+            page.wait_for_timeout(250)
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='diag';await Pub.load('settings');CP.render()}")
+            page.locator('[data-action="perf-report"]').wait_for()
+            def report(route):
+                captured.append(route.request.post_data_json)
+                route.fulfill(content_type='application/json',body=json.dumps({'ok':True,'result':{'file':'test-report.json'}}))
+            page.route('**/api/perf_report',report)
+            page.locator('[data-action="perf-report"]').click()
+            page.wait_for_function("!document.querySelector('[data-action=perf-report].busy')")
+            self.assertEqual(len(captured),1)
+            rows=captured[0]['client']
+            self.assertTrue(any(r['kind']=='api' and r['name']=='post_history_search' for r in rows))
+            self.assertTrue(any(r['kind']=='render' and r['name']=='history' for r in rows))
+            self.assertTrue(any(r['kind']=='navigation' and r['name']=='history' for r in rows))
+            self.assertTrue(all(set(r)<= {'kind','name','ms','ok','view','id','pending'} for r in rows))
+            self.assertNotIn('Post 1',json.dumps(rows))
+            self.assertNotIn('API_TOKEN',json.dumps(rows))
+            page.get_by_role('heading',name='Самые медленные запросы за сеанс').wait_for()
+        finally:
+            close_page(page, self.id())
+
     def test_booru_sites_have_independent_settings_and_post_switches(self):
         page = self.new_page()
         try:

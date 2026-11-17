@@ -1129,12 +1129,13 @@ class Api:
     # --- производительность ---
     def perf_status(self):
         from app import perf
-        return {"now": perf.snapshot(), "summary": perf.summary(24)}
+        from app import diagnostics
+        return {"now": perf.snapshot(), "summary": perf.summary(24), "timings": diagnostics.snapshot()}
 
-    def perf_report(self):
+    def perf_report(self, client: list | None = None):
         """Сохранить отчёт о производительности (без ключей и текстов постов) и открыть папку."""
         from app import perf
-        f = perf.report()
+        f = perf.report(client=client)
         try:
             self._open_folder(str(__import__("pathlib").Path(f).parent))
         except Exception:  # noqa: BLE001 — нет проводника (тесты) — не страшно

@@ -108,11 +108,13 @@
         if (st.job && st.job.state === "running") { s.postMode = "progress"; C().startPoll(); }
         await refreshPlan(); pollPrep(); loadTags(true);
       } else if (view === "history") {
-        await loadHistoryPage(s.historyOffset || 0);
-        s.sched = await api("post_scheduled");
-        try { s.pipe = await api("pipeline_state"); } catch (e) { s.pipe = null; }
-        try { s.histSum = await api("pub_stats_summary"); } catch (e) { s.histSum = {}; }
-        await loadCalendar();
+        const paint = () => { if (s.view === "history") C().softRender(); };
+        await Promise.all([
+          loadHistoryPage(s.historyOffset || 0).then(paint),
+          api("post_scheduled").then(r => { s.sched = r; paint(); }),
+          api("pipeline_state").then(r => { s.pipe = r; paint(); }).catch(() => { s.pipe = null; }),
+          loadCalendar().then(paint),
+        ]);
       } else {
         s.pub = await api("pub_settings");
         try { s.tagger = await api("tagger_status"); } catch (e) { s.tagger = null; }
