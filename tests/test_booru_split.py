@@ -136,7 +136,10 @@ class BooruSplit(unittest.TestCase):
         for site in booru.PLATFORMS:
             cfg['modules'][site] = True
             cfg[site].update(enabled=True, username=site+'-user', api_key=site+'-key', base=S.BOORU[site],
-                             site_name=site, constant_tags=['constant_'+site], with_sources=False)
+                             site_name=site, constant_tags=['constant_'+site], with_sources=True,
+                             source_platforms={k:False for k in S.PLATFORM_MODULES})
+            if site == 'e6ai': cfg[site]['source_platforms']['vk'] = True
+            if site == 'e621': cfg[site]['source_platforms']['bluesky'] = True
             draft['booru_posts'][site] = {'tags':{file['id']:['solo','female','anthro']},'meta':{}}
         with patch.object(runner.S,'load',return_value=cfg), patch.object(runner,'_files',return_value=[file]), \
              patch('app.e6tags.ready',return_value=False), \
@@ -148,20 +151,24 @@ class BooruSplit(unittest.TestCase):
             toggled = runner.plan(draft)['dests']
             self.assertEqual({d['key'] for d in toggled if d['will']}, {'e6ai','floofgens'})
             draft['exclude'] = []
-            runner._state = {'pub_id':1,'dests':[dict(d,state='queued') for d in dests], 'draft':draft}
+            runner._state = {'pub_id':1,'dests':[dict(d,state='queued') for d in dests] + [
+                {'key':'vk','platform':'vk','name':'VK','state':'done','link':'https://vk.com/wall-1_2'},
+                {'key':'bluesky','platform':'bluesky','name':'Bluesky','state':'done','link':'https://bsky.app/profile/fixture/post/1'}], 'draft':draft}
             sent = []
             def upload(account, path, tags, *args):
-                site = account['site_name']; sent.append((site,account['api_key'],tags))
+                site = account['site_name']; sent.append((site,account['api_key'],tags,list(args[1])))
                 return {'post_id':42,'url':S.BOORU[site]+'/posts/42','duplicate':False}
             from app.insights import e6learn
             with patch.object(runner,'_save_pub'), patch.object(runner.E6,'upload',side_effect=upload), patch.object(e6learn,'record') as record:
-                runner._run(draft, Mock(), only=None)
+                runner._run(draft, Mock(), only=set(booru.PLATFORMS))
             self.assertEqual({d['state'] for d in runner.state()['dests']}, {'done'})
             self.assertEqual(len(sent), 3)
             for dest in runner.state()['dests']:
+                if dest['key'] not in booru.PLATFORMS: continue
                 self.assertEqual(len(dest['post_refs']),1)
                 self.assertTrue(dest['post_refs'][0]['url'].startswith(S.BOORU[dest['key']]))
-            for site, key, tags in sent:
+            for site, key, tags, sources in sent:
+                self.assertEqual(sources, {'e6ai':['https://vk.com/wall-1_2'],'e621':['https://bsky.app/profile/fixture/post/1'],'floofgens':[]}[site])
                 self.assertEqual(key, site+'-key')
                 self.assertEqual([t for t in tags if t.startswith('constant_')], ['constant_'+site])
             self.assertEqual({c.args[-1] for c in record.call_args_list}, {'blep','e621','floofgens'})

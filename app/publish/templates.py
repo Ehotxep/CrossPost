@@ -15,9 +15,9 @@ OPTIONS = {
     'reddit': (), 'joyreactor': (),
     'vk': ('include_title',), 'bluesky': ('include_title', 'alt_from_title', 'langs'),
     'deviantart': ('is_ai_generated', 'noai', 'originals', 'tags_from'),
-    'e6ai': ('constant_tags', 'with_description', 'with_sources'),
-    'e621': ('constant_tags', 'with_description', 'with_sources'),
-    'floofgens': ('constant_tags', 'with_description', 'with_sources'),
+    'e6ai': ('constant_tags', 'with_description', 'with_sources', 'source_platforms'),
+    'e621': ('constant_tags', 'with_description', 'with_sources', 'source_platforms'),
+    'floofgens': ('constant_tags', 'with_description', 'with_sources', 'source_platforms'),
 }
 
 
@@ -30,6 +30,11 @@ def clean_profile(profile):
     for platform, fields in OPTIONS.items():
         if isinstance(profile.get(platform), dict):
             out[platform] = {k: copy.deepcopy(profile[platform][k]) for k in fields if k in profile[platform]}
+            if 'source_platforms' in fields and isinstance(out[platform].get('source_platforms'), dict):
+                from app.publish.settings import PLATFORM_MODULES
+                selected = out[platform]['source_platforms']
+                # Templates freeze checked defaults too, not just explicit exclusions.
+                out[platform]['source_platforms'] = {k: selected.get(k, True) is True for k in PLATFORM_MODULES}
     return out
 
 

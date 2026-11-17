@@ -1819,6 +1819,11 @@
           <div class="row" style="align-items:center"><div class="field" style="flex:0 1 220px"><label for="e6pre-${BN()}">Отмечать теги теггера от, % ${hint("Сразу отмечаются теги не ниже 50% уверенности, даже если здесь меньше. Мелкие детали — пирсинг, украшения, татуировки — не отмечаются никогда: теггер их часто путает.")}</label><input id="e6pre-${BN()}" type="number" min="20" max="95" value="${Math.round(e6.preselect * 100)}"></div>
             <div class="tgls" style="flex:1 1 360px"><label class="tgl"><input type="checkbox" id="e6src-${BN()}" ${e6.with_sources ? "checked" : ""}><span>Ссылки на пост — в источники</span></label>
               <label class="tgl"><input type="checkbox" id="e6desc-${BN()}" ${e6.with_description ? "checked" : ""}><span>Текст поста — в описание</span></label></div></div>
+          <details class="more" data-detail-key="sources-${BN()}"><summary>Площадки-источники</summary>
+            <p class="muted small">Выберите, ссылки на какие площадки добавлять в источники. Для каждого сайта выбор сохраняется отдельно.</p>
+            <div class="tgls">${porder().filter(k => k !== BN() && C().PLAT[k]).map(k => `<label class="tgl"><input type="checkbox" id="e6source-${BN()}-${k}" ${(e6.source_platforms || {})[k] !== false ? "checked" : ""}><span>${C().pbadge(k)} ${esc(C().PLAT[k][2])}</span></label>`).join("")}</div>
+            <p class="muted small">Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Ссылки на пост — в источники» должен быть включён.</p>
+          </details>
           <div class="cardfoot"><button class="btn primary" data-pa="e6-opts">Сохранить</button></div></section>
         <p class="muted small">Теггер, база тегов и правки модераторов — в разделе <a href="#" data-view-link="settings" data-tab="tags">«Теги»</a>.</p>`;
     }
@@ -2717,7 +2722,7 @@
       case "e6-opts": await guard("e6:" + BN(), async () => {
         const pre = Math.min(95, Math.max(20, +val("e6pre-" + BN()) || 35)) / 100;
         s.pub = await api("pub_save", { section: BN(), changes: { constant_tags: val("e6const-" + BN()).split(/[\s,]+/).filter(Boolean).map((t) => t.toLowerCase()),
-          preselect: pre, with_sources: !!snap["e6src-" + BN()], with_description: !!snap["e6desc-" + BN()] } });
+          preselect: pre, source_platforms: Object.fromEntries(porder().filter(k => k !== BN() && C().PLAT[k]).map(k => [k, !!snap["e6source-" + BN() + "-" + k]])), with_sources: !!snap["e6src-" + BN()], with_description: !!snap["e6desc-" + BN()] } });
         s.pubOk["e6:" + BN()] = "Сохранено";
       }); return true;
       case "tag-check": await guard("e6", async () => { s.tagger = await api("tagger_check"); C().render(); }); return true;

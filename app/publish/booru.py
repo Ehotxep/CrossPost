@@ -70,3 +70,37 @@ def legacy_profile(cfg, profile):
     if isinstance(out.get('platforms'), list):
         out['platforms'] = [site if key == 'e6ai' else key for key in out['platforms']]
     return out
+
+
+def sources_for(cfg, site, rows):
+    """Public links from selected, completed destinations, independent per site."""
+    from urllib.parse import urlsplit
+    options = cfg.get(site) or {}
+    if not options.get('with_sources', True):
+        return []
+    selected = options.get('source_platforms', {})
+    if not isinstance(selected, dict):
+        return []
+    found, seen = [], set()
+    for dest in destinations(rows):
+        platform = dest.get('platform') or str(dest.get('key') or '').split(':', 1)[0]
+        if platform not in settings.PLATFORM_MODULES or platform == site or selected.get(platform, True) is not True:
+            continue
+        link = dest.get('link')
+        if dest.get('state') != 'done' or not isinstance(link, str):
+            continue
+        link = link.strip()
+        try:
+            url = urlsplit(link)
+            if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password:
+                continue
+            if url.hostname.lower() in ('t.me','telegram.me','www.t.me','www.telegram.me') and url.path.startswith('/c/'):
+                continue  # private Telegram post links cannot serve as public sources
+        except ValueError:
+            continue
+        if link not in seen:
+            found.append(link)
+            seen.add(link)
+        if len(found) == 10:
+            break
+    return found

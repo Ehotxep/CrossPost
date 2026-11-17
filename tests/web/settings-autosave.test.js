@@ -31,3 +31,17 @@ test('credentials, account names and folder moves are not autosave fields',()=>{
  const {describe}=load();
  for(const id of ['trkey','bspass','bottok','dasecret','e6key','vktok','apiid','apihash','fdir','fmove'])assert.equal(describe({id,value:'secret',checked:true}),null,id);
 });
+
+test('booru source toggles keep rapid platform changes and sites independent',async()=>{
+ const api=load(),calls=[];
+ const queue=new api.SaveQueue(async(key,patch)=>calls.push({key,patch}));
+ for(const [site,platform,on] of [['floofgens','telegram',false],['floofgens','vk',false],['e621','bluesky',false]]){
+  const spec=api.describe({id:`e6source-${site}-${platform}`,checked:on,value:''});
+  assert.equal(spec.key,site);queue.edit(spec.key,spec.patch);
+ }
+ await queue.flush();
+ assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+  {key:'floofgens',patch:{source_platforms:{telegram:false,vk:false}}},
+  {key:'e621',patch:{source_platforms:{bluesky:false}}}
+ ]);
+});

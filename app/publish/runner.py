@@ -985,10 +985,7 @@ def _run(draft, report, only):
                     if not e6.get("enabled") or not e6.get("username") or not e6.get("api_key"):
                         raise NotPublishedError(f"{E6.name(e6)}: площадка выключена или не подключена")
                     cur = state()
-                    sources = []
-                    if e6.get("with_sources", True):   # публичные ссылки на этот пост в других местах
-                        sources = [x["link"] for x in cur["dests"] if x["state"] == "done" and str(x.get("link", "")).startswith("http")
-                                   and "/c/" not in x["link"] and x["key"] != key]
+                    sources = B.sources_for(cfg, key, cur["dests"])
                     desc = ""
                     if e6.get("with_description", True):
                         e_title, t, _ = variant(cfg, draft, key)

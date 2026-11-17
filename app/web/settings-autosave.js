@@ -57,13 +57,13 @@
     light:['scale','quality','background','subsampling','sharpen'],
     hashtags:['enabled','max_species','rating_tags','constant','use'],
     signatures:['platforms','use'],versions:platforms,translate:['base','model','style'],
-    e6ai:['constant_tags','preselect','with_sources','with_description'],
+    e6ai:['constant_tags','preselect','with_sources','with_description','source_platforms'],
     bluesky:['enabled','include_title','alt_from_title','rating','langs'],
     deviantart:['enabled','is_ai_generated','noai','originals','tags_from','allow_free_download','rating','gallery_id','gallery_name'],
     reddit:['enabled','show_window','communities'],joyreactor:['enabled','show_window','ai_tags','constant_tags'],
     outputs:['by_date','jpeg','gif','video'],never:['tags'],
   };
-  for(const site of ['e6ai','e621','floofgens']) { allowed[site]=['constant_tags','preselect','with_sources','with_description'];allowed['never:'+site]=['tags']; }
+  for(const site of ['e6ai','e621','floofgens']) { allowed[site]=['constant_tags','preselect','with_sources','with_description','source_platforms'];allowed['never:'+site]=['tags']; }
   const words=value=>value.split(/[\s,]+/).filter(Boolean);
   function fieldKey(el){return el.id;}
   function describe(el) {
@@ -91,6 +91,8 @@
     if(ver)return {key:'versions',patch:{[ver[1]]:['ru','en','clean'].filter(k=>document.getElementById(`ver-${ver[1]}-${k}`)?.checked)}};
     const tr={trbase:{base:v},trmodel:{model:v},trstyle:{style:el.value}};
     if(tr[id])return {key:'translate',patch:tr[id]};
+    const source=/^e6source-(e6ai|e621|floofgens)-(telegram|discord|vk|bluesky|deviantart|e6ai|e621|floofgens|reddit|joyreactor)$/.exec(id);
+    if(source)return {key:source[1],patch:{source_platforms:{[source[2]]:on}}};
     const e6={e6const:{constant_tags:words(v).map(t=>t.toLowerCase())},e6pre:{preselect:Number(v)/100},e6src:{with_sources:on},e6desc:{with_description:on}};
     const booru=/^(e6const|e6pre|e6src|e6desc)-(e6ai|e621|floofgens)$/.exec(id);
     if(booru)return {key:booru[2],patch:e6[booru[1]]};

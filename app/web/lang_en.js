@@ -2814,3 +2814,10 @@ Object.assign(window.EN_DICT, {
   "Для прогноза нужно хотя бы 30 постов старше недели с предшествующей нормой канала (сейчас":"A forecast needs at least 30 posts older than a week with a preceding channel baseline (currently",
   "Для выводов нужно хотя бы 30 постов старше недели с предшествующей нормой канала (сейчас":"Insights need at least 30 posts older than a week with a preceding channel baseline (currently"
 });
+
+Object.assign(window.EN_DICT, {
+  "Площадки-источники":"Source platforms",
+  "Выберите, ссылки на какие площадки добавлять в источники. Для каждого сайта выбор сохраняется отдельно.":"Choose which platforms' post links to include as sources. Each site's choices are saved separately.",
+  "Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Ссылки на пост — в источники» должен быть включён.":"Only successfully published posts with a public link are included. Private Telegram links are excluded. Links from sites published later are not yet available. Enable the main post-links-as-sources switch.",
+  "Выбор площадок-источников должен содержать переключатели известных площадок":"Source selections must contain switches for known platforms"
+});
