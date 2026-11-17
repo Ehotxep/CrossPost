@@ -15,9 +15,9 @@ OPTIONS = {
     'reddit': (), 'joyreactor': (),
     'vk': ('include_title',), 'bluesky': ('include_title', 'alt_from_title', 'langs'),
     'deviantart': ('is_ai_generated', 'noai', 'originals', 'tags_from'),
-    'e6ai': ('constant_tags', 'with_description', 'with_sources', 'source_platforms'),
-    'e621': ('constant_tags', 'with_description', 'with_sources', 'source_platforms'),
-    'floofgens': ('constant_tags', 'with_description', 'with_sources', 'source_platforms'),
+    'e6ai': ('constant_tags', 'with_description', 'with_sources', 'source_platforms', 'source_link_mode'),
+    'e621': ('constant_tags', 'with_description', 'with_sources', 'source_platforms', 'source_link_mode'),
+    'floofgens': ('constant_tags', 'with_description', 'with_sources', 'source_platforms', 'source_link_mode'),
 }
 
 

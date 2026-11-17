@@ -72,6 +72,49 @@ def legacy_profile(cfg, profile):
     return out
 
 
+def resource_link(platform, url):
+    """Derive a channel/profile/community from a public post URL without HTTP."""
+    import re
+    host, path = url.hostname.lower(), url.path
+    if platform == 'telegram' and host in ('t.me','www.t.me','telegram.me','www.telegram.me'):
+        match = re.fullmatch(r'/(?:s/)?([A-Za-z][A-Za-z0-9_]{2,63})/\d+(?:/\d+)?/?', path)
+        return 'https://t.me/' + match[1] if match else None
+    if platform == 'vk' and host in ('vk.com','www.vk.com','m.vk.com','vk.ru','www.vk.ru','m.vk.ru'):
+        match = re.match(r'^/(?:wall|photo|video|clip)(-?\d+)_\d+', path)
+        if match:
+            owner = int(match[1])
+            return 'https://vk.com/' + ('club' + str(-owner) if owner < 0 else 'id' + str(owner))
+        if re.fullmatch(r'/[A-Za-z][A-Za-z0-9_.]{1,63}/?', path):
+            return 'https://vk.com' + path.rstrip('/')
+        return 'https://vk.com/'
+    if platform == 'bluesky' and host in ('bsky.app','www.bsky.app'):
+        match = re.match(r'^/profile/([^/]+)(?:/|$)', path)
+        return 'https://bsky.app/profile/' + match[1] if match else 'https://bsky.app/'
+    if platform == 'deviantart':
+        if host in ('deviantart.com','www.deviantart.com'):
+            match = re.match(r'^/([^/]+)/art/', path)
+            return 'https://www.deviantart.com/' + match[1] if match else 'https://www.deviantart.com/'
+        if re.fullmatch(r'[a-z0-9-]+\.deviantart\.com', host):
+            return 'https://' + host + '/'
+    if platform == 'reddit' and host in ('reddit.com','www.reddit.com','old.reddit.com','new.reddit.com'):
+        match = re.match(r'^/(r|u|user)/([A-Za-z0-9_-]+)(?:/|$)', path)
+        if match:
+            prefix = 'r' if match[1] == 'r' else 'user'
+            return f'https://www.reddit.com/{prefix}/{match[2]}/'
+        return 'https://www.reddit.com/'
+    if platform == 'joyreactor' and host in ('joyreactor.cc','www.joyreactor.cc'):
+        return 'https://joyreactor.cc/'
+    if platform in PLATFORMS:
+        from urllib.parse import urlsplit
+        base = settings.BOORU[platform]
+        if host == urlsplit(base).hostname:
+            return base + '/'
+    if platform == 'discord' and host in ('discord.com','discordapp.com','www.discord.com'):
+        match = re.match(r'^/channels/(\d+)/(\d+)(?:/|$)', path)
+        return f'https://discord.com/channels/{match[1]}/{match[2]}' if match else None
+    return None
+
+
 def sources_for(cfg, site, rows):
     """Public links from selected, completed destinations, independent per site."""
     from urllib.parse import urlsplit
@@ -98,6 +141,10 @@ def sources_for(cfg, site, rows):
                 continue  # private Telegram post links cannot serve as public sources
         except ValueError:
             continue
+        if options.get('source_link_mode', 'post') == 'resource':
+            link = resource_link(platform, url)
+            if not link:
+                continue
         if link not in seen:
             found.append(link)
             seen.add(link)

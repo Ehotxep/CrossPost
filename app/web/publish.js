@@ -655,6 +655,20 @@
     const s = S(), e6 = s.pub && s.pub[BN()];
     return !!(e6 && e6.enabled && !(draft().exclude || []).includes(BN()));
   }
+  function booruCopyHtml(d) {
+    const s = S(), target = BN(), prefs = s.booruCopyPrefs?.[target] || {};
+    const names = {e6ai:'blep.art',e621:'e621',floofgens:'floofgens.net'};
+    const sources = BOORUS.filter(site => site !== target).map(site => ({site, count:d.files.filter(f => (d.booru_posts?.[site]?.tags?.[f.id] || []).length).length}));
+    const available = sources.filter(item => item.count);
+    const source = available.some(item => item.site === prefs.source) ? prefs.source : available[0]?.site;
+    return `<details class="more" data-booru-copy-panel data-detail-key="booru-copy-${target}"><summary>Копировать теги с другой площадки</summary>
+      ${!available.length ? `<p class="muted small">На других площадках ещё нет выбранных тегов для этих файлов.</p>` : `<div class="row booru-copy-controls">
+        <div class="field"><label for="booru-copy-source">Источник тегов</label><select id="booru-copy-source" data-booru-copy-field="source">${sources.map(item => `<option value="${item.site}" ${item.site === source ? 'selected' : ''} ${item.count ? '' : 'disabled'}>${names[item.site]} · ${item.count}</option>`).join('')}</select></div>
+        <div class="field"><label for="booru-copy-file">Для файлов</label><select id="booru-copy-file" data-booru-copy-field="file"><option value="all">Весь пост</option>${d.files.map((f,i) => `<option value="${esc(f.id)}" ${prefs.file === f.id ? 'selected' : ''}>${i+1}. ${esc(f.name || f.id)}</option>`).join('')}</select></div>
+        <div class="field"><label for="booru-copy-mode">Способ копирования</label><select id="booru-copy-mode" data-booru-copy-field="mode"><option value="merge">Добавить без дублей</option><option value="replace" ${prefs.mode === 'replace' ? 'selected' : ''}>Заменить теги</option></select></div>
+        <button class="btn small" data-pa="booru-copy-tags">Копировать в ${names[target]}</button></div>
+        <p class="muted small">Копируются выбранные теги соответствующих файлов. Файлы без исходных тегов пропускаются. Постоянные теги и настройки сайтов не меняются; проверку «Всё верно» нужно пройти заново.</p>`}</details>`;
+  }
   function e6Html() {
     const s = S(), d = draft();
     if (!e6on()) return "";
@@ -668,6 +682,7 @@
     h += booruTabs() + e6DbHtml();
     if (running) h += `<p class="muted small">${esc(runJob.message || "Подбираю теги…")}</p>`;
     if (!imgs.length) return h + `<p class="muted small">Добавьте картинки — теги для каждой свои: на ${BL()} каждая картинка — отдельный пост.</p></div>`;
+    h += booruCopyHtml(d);
     h += imgs.map((f) => {
       const preds = ((s.e6preds || {})[f.id]);
       return `<div class="e6row" data-fid="${f.id}"><img src="/uthumb/${f.id}?t=${tok()}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'vid sm',textContent:'${f.kind === "video" ? "видео" : "GIF"}'}))">
@@ -728,7 +743,7 @@
     const fresh = ids.filter((id) => res[id] && d.e6tags[id] === undefined && e6);
     if (fresh.length) {   // первый раз — отмечаем только уверенное, без мелких деталей
       const init = await api("e6_initial", { ids: fresh });
-      fresh.forEach((id) => { if (init[id]) d.e6tags[id] = init[id]; });
+      fresh.forEach((id) => { if (init[id] && d.e6tags[id] === undefined) d.e6tags[id] = init[id]; });
       saveDraft();
     }
     await refreshE6();
@@ -760,7 +775,10 @@
     if (!force && ae && ae.classList && ae.classList.contains("taginput") && el.contains(ae)) { paintSide(); return; }   // не мешаем печатать
     // открытые «Остальное» не схлопываем
     S().e6open = Object.fromEntries([...el.querySelectorAll("details.frest")].map((x) => [x.dataset.fid, x.open]));
+    const copyOpen = el.querySelector('[data-booru-copy-panel]')?.open;
     el.outerHTML = e6Html();
+    const copyPanel = document.querySelector('#e6card [data-booru-copy-panel]');
+    if (copyPanel && copyOpen) copyPanel.open = true;
     paintSide();
   }
   function e6toggle(id, row, tag, on) {
@@ -1817,12 +1835,14 @@
           <div class="field"><label for="e6const-${BN()}">Постоянные теги для ${BL()} ${hint(BN() === "e621" ? "Добавляются к каждой загрузке на e621: тег художника (artist), инструмент и т.п. У blep.art свои постоянные теги." : "Добавляются к каждой загрузке: ваш director-тег, инструмент и т.п. У e621 свои постоянные теги.")}</label>
             <input id="e6const-${BN()}" value="${esc((e6.constant_tags || []).join(" "))}" placeholder="${BN() === 'e6ai' ? 'director_name stable_diffusion' : 'artist_name'}"></div>
           <div class="row" style="align-items:center"><div class="field" style="flex:0 1 220px"><label for="e6pre-${BN()}">Отмечать теги теггера от, % ${hint("Сразу отмечаются теги не ниже 50% уверенности, даже если здесь меньше. Мелкие детали — пирсинг, украшения, татуировки — не отмечаются никогда: теггер их часто путает.")}</label><input id="e6pre-${BN()}" type="number" min="20" max="95" value="${Math.round(e6.preselect * 100)}"></div>
-            <div class="tgls" style="flex:1 1 360px"><label class="tgl"><input type="checkbox" id="e6src-${BN()}" ${e6.with_sources ? "checked" : ""}><span>Ссылки на пост — в источники</span></label>
+            <div class="tgls" style="flex:1 1 360px"><label class="tgl"><input type="checkbox" id="e6src-${BN()}" ${e6.with_sources ? "checked" : ""}><span>Добавлять ссылки в источники</span></label>
               <label class="tgl"><input type="checkbox" id="e6desc-${BN()}" ${e6.with_description ? "checked" : ""}><span>Текст поста — в описание</span></label></div></div>
           <details class="more" data-detail-key="sources-${BN()}"><summary>Площадки-источники</summary>
+            <label class="tgl"><input type="checkbox" id="e6resource-${BN()}" ${e6.source_link_mode === 'resource' ? 'checked' : ''}><span>Вести на канал, группу или ресурс</span></label>
+            <p class="muted small">Выключено — ссылка на конкретный пост с изображением. Включено — канал, профиль, сообщество или сайт. Например: t.me/channel/123 → t.me/channel. Если автора нельзя определить по ссылке, используется адрес сайта.</p>
             <p class="muted small">Выберите, ссылки на какие площадки добавлять в источники. Для каждого сайта выбор сохраняется отдельно.</p>
             <div class="tgls">${porder().filter(k => k !== BN() && C().PLAT[k]).map(k => `<label class="tgl"><input type="checkbox" id="e6source-${BN()}-${k}" ${(e6.source_platforms || {})[k] !== false ? "checked" : ""}><span>${C().pbadge(k)} ${esc(C().PLAT[k][2])}</span></label>`).join("")}</div>
-            <p class="muted small">Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Ссылки на пост — в источники» должен быть включён.</p>
+            <p class="muted small">Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Добавлять ссылки в источники» должен быть включён.</p>
           </details>
           <div class="cardfoot"><button class="btn primary" data-pa="e6-opts">Сохранить</button></div></section>
         <p class="muted small">Теггер, база тегов и правки модераторов — в разделе <a href="#" data-view-link="settings" data-tab="tags">«Теги»</a>.</p>`;
@@ -2408,6 +2428,19 @@
         };
         poll(); return true;
       }
+      case "booru-copy-tags": {
+        const source = val('booru-copy-source'), target = BN();
+        const mode = val('booru-copy-mode') || 'merge', file = val('booru-copy-file') || 'all';
+        const names = {e6ai:'blep.art',e621:'e621',floofgens:'floofgens.net'};
+        const result = window.PostState.copyBooruTags(d, source, target, {mode,file});
+        if (!result.copied) { C().toast('Нет выбранных тегов для копирования', 'warn'); return true; }
+        if (mode === 'replace' && !confirm(`Заменить теги в ${names[target]} для выбранных файлов? Теги исходного сайта сохранятся.`)) return true;
+        d.booru_posts = result.posts;
+        draft(); // Rebind the active site's editor aliases to the copied slot.
+        await e6changed(true);
+        C().toast(`Теги скопированы: ${result.copied}. Пропущено файлов без тегов: ${result.skipped}`, 'ok');
+        return true;
+      }
       case "e6copy": {
         const src = a.dataset.id, m = e6meta(src);
         d.files.filter((x) => x.id !== src).forEach((x) => {
@@ -2722,7 +2755,7 @@
       case "e6-opts": await guard("e6:" + BN(), async () => {
         const pre = Math.min(95, Math.max(20, +val("e6pre-" + BN()) || 35)) / 100;
         s.pub = await api("pub_save", { section: BN(), changes: { constant_tags: val("e6const-" + BN()).split(/[\s,]+/).filter(Boolean).map((t) => t.toLowerCase()),
-          preselect: pre, source_platforms: Object.fromEntries(porder().filter(k => k !== BN() && C().PLAT[k]).map(k => [k, !!snap["e6source-" + BN() + "-" + k]])), with_sources: !!snap["e6src-" + BN()], with_description: !!snap["e6desc-" + BN()] } });
+          preselect: pre, source_link_mode: snap["e6resource-" + BN()] ? "resource" : "post", source_platforms: Object.fromEntries(porder().filter(k => k !== BN() && C().PLAT[k]).map(k => [k, !!snap["e6source-" + BN() + "-" + k]])), with_sources: !!snap["e6src-" + BN()], with_description: !!snap["e6desc-" + BN()] } });
         s.pubOk["e6:" + BN()] = "Сохранено";
       }); return true;
       case "tag-check": await guard("e6", async () => { s.tagger = await api("tagger_check"); C().render(); }); return true;
@@ -2810,6 +2843,11 @@
 
   async function onChange(e) {
     const t = e.target, s = S(), api = tagApi;
+    if (['source','file','mode'].includes(t.dataset.booruCopyField)) {
+      s.booruCopyPrefs ||= {};
+      s.booruCopyPrefs[BN()] = {...s.booruCopyPrefs[BN()], [t.dataset.booruCopyField]:t.value};
+      return true;
+    }
     if(t.dataset.redditCustomFlair){
       const d=draft();d.reddit_flairs=d.reddit_flairs||{};const value=t.value.trim();
       if(value)d.reddit_flairs[t.dataset.redditCustomFlair]=value;else delete d.reddit_flairs[t.dataset.redditCustomFlair];

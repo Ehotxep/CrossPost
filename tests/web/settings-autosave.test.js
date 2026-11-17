@@ -45,3 +45,11 @@ test('booru source toggles keep rapid platform changes and sites independent',as
   {key:'e621',patch:{source_platforms:{bluesky:false}}}
  ]);
 });
+
+test('source link mode toggles are scoped to their booru site',()=>{
+ const {describe}=load();
+ for(const site of ['e6ai','e621','floofgens'])for(const checked of [true,false]){
+  const spec=describe({id:`e6resource-${site}`,checked,value:''});
+  assert.equal(spec.key,site);assert.equal(spec.patch.source_link_mode,checked?'resource':'post');
+ }
+});

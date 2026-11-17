@@ -89,6 +89,7 @@ DEFAULTS = {
         "preselect": 0.5,         # теги теггера с уверенностью выше — отмечены сразу
         "show_min": 0.2,          # ниже — не показываем
         "with_sources": True, "with_description": True,
+        "source_link_mode": "post",  # post URL, or its channel/profile/site
         "source_platforms": {},   # missing entries keep legacy behaviour: all public post links
         "never_suggest": [],      # эти теги теггера не предлагать совсем
         # куда загружать: e6ai или e621 (движок и форма одни; аккаунт, ключ и постоянные теги — у каждого сайта свои)
@@ -187,7 +188,7 @@ def _migrate(data: dict) -> dict:
         data["legacy_booru_site"] = selected
         for site in ("e621", "floofgens"):
             account = (old.get("accounts") or {}).get(site) or {}
-            shared = {k: copy.deepcopy(old[k]) for k in ("preselect", "show_min", "with_sources", "with_description", "source_platforms", "never_suggest") if k in old}
+            shared = {k: copy.deepcopy(old[k]) for k in ("preselect", "show_min", "with_sources", "with_description", "source_platforms", "source_link_mode", "never_suggest") if k in old}
             data.setdefault(site, dict(shared, **copy.deepcopy(account), enabled=active and selected == site))
             modules.setdefault(site, module_on and (site == selected or bool(account.get("username"))))
             for field in ("text_lang", "versions", "platform_texts_enabled"):
@@ -284,6 +285,8 @@ def save(cfg: dict) -> dict:
 @_locked
 def update(section: str, changes: dict) -> dict:
     cfg = load(raw=True)
+    if section in BOORU_PLATFORMS and 'source_link_mode' in changes and changes['source_link_mode'] not in ('post','resource'):
+        raise ValueError('Неизвестный вид ссылки-источника')
     if section in BOORU_PLATFORMS and 'source_platforms' in changes:
         selected = changes['source_platforms']
         if not isinstance(selected, dict) or any(k not in PLATFORM_MODULES or type(v) is not bool for k, v in selected.items()):

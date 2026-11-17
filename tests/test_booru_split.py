@@ -139,7 +139,9 @@ class BooruSplit(unittest.TestCase):
                              site_name=site, constant_tags=['constant_'+site], with_sources=True,
                              source_platforms={k:False for k in S.PLATFORM_MODULES})
             if site == 'e6ai': cfg[site]['source_platforms']['vk'] = True
-            if site == 'e621': cfg[site]['source_platforms']['bluesky'] = True
+            if site == 'e621':
+                cfg[site]['source_platforms']['bluesky'] = True
+                cfg[site]['source_link_mode'] = 'resource'
             draft['booru_posts'][site] = {'tags':{file['id']:['solo','female','anthro']},'meta':{}}
         with patch.object(runner.S,'load',return_value=cfg), patch.object(runner,'_files',return_value=[file]), \
              patch('app.e6tags.ready',return_value=False), \
@@ -168,7 +170,7 @@ class BooruSplit(unittest.TestCase):
                 self.assertEqual(len(dest['post_refs']),1)
                 self.assertTrue(dest['post_refs'][0]['url'].startswith(S.BOORU[dest['key']]))
             for site, key, tags, sources in sent:
-                self.assertEqual(sources, {'e6ai':['https://vk.com/wall-1_2'],'e621':['https://bsky.app/profile/fixture/post/1'],'floofgens':[]}[site])
+                self.assertEqual(sources, {'e6ai':['https://vk.com/wall-1_2'],'e621':['https://bsky.app/profile/fixture'],'floofgens':[]}[site])
                 self.assertEqual(key, site+'-key')
                 self.assertEqual([t for t in tags if t.startswith('constant_')], ['constant_'+site])
             self.assertEqual({c.args[-1] for c in record.call_args_list}, {'blep','e621','floofgens'})

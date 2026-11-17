@@ -1329,3 +1329,10 @@ input[aria-invalid="true"] { border-color: var(--bad); }
 .forecast-quality .kvlist > div { flex-wrap: wrap; gap: 4px 12px; }
 .forecast-quality .kvlist b { overflow-wrap: anywhere; }
 .forecast-quality summary { cursor: pointer; }
+
+.booru-copy-controls { align-items: flex-end; flex-wrap: wrap; }
+.booru-copy-controls > .field { flex: 1 1 170px; min-width: 0; }
+.booru-copy-controls select { width: 100%; min-width: 0; max-width: 100%; }
+
+#e6card .e6sum { flex-wrap: wrap; }
+#e6card .e6act { flex-wrap: wrap; max-width: 100%; }

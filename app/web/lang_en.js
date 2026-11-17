@@ -2821,3 +2821,24 @@ Object.assign(window.EN_DICT, {
   "Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Ссылки на пост — в источники» должен быть включён.":"Only successfully published posts with a public link are included. Private Telegram links are excluded. Links from sites published later are not yet available. Enable the main post-links-as-sources switch.",
   "Выбор площадок-источников должен содержать переключатели известных площадок":"Source selections must contain switches for known platforms"
 });
+
+Object.assign(window.EN_DICT, {
+  "Копировать теги с другой площадки":"Copy tags from another platform",
+  "На других площадках ещё нет выбранных тегов для этих файлов.":"Other platforms do not yet have selected tags for these files.",
+  "Источник тегов":"Tag source", "Для файлов":"Files", "Весь пост":"Entire post",
+  "Способ копирования":"Copy mode", "Добавить без дублей":"Merge without duplicates", "Заменить теги":"Replace tags",
+  "Копировать в {site}":"Copy to {site}",
+  "Копируются выбранные теги соответствующих файлов. Файлы без исходных тегов пропускаются. Постоянные теги и настройки сайтов не меняются; проверку «Всё верно» нужно пройти заново.":"Selected tags are copied between matching files. Files without source tags are skipped. Permanent tags and site settings are unchanged; review and confirm the destination tags again.",
+  "Нет выбранных тегов для копирования":"No selected tags to copy",
+  "Некорректные параметры копирования тегов":"Invalid tag copy parameters",
+  "Заменить теги в {site} для выбранных файлов? Теги исходного сайта сохранятся.":"Replace tags in {site} for the selected files? The source site's tags will be preserved.",
+  "Теги скопированы: {count}. Пропущено файлов без тегов: {skipped}":"Tags copied for {count} files. Skipped files without tags: {skipped}"
+});
+
+Object.assign(window.EN_DICT, {
+  "Добавлять ссылки в источники":"Include links as sources",
+  "Вести на канал, группу или ресурс":"Link to the channel, group or resource",
+  "Выключено — ссылка на конкретный пост с изображением. Включено — канал, профиль, сообщество или сайт. Например: t.me/channel/123 → t.me/channel. Если автора нельзя определить по ссылке, используется адрес сайта.":"Off: link to the specific image post. On: link to its channel, profile, community or website. For example: t.me/channel/123 → t.me/channel. When the author cannot be determined from the link, the website address is used.",
+  "Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Добавлять ссылки в источники» должен быть включён.":"Only successfully published posts with a public link are included. Private Telegram links are excluded. Links from sites published later are not yet available. Enable the main include-links-as-sources switch.",
+  "Неизвестный вид ссылки-источника":"Unknown source link type"
+});

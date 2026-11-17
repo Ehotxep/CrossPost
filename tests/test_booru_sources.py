@@ -92,3 +92,54 @@ class BooruSources(unittest.TestCase):
         result = templates.effective(self.cfg, {'booru_posts':{}, 'profile':profile})
         self.assertTrue(result['floofgens']['source_platforms']['vk'])
         self.assertFalse(self.cfg['floofgens']['source_platforms']['vk'])
+
+    def test_resource_mode_maps_public_post_links_to_their_publishers(self):
+        self.cfg['floofgens']['source_link_mode'] = 'resource'
+        cases = [
+            ('telegram:0','https://t.me/my_channel/123','https://t.me/my_channel'),
+            ('telegram:0','https://t.me/s/my_channel/123?single','https://t.me/my_channel'),
+            ('telegram:group','https://t.me/my_group/12/123','https://t.me/my_group'),
+            ('vk','https://vk.com/wall-123_456','https://vk.com/club123'),
+            ('vk','https://vk.com/wall123_456','https://vk.com/id123'),
+            ('vk','https://vk.com/mygroup?w=wall-123_456','https://vk.com/mygroup'),
+            ('bluesky','https://bsky.app/profile/name.test/post/abc?ref=x#top','https://bsky.app/profile/name.test'),
+            ('bluesky','https://bsky.app/profile/did:plc:abc/post/def','https://bsky.app/profile/did:plc:abc'),
+            ('deviantart','https://www.deviantart.com/artist/art/work-123','https://www.deviantart.com/artist'),
+            ('deviantart','https://artist.deviantart.com/art/work-123','https://artist.deviantart.com/'),
+            ('reddit:FurAI','https://www.reddit.com/r/FurAI/comments/abc/work/','https://www.reddit.com/r/FurAI/'),
+            ('joyreactor','https://joyreactor.cc/post/123','https://joyreactor.cc/'),
+            ('e621','https://e621.net/posts/123','https://e621.net/'),
+            ('e6ai','https://blep.art/posts/123','https://blep.art/'),
+        ]
+        for platform, link, expected in cases:
+            with self.subTest(platform=platform, link=link):
+                self.assertEqual(booru.sources_for(self.cfg,'floofgens',[self.dest(platform,link)]),[expected])
+        self.cfg['e621']['source_link_mode'] = 'resource'
+        self.assertEqual(booru.sources_for(self.cfg,'e621',[self.dest('floofgens','https://floofgens.net/posts/123')]),['https://floofgens.net/'])
+
+    def test_resource_mode_deduplicates_after_conversion_without_revealing_private_links(self):
+        self.cfg['floofgens']['source_link_mode'] = 'resource'
+        rows = [self.dest('telegram:0',f'https://t.me/public/{i}') for i in range(15)]
+        rows += [self.dest('vk','https://vk.com/wall-1_2'),
+                 self.dest('telegram:1','https://t.me/c/123/456'),
+                 self.dest('telegram:2','https://t.me/+private-invite'),
+                 self.dest('telegram:3','https://example.invalid/owner/123')]
+        self.assertEqual(booru.sources_for(self.cfg,'floofgens',rows), ['https://t.me/public','https://vk.com/club1'])
+        self.cfg['floofgens']['source_platforms'] = {'vk':False}
+        self.assertEqual(booru.sources_for(self.cfg,'floofgens',rows), ['https://t.me/public'])
+        self.cfg['floofgens']['with_sources'] = False
+        self.assertEqual(booru.sources_for(self.cfg,'floofgens',rows), [])
+
+    def test_link_mode_is_independent_validated_and_frozen_in_templates(self):
+        S.update('e621', {'source_link_mode':'resource'})
+        cfg = S.load()
+        self.assertEqual(cfg['e621']['source_link_mode'],'resource')
+        self.assertEqual(cfg['e6ai']['source_link_mode'],'post')
+        self.assertEqual(cfg['floofgens']['source_link_mode'],'post')
+        profile = templates.clean_profile(cfg)
+        cfg['e621']['source_link_mode'] = 'post'
+        effective = templates.effective(cfg,{'booru_posts':{},'profile':profile})
+        self.assertEqual(effective['e621']['source_link_mode'],'resource')
+        for mode in ('unknown',True,None):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                S.update('floofgens', {'source_link_mode':mode})

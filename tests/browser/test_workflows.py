@@ -94,12 +94,14 @@ main()
             page.locator('details[data-detail-key="sources-floofgens"] summary').click()
             page.locator('#e6source-floofgens-telegram').uncheck()
             page.locator('#e6source-floofgens-vk').uncheck()
+            page.locator('#e6resource-floofgens').check()
 
             page.locator('.platnav [data-psec="e621"]').click()
             page.locator('#e6user-e621').wait_for()
             page.locator('details[data-detail-key="sources-e621"] summary').click()
             self.assertTrue(page.locator('#e6source-e621-telegram').is_checked())
             self.assertTrue(page.locator('#e6source-e621-vk').is_checked())
+            self.assertFalse(page.locator('#e6resource-e621').is_checked())
             self.assertEqual(self.api('pub_settings')['floofgens']['source_platforms'], {'telegram':False,'vk':False})
 
             self.assertEqual(page.locator('#e6user-e621').input_value(), '')
@@ -153,6 +155,8 @@ main()
             self.assertTrue(page.locator('#e6source-e6ai-telegram').is_checked())
             page.locator('.platnav [data-psec="floofgens"]').click()
             page.locator('#e6source-floofgens-vk').wait_for(state='attached')
+            self.assertTrue(page.locator('#e6resource-floofgens').is_checked())
+            self.assertEqual(self.api('pub_settings')['floofgens']['source_link_mode'],'resource')
             self.assertFalse(page.locator('#e6source-floofgens-vk').is_checked())
             self.assertFalse(page.locator('#e6source-floofgens-telegram').is_checked())
 
@@ -190,6 +194,64 @@ main()
             self.assertTrue(page.locator('.platnav [data-psec="reddit"]').is_visible())
         finally:
             close_page(page, self.id())
+
+    def test_copy_tags_between_booru_sites_preserves_source_and_requires_review(self):
+        old = self.api('pub_settings')
+        page = self.new_page(viewport={'width':1360,'height':1000})
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        try:
+            for site in ('e6ai','e621','floofgens'):
+                self.api('modules_set', key=site, on=True)
+                self.api('pub_e6ai', site=site, username=site+'fixture', api_key='fixture-key')
+            images = []
+            for name, color in [('copy-a.png','blue'),('copy-b.png','red')]:
+                buffer = io.BytesIO()
+                Image.new('RGB',(32,32),color).save(buffer,format='PNG')
+                images.append(self.session.post(self.base+'/upload?name='+name,headers=self.headers,data=buffer.getvalue()).json()['result'])
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("""async images => {
+                const a=images[0].id,b=images[1].id;
+                CP.S.booruTagSite='e621';CP.S.draft={files:images,title:'Copy fixture',text:'Keep text',rating:'sfw',exclude:[],
+                    booru_posts:{e6ai:{tags:{[a]:['female','wolf'],[b]:[]},meta:{[a]:{ok:'source-confirmation'}}},
+                    e621:{tags:{[a]:['solo','armor'],[b]:['forest']},meta:{[a]:{ok:'target-confirmation',parent:'42',nochar:true,nocont:true}}},
+                    floofgens:{tags:{[a]:['male'],[b]:['desert']},meta:{}}}};
+                await Pub.load('post');CP.render();
+            }""",images)
+            panel = page.locator('#e6card [data-booru-copy-panel]')
+            panel.locator('summary').click()
+            page.locator('#booru-copy-source').select_option('e6ai')
+            page.locator('[data-pa="booru-copy-tags"]').click()
+            page.wait_for_function("id=>CP.S.draft.booru_posts.e621.tags[id].includes('wolf')",arg=images[0]['id'])
+            a,b=images[0]['id'],images[1]['id']
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',a),['solo','armor','female','wolf'])
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.meta[id].ok',a),'')
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.meta[id].parent',a),'42')
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e6ai.meta[id].ok',a),'source-confirmation')
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',b),['forest'])
+            page.locator('#booru-copy-source').select_option('floofgens')
+            page.locator('#booru-copy-file').select_option(a)
+            page.locator('#booru-copy-mode').select_option('replace')
+            page.once('dialog',lambda dialog:dialog.dismiss())
+            page.locator('[data-pa="booru-copy-tags"]').click()
+            self.assertIn('wolf',page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',a))
+            page.once('dialog',lambda dialog:dialog.accept())
+            page.locator('[data-pa="booru-copy-tags"]').click()
+            page.wait_for_function("id=>JSON.stringify(CP.S.draft.booru_posts.e621.tags[id])==='[\"male\"]'",arg=a)
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',b),['forest'])
+            self.assertEqual(page.evaluate('CP.S.draft.text'),'Keep text')
+            page.set_viewport_size({'width':390,'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
+            page.reload(wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.draft?.booru_posts?.e621')
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',a),['male'])
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e6ai.tags[id]',a),['female','wolf'])
+            self.assertFalse(errors,errors)
+        finally:
+            for site in ('e6ai','e621','floofgens'):
+                self.api('pub_save',section=site,changes={'enabled':old[site]['enabled']})
+                self.api('modules_set',key=site,on=old['modules'].get(site,True))
+            close_page(page,self.id())
 
     def test_error_motion_sorting_and_line_chart_respect_reduced_motion(self):
         page=self.new_page(reduced_motion='no-preference')

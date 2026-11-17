@@ -27,6 +27,30 @@
     return JSON.parse(JSON.stringify(document));
   }
 
+  function copyBooruTags(draft, source, target, {mode = 'merge', file = 'all'} = {}) {
+    const sites = ['e6ai', 'e621', 'floofgens'];
+    if (!sites.includes(source) || !sites.includes(target) || source === target || !['merge','replace'].includes(mode)) {
+      throw Error('Некорректные параметры копирования тегов');
+    }
+    const posts = JSON.parse(JSON.stringify(draft.booru_posts || {}));
+    const origin = posts[source]?.tags || {};
+    const destination = posts[target] ||= {tags:{},meta:{}};
+    destination.tags ||= {}; destination.meta ||= {};
+    const ids = [...new Set((draft.files || []).map(item => typeof item === 'string' ? item : item.id))]
+      .filter(id => file === 'all' || id === file);
+    const clean = tags => [...new Set((Array.isArray(tags) ? tags : [])
+      .filter(tag => typeof tag === 'string').map(tag => tag.trim().toLowerCase().replace(/ /g,'_')).filter(Boolean))];
+    let copied = 0, skipped = 0;
+    for (const id of ids) {
+      const tags = clean(origin[id]);
+      if (!tags.length) { skipped++; continue; } // Missing source data must never erase a target file.
+      destination.tags[id] = mode === 'merge' ? [...new Set([...clean(destination.tags[id]), ...tags])] : tags;
+      destination.meta[id] = {nochar:true, nocont:true, ...destination.meta[id], ok:''};
+      copied++;
+    }
+    return {posts, copied, skipped};
+  }
+
   class LatestRequests {
     constructor() {
       this.versions = new Map();
@@ -43,5 +67,5 @@
     }
   }
 
-  window.PostState = {capture, LatestRequests};
+  window.PostState = {capture, copyBooruTags, LatestRequests};
 })();
