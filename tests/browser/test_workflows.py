@@ -236,14 +236,24 @@ main()
             page.locator('[data-pa="booru-copy-tags"]').click()
             self.assertIn('wolf',page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',a))
             page.once('dialog',lambda dialog:dialog.accept())
+            # Anonymous drafts are saved with a debounce. Verify server persistence
+            # before reloading, rather than racing the beforeunload keepalive request.
             page.locator('[data-pa="booru-copy-tags"]').click()
+            for _ in range(200):
+                state_path = Path(self.tmp.name)/'ui.json'
+                persisted = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
+                if (persisted.get('draft') or {}).get('booru_posts',{}).get('e621',{}).get('tags',{}).get(a) == ['male']:
+                    break
+                page.wait_for_timeout(50)
+            else:
+                self.fail('Copied tags did not reach the saved draft before reload')
             page.wait_for_function("id=>JSON.stringify(CP.S.draft.booru_posts.e621.tags[id])==='[\"male\"]'",arg=a)
             self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',b),['forest'])
             self.assertEqual(page.evaluate('CP.S.draft.text'),'Keep text')
             page.set_viewport_size({'width':390,'height':844})
             self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
             page.reload(wait_until='domcontentloaded')
-            page.wait_for_function('window.CP?.S.draft?.booru_posts?.e621')
+            page.wait_for_function('id=>window.CP?.S.draft?.booru_posts?.e621?.tags?.[id]',arg=a)
             self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',a),['male'])
             self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e6ai.tags[id]',a),['female','wolf'])
             self.assertFalse(errors,errors)
