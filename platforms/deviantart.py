@@ -244,3 +244,38 @@ def stats(c: dict, ids: list[str]) -> dict:
         for k in out:
             out[k] += int(st.get(k) or 0)
     return out
+
+
+
+def resolve_ids(c, links):
+    """Resolve exact work URLs through documented OAuth gallery responses.
+
+    Bounded to the newest 48 works per account; never guess a UUID from a
+    numeric status ID, unrelated page metadata or another work's response.
+    """
+    import uuid
+    def canonical(value):
+        p=urllib.parse.urlparse(value)
+        if p.scheme!='https' or p.hostname not in ('www.deviantart.com','deviantart.com'):
+            return ''
+        return p.path.rstrip('/') if re.fullmatch(r'/[A-Za-z0-9_-]+/art/[^/]+-\d+/?',p.path) else ''
+    wanted={canonical(link):link for link in links if canonical(link)}
+    if not wanted:return {}
+    auth={'Authorization':'Bearer '+_token(c)}
+    found={}
+    for username in dict.fromkeys(path.split('/')[1] for path in wanted):
+        offset=0
+        for _ in range(2):
+            response=requests.get(f'{API}/gallery/all',params={'username':username,'limit':24,'offset':offset},headers=auth,timeout=(5,10),allow_redirects=False)
+            data=_json(response,'поиск номера работы')
+            for item in data.get('results',[]):
+                path=canonical(item.get('url') or '')
+                if path not in wanted:continue
+                try:value=str(uuid.UUID(str(item.get('deviationid'))))
+                except (ValueError,TypeError,AttributeError):continue
+                found[wanted[path]]=value
+            if all(wanted[path] in found for path in wanted if path.split('/')[1]==username):break
+            next_offset=data.get('next_offset')
+            if not data.get('has_more') or type(next_offset) is not int or next_offset<=offset:break
+            offset=next_offset
+    return found

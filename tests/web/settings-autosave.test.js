@@ -61,3 +61,10 @@ test('explicit source choices retain site and mode without on-off decoding',()=>
   assert.equal(spec.key,site);assert.equal(spec.patch.source_link_mode,mode);
  }
 });
+
+test('X settings and hashtag choices autosave under the X platform',()=>{
+ const {describe}=load();
+ assert.equal(describe({id:'bt-x-enabled',checked:true}).patch.enabled,true);
+ assert.equal(describe({id:'bt-x-window',checked:false}).patch.show_window,false);
+ const hash=describe({id:'htU-x',checked:false});assert.equal(hash.key,'hashtags');assert.equal(hash.patch.use.x,false);
+});

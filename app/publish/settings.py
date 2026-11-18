@@ -19,7 +19,7 @@ RATINGS = ("sfw", "erotic", "explicit")          # рейтинг поста
 DEST_RATINGS = ("sfw", "nsfw", "all")            # рейтинг места: только SFW / только 18+ / любой
 ORIGINALS = ("reply", "comments", "none")
 
-PLATFORM_MODULES = ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "e621", "floofgens", "reddit", "joyreactor")
+PLATFORM_MODULES = ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "e621", "floofgens", "reddit", "joyreactor", "x")
 
 
 def platform_order(cfg: dict | None = None) -> list:
@@ -38,7 +38,7 @@ DEFAULTS = {
     "platform_order": list(PLATFORM_MODULES),   # в каком порядке показывать площадки: настройки, подписи, окно поста
     # отключаемые модули: площадки (не участвуют в публикации, не показываются) и экраны
     "modules": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": True, "e6ai": True,
-                "reddit": True, "joyreactor": True,
+                "reddit": True, "joyreactor": True, "x": False,
                 "history": True, "stats": True, "trends": True,
                 # теггер; сбор цифр (замеры, цифры с сайтов, сверка правок модераторов); новости; прогноз и лучшее время
                 "tagger": True, "collect": True, "news": True, "forecast": True, "crosspost": True,
@@ -55,18 +55,18 @@ DEFAULTS = {
         "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": True},
     },
     # на какие площадки уходит английский вариант текста поста (остальные — основной текст)
-    "text_lang": {"telegram": "main", "discord": "main", "vk": "main", "bluesky": "main", "deviantart": "main", "e6ai": "main", "reddit": "main", "joyreactor": "main"},
+    "text_lang": {"telegram": "main", "discord": "main", "vk": "main", "bluesky": "main", "deviantart": "main", "e6ai": "main", "reddit": "main", "joyreactor": "main", "x": "main"},
     "platform_texts_enabled": {k: False for k in PLATFORM_MODULES},
     # какие версии файлов (комикс: ru / en / clean — без надписей) уходят на площадку; пусто — любые.
     # Работает только в постах, где включён переключатель «Умное таргетирование»
-    "versions": {"telegram": [], "discord": [], "vk": [], "bluesky": [], "deviantart": [], "e6ai": [], "reddit": [], "joyreactor": []},
+    "versions": {"telegram": [], "discord": [], "vk": [], "bluesky": [], "deviantart": [], "e6ai": [], "reddit": [], "joyreactor": [], "x": []},
     # автоперевод описания (DeepSeek, OpenAI и любой сервис с интерфейсом OpenAI): текст уходит на их сервер, поэтому только по кнопке
     "translate": {"api_key": "", "model": "deepseek-flash", "base": "https://api.deepseek.com", "style": ""},
     "hashtags": {
         "enabled": True, "position": "start",         # start — первой строкой, как в ваших постах; end — в конце
         "rating_tags": {"sfw": "sfw", "erotic": "nsfw", "explicit": "nsfw"},
         "constant": [], "max_species": 3, "min_prob": 0.5,
-        "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": False, "reddit": False, "joyreactor": False},
+        "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": False, "reddit": False, "joyreactor": False, "x": False},
     },
     "telegram": {
         "enabled": False, "bot_token": "", "bot_name": "",
@@ -105,7 +105,7 @@ DEFAULTS = {
         "enabled": False, "client_id": "", "client_secret": "", "redirect_uri": "http://localhost:8765/callback",
         "rating": "all",         # откровенное сюда не уходит никогда — правила DeviantArt
         "is_ai_generated": True, "noai": True, "allow_comments": True, "allow_free_download": False,
-        "browser_ok": False, "show_window": True, "paid_dry_shot": "", "paid_dry_note": "",
+        "browser_ok": False, "show_window": True, "paid_dry_shot": "", "paid_dry_note": "", "available_tiers": [], "tiers_checked_at": "",
         "premium_download": False, "premium_price_usd": "", "subscriber_only": False, "subscriber_tiers": [],
         "gallery_id": "", "gallery_name": "", "originals": True,   # PNG-оригинал (до 30 МБ), иначе лёгкая версия
         "tags_from": "hashtags",  # hashtags — теги из хэштегов поста; none — без тегов
@@ -117,7 +117,7 @@ DEFAULTS = {
         "explore": 0.25,         # охота за новыми окнами: 0 — только лучшие известные, 0,5 — часто пробовать неизученные
         "horizon_days": 30,      # на сколько дней вперёд расставлять очередь
     },
-    "x": {"browser_ok": False},  # connection test only; publication is not enabled
+    "x": {"enabled": False, "browser_ok": False, "show_window": True, "include_title": True},
     "reddit": {
         "enabled": False, "browser_ok": False, "show_window": True,
         "communities": {"FurAI": True, "aiyiff": True},

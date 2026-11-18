@@ -401,7 +401,7 @@ def plan(draft: dict) -> dict:
 
     # Experimental browser destinations: each subreddit has its own result/retry key.
     from app.publish import browser_targets as BT
-    for platform in ('reddit', 'joyreactor'):
+    for platform in ('reddit', 'joyreactor', 'x'):
         use(platform)
         options = cfg[platform]
         if not options['enabled']:
@@ -410,15 +410,15 @@ def plan(draft: dict) -> dict:
         communities = [n for n, enabled in options['communities'].items() if enabled and BT.valid_community(n)] if platform == 'reddit' else ['']
         for community in communities:
             key = f'reddit:{community}' if community else platform
-            name = f'Reddit · r/{community}' if community else 'JoyReactor'
+            name = f'Reddit · r/{community}' if community else ('X' if platform=='x' else 'JoyReactor')
             details, reason, flair, tags = [], '', '', []
             try:
                 if not options.get('browser_ok'):
                     raise ValueError('не выполнен вход через браузер — откройте настройки площадки')
                 if kind != 'images':
                     raise ValueError('пока поддерживаются только изображения')
-                if n_img > (10 if platform == 'reddit' else 1):
-                    raise ValueError('Reddit: до 10 изображений; JoyReactor: пока одно изображение')
+                if n_img > (10 if platform == 'reddit' else 4 if platform=='x' else 1):
+                    raise ValueError('Reddit: до 10 изображений; X: до 4; JoyReactor: пока одно изображение')
                 ids = [f['id'] for f in files]
                 if platform == 'reddit':
                     title = title_for(cfg, draft, platform)
@@ -426,6 +426,12 @@ def plan(draft: dict) -> dict:
                         raise ValueError('заголовок Reddit должен содержать от 1 до 300 символов')
                     flair = BT.reddit_flair(cfg, draft, community, ids)
                     details = [f'flair: {flair or "без flair"}', 'NSFW' if mature else 'SFW']
+                elif platform=='x':
+                    if mature:raise ValueError('X: пока поддерживаются только SFW-публикации')
+                    content='\n\n'.join(part for part in (title_for(cfg,draft,'x') if options.get('include_title',True) else '',signed_text(cfg,draft,'x')) if part)
+                    length=BT.x_length(content)
+                    if not content.strip() or length>280:raise ValueError(f'X: текст {length}/280 символов; сократите текст')
+                    details=[f'{n_img} JPEG-превью',f'текст {length}/280', 'SFW']
                 else:
                     tags = BT.joy_tags(cfg, draft, ids)
                     details = ['теги: ' + ', '.join(tags)]
@@ -534,7 +540,7 @@ def plan(draft: dict) -> dict:
                     add(platform, platform, name, True)
 
     missing = [n for k, n in (("telegram", "Telegram"), ("discord", "Discord"), ("vk", "ВКонтакте"), ("bluesky", "Bluesky"),
-                              ("deviantart", "DeviantArt"), ("e6ai", "blep.art"), ("e621", "e621"), ("floofgens", "floofgens.net"), ("reddit", "Reddit"), ("joyreactor", "JoyReactor"))
+                              ("deviantart", "DeviantArt"), ("e6ai", "blep.art"), ("e621", "e621"), ("floofgens", "floofgens.net"), ("reddit", "Reddit"), ("joyreactor", "JoyReactor"), ("x", "X"))
                if k not in configured and cfg["modules"].get(k, True)]
     if not configured:
         errors.append("Ни одна площадка не настроена — откройте «Настройки» → «Публикация»")
@@ -905,6 +911,8 @@ def _run(draft, report, only):
         elif platform == "bluesky":
             from platforms import bluesky as BS
             m = [prep.get_light(f["id"], f["path"], light, max_bytes=BS.IMAGE_MAX_BYTES) for f in files[:BS.MAX_IMAGES]]
+        elif platform == "x":
+            m = [prep.get_light(f["id"], f["path"], light, max_bytes=5*1024*1024) for f in files]
         elif platform == "telegram":
             if kind == "images":
                 m = {"kind": "images",
@@ -1089,7 +1097,7 @@ def _run(draft, report, only):
                                       draft["rating"], progress=prog, **kwargs)
                     _set(key, state="done", message="", link=next((u["url"] for u in urls if u["url"]), ""),
                          deviation_ids=[u["id"] for u in urls if u["id"]], note=f"{len(urls)} работ{'ы' if 1 < len(urls) < 5 else ''}" if len(urls) > 1 else "")
-                elif key.startswith('reddit:') or key == 'joyreactor':
+                elif key.startswith('reddit:') or key in ('joyreactor','x'):
                     from app.publish import social_web
                     from app.paths import sub
                     import tempfile
@@ -1100,7 +1108,7 @@ def _run(draft, report, only):
                             path = Path(folder) / f'{i}.jpg'
                             path.write_bytes(image.data)
                             paths.append(str(path))
-                        result = social_web.post(platform, paths, title_for(cfg, draft, platform), signed_text(cfg, draft, platform),
+                        result = social_web.post(platform, paths, (title_for(cfg, draft, platform) if platform!='x' or cfg['x'].get('include_title',True) else ''), signed_text(cfg, draft, platform),
                                                  community=key.split(':', 1)[1] if platform == 'reddit' else 'FurAI',
                                                  flair=d.get('flair', ''), nsfw=draft['rating'] != 'sfw', tags=d.get('tags', []),
                                                  headless=not cfg[platform].get('show_window', True), progress=prog, log=log)
@@ -1155,7 +1163,7 @@ def _run(draft, report, only):
                 if not _posted_but_failed(key, e):
                     # Эти адаптеры создают одну запись на место. Для многошаговых
                     # площадок отказ последнего шага не исключает частичный успех.
-                    safe = key.startswith(("telegram:", "discord:", "reddit:")) or key in ("bluesky", "joyreactor") or (key=='deviantart' and bool(cfg['deviantart'].get('premium_download') or cfg['deviantart'].get('subscriber_only')))
+                    safe = key.startswith(("telegram:", "discord:", "reddit:")) or key in ("bluesky", "joyreactor", "x") or (key=='deviantart' and bool(cfg['deviantart'].get('premium_download') or cfg['deviantart'].get('subscriber_only')))
                     _set(key, state="error", outcome="not_sent" if safe else "unknown", message=mask_secrets(str(e)))
             except (Cancelled, _Stop):   # «Отмена»: если пост уже вышел — остаётся «дослать PNG», иначе место просто не отправлено
                 if not _posted_but_failed(key, "отменено"):

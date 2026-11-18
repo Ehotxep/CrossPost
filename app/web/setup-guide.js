@@ -1,6 +1,6 @@
 /* Путеводитель использует обычные экраны настроек и не публикует тестовые посты. */
 (function () {
-  const platforms = [['telegram','Telegram'],['discord','Discord'],['vk','ВКонтакте'],['bluesky','Bluesky'],['deviantart','DeviantArt'],['e6ai','blep.art'],['e621','e621'],['floofgens','floofgens.net'],['reddit','Reddit'],['joyreactor','JoyReactor']];
+  const platforms = [['telegram','Telegram'],['discord','Discord'],['vk','ВКонтакте'],['bluesky','Bluesky'],['deviantart','DeviantArt'],['e6ai','blep.art'],['e621','e621'],['floofgens','floofgens.net'],['reddit','Reddit'],['joyreactor','JoyReactor'],['x','X']];
   const steps = ['Площадки','Оформление','Расписание','Дополнительные функции'];
   const C = () => window.CP;
   const esc = value => C().esc(value == null ? '' : value);
@@ -14,9 +14,10 @@
       discord: !!cfg.discord?.webhooks?.length,
       vk: !!(vk.group_id && (vk.method === 'browser' ? vk.browser_ok : cfg.vk_connected)),
       reddit: !!(cfg.reddit?.browser_ok && Object.values(cfg.reddit.communities||{}).some(Boolean)),
+      x:!!cfg.x?.browser_ok,
       joyreactor: !!(cfg.joyreactor?.browser_ok && cfg.joyreactor.ai_tags?.length),
       bluesky: !!cfg.bluesky_session?.ok,
-      deviantart: !!cfg.deviantart_session?.ok,
+      deviantart: !!((cfg.deviantart?.premium_download||cfg.deviantart?.subscriber_only)?cfg.deviantart?.browser_ok:cfg.deviantart_session?.ok),
       ...Object.fromEntries(['e6ai','e621','floofgens'].map(k=>[k,!!(cfg[k]?.has_key && cfg[k]?.username)])),
     };
     return platforms.map(([key,name]) => ({key,name,ready:enabled(key) && configured[key],

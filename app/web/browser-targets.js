@@ -4,14 +4,6 @@
   const names={reddit:'Reddit',joyreactor:'JoyReactor',x:'X'};
   function settingsHtml(platform){
     const s=C().S,p=s.pub[platform],job=s.info?.browser_jobs?.[platform],running=job?.state==='running';
-    if(platform==='x')return `<section class="card setc"><div class="head"><h2>${C().pbadge('x')} X</h2><span class="badge warn">В разработке</span></div>
-      <p class="muted small">Проверка входа и формы через отдельный браузер Crosspost. Настоящая публикация в X пока не подключена.</p>
-      <p class="${p.browser_ok?'ok':'muted'}">${p.browser_ok?'Вход сохранён':'Нужно войти через браузер'}</p>
-      <div class="row"><button class="btn" data-social-action="login" data-platform="x" ${running?'disabled':''}>Войти в браузере</button>
-      <button class="btn" data-social-action="dry" data-platform="x" ${!p.browser_ok||running?'disabled':''}>Пробный прогон</button></div>
-      <p class="muted small">Тест использует временную картинку и текст. Кнопка публикации не нажимается. Очистите старый черновик X перед запуском.</p>
-      ${job?`<p class="${job.state==='error'?'err':'muted'} small" translate="no">${esc(job.message||job.error||job.state)}</p>`:''}
-      ${s.socialError?.x?`<p class="err" translate="no">${esc(s.socialError.x)}</p>`:''}</section>`;
     const toggle=(id,on,label)=>`<label class="tgl"><input id="${id}" type="checkbox" ${on?'checked':''}><span>${label}</span></label>`;
     let h=`<section class="card setc"><div class="head"><h2>${C().pbadge(platform)} ${names[platform]}</h2><span class="badge warn">В разработке</span></div>
       <p class="muted small">Публикация через отдельный профиль браузера этой площадки в Crosspost. При первом запуске отдельного профиля может потребоваться повторный вход. Пока только изображения. Работа с реальным сайтом ещё не проверена.</p>
@@ -28,7 +20,7 @@
         <details class="more"><summary>Соответствия тегов и flair</summary><p class="muted small">JSON: all — обязательные теги; none — исключающие; flair — название; priority — приоритет (большее выше).</p>
         <textarea id="social-rules-reddit" rows="12" class="code" spellcheck="false">${esc(JSON.stringify(p.flair_rules,null,2))}</textarea>
         <button class="btn" data-social-action="rules" data-platform="reddit">Применить правила</button></details>`;
-    }else{
+    }else if(platform==='joyreactor'){
       h+=`<div class="field"><label for="bt-joyreactor-ai">Обязательные теги ИИ (через запятую)</label><input id="bt-joyreactor-ai" value="${esc(p.ai_tags.join(', '))}"></div>
         <div class="field"><label for="bt-joyreactor-constant">Постоянные теги (через запятую)</label><input id="bt-joyreactor-constant" value="${esc(p.constant_tags.join(', '))}"></div>
         <p class="muted small">Точные обязательные теги задайте по правилам JoyReactor. Неизвестные теги теггера на сайт не отправляются.</p>
@@ -36,6 +28,7 @@
         <textarea id="social-rules-joyreactor" rows="10" class="code" spellcheck="false">${esc(JSON.stringify({tag_aliases:p.tag_aliases,rating_tags:p.rating_tags},null,2))}</textarea>
         <button class="btn" data-social-action="rules" data-platform="joyreactor">Применить правила</button></details>`;
     }
+    if(platform==='x')h+='<p class="muted small">X: пока только SFW, до четырёх изображений и 280 взвешенных символов. Текст не обрезается. При неизвестном результате проверьте сайт перед повтором.</p>';
     return h+'</section>';
   }
   function postHtml(draft,plan){

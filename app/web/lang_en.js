@@ -2893,3 +2893,9 @@ Object.assign(window.EN_DICT, {
   "Пробный прогон DeviantArt": "DeviantArt dry run",
   "Работаю с DeviantArt…": "Working with DeviantArt…"
 });
+
+Object.assign(window.EN_DICT, {
+  "Загрузить тиры из аккаунта": "Load tiers from account",
+  "Подпись входит в лимит 280 символов.": "The signature counts towards the 280-character limit.",
+  "X: пока только SFW, до четырёх изображений и 280 взвешенных символов. Текст не обрезается. При неизвестном результате проверьте сайт перед повтором.": "X currently supports SFW only, up to four images and 280 weighted characters. Text is not truncated. Verify the site before retrying an unknown result."
+});

@@ -34,6 +34,9 @@ runner.D.post=lambda *args,**kwargs:[]
 runner.E6.check=lambda cfg:{'name':cfg['username']}
 from app.publish import da_web
 da_web.login=lambda report:report(progress=1,message='Fixture login')
+da_web.load_tiers=lambda cfg,report:['Tip Jar','Big Tip Jar','Other Tier']
+from app.publish import social_web
+social_web.login=lambda platform,report:report(progress=1,message='Fixture browser login')
 def da_dry(cfg,files,title,text,tags,rating,**kwargs):
  assert kwargs.get('dry_run') is True
  return [{'shot':'','note':'Пробный прогон: доступ проверен, кнопка публикации не нажималась'}]
@@ -370,10 +373,32 @@ main()
             restore=config_path.with_suffix('.restore')
             restore.write_bytes(original_config);restore.replace(config_path)
 
+    def test_x_settings_login_and_real_queue_plan(self):
+        page=self.new_page()
+        path=Path(self.tmp.name)/'publish.json';original=path.read_bytes()
+        try:
+            self.api('pub_save',section='modules',changes={'x':True})
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='x';await Pub.load('settings');CP.render()}")
+            page.locator('#bt-x-enabled').check()
+            page.wait_for_function('CP.S.pub.x.enabled===true')
+            page.locator('[data-social-action=login][data-platform=x]').click()
+            page.wait_for_function('CP.S.pub.x.browser_ok && !CP.S.socialWaiting.x')
+            self.assertNotIn('Настоящая публикация в X пока не подключена',page.locator('main').inner_text())
+            import io
+            from PIL import Image
+            data=io.BytesIO();Image.new('RGB',(80,60),'blue').save(data,format='PNG')
+            image=self.session.post(self.base+'/upload?name=x-test.png',headers=self.headers,data=data.getvalue()).json()['result']
+            plan=self.api('post_plan',draft={'files':[image['id']],'title':'Test','text':'Body','rating':'sfw','signature':False,'hashtags':[],'tagger':False})
+            self.assertTrue(next(d for d in plan['dests'] if d['key']=='x')['will'])
+        finally:
+            close_page(page,self.id())
+            restore=path.with_suffix('.restore');restore.write_bytes(original);restore.replace(path)
+
     def test_deviantart_browser_login_and_paid_dry_run_use_saved_defaults(self):
         page=self.new_page()
         old=self.api('pub_settings')['deviantart']
-        fields=('browser_ok','enabled','premium_download','premium_price_usd','subscriber_only','subscriber_tiers')
+        fields=('browser_ok','enabled','premium_download','premium_price_usd','subscriber_only','subscriber_tiers','available_tiers','tiers_checked_at')
         try:
             page.goto(self.base,wait_until='networkidle')
             page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='deviantart';await Pub.load('settings');CP.render()}")
@@ -385,6 +410,13 @@ main()
             page.locator('[data-pa="da-browser-login"]').click()
             page.wait_for_function('CP.S.pub.deviantart.browser_ok===true && !CP.S.daBrowserWaiting')
             self.assertIn('платный доступ',page.locator('.platnav [data-psec=deviantart]').inner_text())
+            page.locator('[data-pa="da-tiers"]').click()
+            page.wait_for_function('CP.S.pub.deviantart.available_tiers.length===3 && !CP.S.daBrowserWaiting')
+            page.locator('[data-da-tier="Other Tier"]').check()
+            page.wait_for_function('CP.S.pub.deviantart.subscriber_tiers.includes("Other Tier")')
+            page.locator('[data-da-tier="Other Tier"]').uncheck()
+            page.wait_for_function('!CP.S.pub.deviantart.subscriber_tiers.includes("Other Tier")')
+
             page.locator('[data-pa="da-paid-dry"]').click()
             page.get_by_text('Пробный прогон: доступ проверен, кнопка публикации не нажималась',exact=True).wait_for()
             self.assertEqual(self.api('pub_settings')['deviantart']['subscriber_tiers'],['Tip Jar','Big Tip Jar'])

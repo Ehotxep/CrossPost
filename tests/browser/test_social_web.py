@@ -78,8 +78,32 @@ class SocialBrowser(unittest.TestCase):
         finally:
             context.close()
 
+    def test_x_real_submit_confirms_new_success_toast_and_ignores_timeline(self):
+        source=X_FORM.replace('window.submits++',"window.submits++;document.getElementById('notice').innerHTML='Your post was sent <a href=https://x.com/fixture/status/123456>View</a>'")+ '<article><a href="https://x.com/other/status/999">Old post</a></article><div data-testid="toast" id="notice"></div>'
+        with self.fixture('x',source) as page:
+            result=W.post('x',[self.image],'Title','Body')
+            self.assertEqual(result['link'],'https://x.com/fixture/status/123456')
+            self.assertEqual(page.evaluate('window.submits'),1)
+
+    def test_x_dry_never_submits_and_refuses_sensitive_or_overlong_posts(self):
+        for kwargs in ({'nsfw':True},{'text':'x'*281}):
+            with self.subTest(kwargs=kwargs),self.fixture('x') as page:
+                with self.assertRaises(NotPublishedError):W.post('x',[self.image],'Title',kwargs.get('text','Body'),nsfw=kwargs.get('nsfw',False))
+                self.assertEqual(page.url,'about:blank')
+
+    def test_x_submit_failure_is_unknown_and_never_repeated(self):
+        # Force loss of the reply after a single successful click.
+        with self.fixture('x') as page:
+            original=page.wait_for_timeout
+            def fail_after_click(ms):
+                if page.evaluate('window.submits'):raise RuntimeError('connection lost')
+                original(ms)
+            with patch.object(page,'wait_for_timeout',side_effect=fail_after_click):
+                with self.assertRaises(PublicationUnknown):W.post('x',[self.image],'Title','Body')
+            self.assertEqual(page.evaluate('window.submits'),1)
+
     @contextmanager
-    def vk_fixture(self, trigger='<button id="create">Создать</button>', menu=True, ignore_first=False):
+    def vk_fixture(self, trigger='<button id="create">Создать</button>', menu=True, ignore_first=False, menu_markup=None):
         page=watch_page(self.browser.new_page())
         source='''<section data-testid="comment"><button onclick="window.wrong++">Создать</button>
           <div contenteditable="true" role="textbox" id="comment">Comment draft</div></section>
@@ -97,6 +121,8 @@ class SocialBrowser(unittest.TestCase):
           };
           </script>'''
         try:
+            if menu_markup is not None:
+                source=source.replace('<div role="menu" id="menu" hidden><button role="menuitem" id="post">Пост</button><button>Клип</button></div>',menu_markup)
             page.set_content(source)
             page.evaluate("""({menu,ignore})=>{document.getElementById('create').onclick=()=>{
                 window.clicks++;if(ignore&&window.clicks===1)return;
@@ -120,6 +146,50 @@ class SocialBrowser(unittest.TestCase):
             self.assertEqual(page.locator('#text').inner_text(),'New VK post')
             self.assertEqual(page.locator('#comment').inner_text(),'Comment draft')
             self.assertEqual(page.evaluate('window.wrong+window.submits'),0)
+
+    def test_vk_plain_create_popup_with_channel_post_matches_screenshot(self):
+        markup='''<div id="menu" hidden><div id="post" tabindex="0"><span>Пост</span></div>
+          <div onclick="window.wrong++"><span>Пост в канал</span></div>
+          <div><span>История</span></div><div><span>Клип</span></div>
+          <div><span>Трансляция</span></div><div><span>Статья</span></div></div>'''
+        with self.vk_fixture(menu_markup=markup) as page:
+            messages=[]
+            editor,scope=V._open_composer(page,timeout_ms=4000,log=messages.append)
+            editor.fill('New VK post')
+            V._attach(page,[self.image])
+            page.locator('#photos img').wait_for()
+            self.assertEqual(scope.get_attribute('id'),'composer')
+            self.assertEqual(page.evaluate('window.clicks'),1)
+            self.assertEqual(page.evaluate('window.submits+window.wrong'),0)
+            self.assertEqual(page.locator('#comment').inner_text(),'Comment draft')
+            self.assertTrue(any('выбран пункт' in message for message in messages))
+
+    def test_vk_exact_post_does_not_match_post_to_channel(self):
+        markup='''<div role="menu" id="menu" hidden>
+          <button role="menuitem" onclick="window.wrong++">Пост в канал</button>
+          <button role="menuitem" id="post">Пост</button><button>Клип</button></div>'''
+        with self.vk_fixture(menu_markup=markup) as page:
+            V._open_composer(page,timeout_ms=3000)
+            self.assertEqual(page.evaluate('window.wrong'),0)
+            self.assertTrue(page.locator('#composer').is_visible())
+
+    def test_vk_ambiguous_plain_popup_is_not_closed_or_clicked_again(self):
+        markup='''<div id="menu" hidden><div id="post">Пост</div><div onclick="window.wrong++">Пост</div>
+          <div>История</div><div>Клип</div><div>Статья</div></div>'''
+        with self.vk_fixture(menu_markup=markup) as page:
+            with self.assertRaisesRegex(PlatformError,'пункт «Пост» не найден однозначно'):
+                V._open_composer(page,timeout_ms=700)
+            self.assertEqual(page.evaluate('window.clicks'),1)
+            self.assertEqual(page.evaluate('window.wrong+window.submits'),0)
+            self.assertTrue(page.locator('#menu').is_visible())
+
+    def test_vk_plain_post_text_inside_wall_is_not_a_create_menu(self):
+        markup='''<div id="menu" hidden><div class="wall_item"><div id="post">Пост</div>
+          <div>История</div><div>Клип</div><div>Статья</div></div></div>'''
+        with self.vk_fixture(menu_markup=markup) as page:
+            with self.assertRaises(PlatformError):V._open_composer(page,timeout_ms=600)
+            self.assertFalse(page.locator('#composer').is_visible())
+            self.assertEqual(page.evaluate('window.submits+window.wrong'),0)
 
     def test_vk_direct_accessible_create_button_and_existing_editor(self):
         with self.vk_fixture('<div role="button" aria-label="Create" tabindex="0" id="create">+</div>',menu=False) as page:

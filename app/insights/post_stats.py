@@ -118,13 +118,30 @@ def _bs_nums(d: dict) -> dict:
     return {"cells": [["Лайки", st["likes"]], ["Репосты", st["reposts"]], ["Ответы", st["replies"]], ["Цитаты", st["quotes"]]]}
 
 
-def _da_nums(d: dict) -> dict:
-    import app.publish.runner  # noqa: F401  (путь к токенам)
+def _da_nums(d: dict, pub_id=None) -> dict:
+    from app.publish import runner  # путь к токенам
     from app.publish import settings as PS
     from platforms import deviantart
-    if not d.get("deviation_ids"):
-        return {"error": "Номер работы не сохранился — цифры для этой публикации недоступны"}
-    st = deviantart.stats(PS.load()["deviantart"], d["deviation_ids"])
+    ids=d.get('deviation_ids') or []
+    if not ids:
+        if not (runner.core_common.load_token('deviantart') or {}).get('access_token'):
+            return {'error':'Для статистики браузерной публикации подключите OAuth DeviantArt в настройках'}
+        links=[r['url'] for r in (d.get('paid_confirmed') or {}).values() if r.get('url')] or [d.get('link')]
+        resolved=deviantart.resolve_ids(PS.load()['deviantart'],links)
+        if len(resolved)!=len(set(links)):
+            return {'error':'Не все работы найдены среди последних 48 публикаций аккаунта; неполная статистика не показывается'}
+        ids=list(resolved.values())
+        if pub_id is not None:
+            with db.tx() as conn:
+                row=conn.execute('SELECT dests FROM publications WHERE id=?',(int(pub_id),)).fetchone()
+                if row:
+                    dests=json.loads(row['dests'])
+                    for dest in dests:
+                        if dest.get('key')==d.get('key') and dest.get('link')==d.get('link'):
+                            dest['deviation_ids']=ids
+                    conn.execute('UPDATE publications SET dests=? WHERE id=?',(json.dumps(dests,ensure_ascii=False),int(pub_id)))
+
+    st = deviantart.stats(PS.load()["deviantart"], ids)
     return {"cells": [["Просмотры", st["views"]], ["В избранном", st["favourites"]], ["Комментарии", st["comments"]],
                       ["Скачивания", st["downloads"]]]}
 
@@ -284,7 +301,7 @@ def _for_single_publication(pub_id: int) -> dict:
         elif d.get("platform") == "bluesky":
             item["nums"] = _cached(f"bs:{d.get('uri') or d.get('link')}", lambda d=d: _bs_nums(d))
         elif d.get("platform") == "deviantart":
-            item["nums"] = _cached(f"da:{','.join(d.get('deviation_ids') or [])}", lambda d=d: _da_nums(d))
+            item["nums"] = _cached(f"da:{','.join(d.get('deviation_ids') or [])}:{d.get('link','')}", lambda d=d: _da_nums(d,pub["id"]))
         elif d.get("platform") == "discord":
             item["why"] = "Discord не показывает просмотры"
         elif d.get("platform") == "vk":

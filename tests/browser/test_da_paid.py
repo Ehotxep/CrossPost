@@ -76,6 +76,18 @@ class DeviantArtPaidBrowser(unittest.TestCase):
         with patch.object(W.B,'dump',return_value='da-paid-test.png'):
             return W.post(page,cfg or self.config(),self.preview,self.original,'Paid artwork','Description',['wolf','forest'],'sfw',dry)
 
+    def test_read_tiers_preserves_selected_access_and_existing_draft(self):
+        source=FORM.replace('<input type=checkbox>Other Tier','<input type=checkbox checked>Other Tier')
+        with self.form(source) as (_,page):
+            page.goto(W.SUBMIT)
+            page.locator('input[name=title]').fill('User draft')
+            names=W.read_tiers(page)
+            self.assertEqual(names,['Tip Jar','Big Tip Jar','Other Tier'])
+            self.assertEqual(page.locator('#tiers input:checked').count(),1)
+            self.assertEqual(page.locator('input[name=title]').input_value(),'User draft')
+            self.assertEqual(page.evaluate('window.submits'),0)
+            self.assertFalse(page.locator('#tiers').is_visible())
+
     def test_dry_fills_original_price_and_exact_tiers_without_submitting(self):
         with self.form() as (_,page):
             result=self.post(page)

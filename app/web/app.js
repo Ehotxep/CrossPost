@@ -1194,12 +1194,12 @@
 
   // меню настроек: группа, пункты, когда группа видна (по включённым функциям)
   const PSECS = [["Программа", [["app", "Общие"], ["features", "Функции"], ["worker", "Фоновая отправка"]], () => true],
-    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art"], ["e621", "e621"], ["floofgens", "floofgens.net"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]], () => true],
+    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art"], ["e621", "e621"], ["floofgens", "floofgens.net"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"], ["x", "X"]], () => true],
     ["Оформление поста", [["signatures", "Подписи"], ["hashtags", "Хэштеги"], ["translate", "Перевод", () => modOn("translation")]], () => modOn("crosspost")],
     ["Файлы", [["light", "JPEG-превью"], ["media", "Видео и GIF"], ["versions", "Умное таргетирование", () => modOn("targeting")], ["files", "Хранение файлов"]], () => modOn("crosspost")],
     ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || ["e6ai","e621","floofgens"].some(modOn)],
     ["Статистика и тренды", [["collect", "Сбор статистики", () => statsOn()], ["trends", "Тренды", () => modOn("trends")]], () => statsOn() || modOn("trends")],
-    ["Дополнительно", [["x", "X (проверка)"], ["net", "Прокси и соединение"], ["diag", "Диагностика"]], () => true]];
+    ["Дополнительно", [["net", "Прокси и соединение"], ["diag", "Диагностика"]], () => true]];
   // четыре функции приложения; у каждой — модули, которые она включает и выключает разом
   const FEATURES = [
     ["crosspost", "Кросспостинг", "Публикация одного поста сразу на несколько площадок, отложенная отправка по расписанию и история публикаций.", ["crosspost", "history"]],
@@ -1210,7 +1210,7 @@
     ["translation", "Языки и перевод", "Отдельный английский текст и подписи для англоязычных площадок. Автоперевод — через DeepSeek, по кнопке.", ["translation"]]];
   const featOn = (f) => f[3].some((k) => modOn(k));
   const statsOn = () => modOn("stats") || modOn("collect");
-  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "blep.art", "оригиналы и теги"], ["e621", "e621", "оригиналы и теги"], ["floofgens", "floofgens.net", "оригиналы и теги"]],
+  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["x", "X", "SFW · браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "blep.art", "оригиналы и теги"], ["e621", "e621", "оригиналы и теги"], ["floofgens", "floofgens.net", "оригиналы и теги"]],
     extras: [["tagger", "Теггер", "предлагает теги по картинке для blep.art / e621 / floofgens.net и хэштегов; без него теги вводятся вручную"],
       ["collect", "Сбор статистики", "регулярно сохраняет просмотры и реакции опубликованных постов, учитывает правки модераторов и догружает превью"],
       ["news", "Новости по свежим артам", "уведомления в колокольчике: популярные работы, всплески реакций, новые комментарии"],

@@ -579,11 +579,21 @@ class Api:
         from app.publish import da_web, settings as PS
         def run(report):
             da_web.login(report)
-            PS.update('deviantart',{'browser_ok':True,'enabled':True})
+            PS.update('deviantart',{'browser_ok':True,'enabled':True,'available_tiers':[],'tiers_checked_at':''})
         return self.jobs.start('da:browser',run)
 
     def pub_da_browser_state(self):
         return {'job':self.jobs.get('da:browser'),'settings':self.pub_settings()}
+
+    def pub_da_tiers(self):
+        from app.publish import da_web,settings as PS
+        from datetime import datetime,timezone
+        cfg=PS.load()['deviantart']
+        def run(report):
+            names=da_web.load_tiers(cfg,report)
+            PS.update('deviantart',{'available_tiers':names,'tiers_checked_at':datetime.now(timezone.utc).isoformat()})
+            report(progress=1,message=f'Загружено тиров: {len(names)}')
+        return self.jobs.start('da:browser',run)
 
     def pub_da_paid_dry(self):
         from app.publish import settings as PS,da_web
@@ -611,7 +621,7 @@ class Api:
 
     def pub_save(self, section: str, changes: dict):
         from app.publish import settings as PS
-        if section in ('reddit', 'joyreactor'):
+        if section in ('reddit', 'joyreactor', 'x'):
             from app.publish.browser_targets import validate_changes
             changes = validate_changes(section, changes)
         if section == "telegram" and not changes.get("bot_token"):

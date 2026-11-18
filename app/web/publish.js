@@ -14,7 +14,7 @@
   let planTimer = null;
 
   const S = () => C().S;
-  const TEXTP = ["telegram", "discord", "vk", "bluesky", "deviantart", "reddit", "joyreactor"];   // площадки с текстом поста и подписью
+  const TEXTP = ["telegram", "discord", "vk", "bluesky", "deviantart", "reddit", "joyreactor", "x"];   // площадки с текстом поста и подписью
   const esc = (s) => C().esc(s == null ? "" : s);
   const mod = (k) => { const st = window.CP && window.CP.S, m = st && st.info && st.info.modules; return !m || m[k] !== false; };   // модуль включён
   const BOORUS = ['e6ai', 'e621', 'floofgens'];
@@ -220,7 +220,7 @@
   // ---------------- Новый пост ----------------
   const RATING_TIP = { sfw: "Без обнажённости", erotic: "Обнажённость и откровенные позы без половых актов", explicit: "Всё, что дальше" };
   // порядок площадок — из «Настроек» (стрелки у площадок в меню): подписи, версии, язык, предпросмотр, значки
-  const porder = () => (S().pub && S().pub.platform_order) || ["telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "reddit", "joyreactor"];
+  const porder = () => (S().pub && S().pub.platform_order) || ["telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "reddit", "joyreactor", "x"];
   const byOrder = (arr, key = (x) => x[0]) => { const o = porder(), ix = (x) => { const i = o.indexOf(key(x)); return i < 0 ? 99 : i; }; return arr.slice().sort((a, b) => ix(a) - ix(b)); };
   const pfor = (list) => {   // значки площадок; отключённые модули не показываем
     const m = (S().pub && S().pub.modules) || {};
@@ -515,7 +515,7 @@
     if (s.view === "post") C().render();
   }
   // ----- второй язык: английский вариант заголовка и описания, на какие площадки он уходит -----
-  const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art"], ["e621", "e621"], ["floofgens", "floofgens.net"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]];
+  const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art"], ["e621", "e621"], ["floofgens", "floofgens.net"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"], ["x", "X"]];
   // шаблоны сервисов: [код, адрес, модель по умолчанию, название]
   const TRP = [["deepseek", "https://api.deepseek.com", "deepseek-flash", "DeepSeek"], ["openai", "https://api.openai.com/v1", "gpt-4o-mini", "OpenAI"],
     ["openrouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", "OpenRouter"], ["ollama", "http://localhost:11434/v1", "qwen2.5:7b", "Ollama (локально)"],
@@ -1670,7 +1670,7 @@
         if (!logged) return ["", "не подключено"];
         return [v.group_id ? "ok" : "warn", (v.group_name || (v.group_id ? "группа " + v.group_id : "группа не указана")) + (br ? ", через браузер" : ", через API")]; }
       case "x": return p.x.browser_ok ? ["ok", "вход сохранён · только проверка"] : ["", "не подключено"];
-      case "reddit": case "joyreactor": return p[sec].browser_ok ? [p[sec].enabled?"ok":"warn",p[sec].enabled?"через браузер · экспериментально":"отправка выключена"] : ["", "не подключено"];
+      case "reddit": case "joyreactor": case "x": return p[sec].browser_ok ? [p[sec].enabled?"ok":"warn",p[sec].enabled?"через браузер · экспериментально":"отправка выключена"] : ["", "не подключено"];
       case "bluesky": { const b = p.bluesky_session || {}; return b.ok && p.bluesky.enabled ? ["ok", "@" + b.handle] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
       case "deviantart": { const b = p.deviantart_session || {}, d=p.deviantart, paid=d.premium_download||d.subscriber_only, ready=paid?d.browser_ok:b.ok; return ready && d.enabled ? ["ok", paid?"браузер · платный доступ":b.username || "подключено"] : ready ? ["warn", "выключено"] : ["", "не подключено"]; }
       case "e6ai": case "e621": case "floofgens": { const cfg = p[sec]; return cfg.enabled && cfg.has_key ? ["ok", cfg.username || "подключено"] : ["", "не подключено"]; }
@@ -1941,7 +1941,7 @@
           <div class="field" style="flex:1 1 110px"><label for="htN">Видов, не больше</label><input id="htN" type="number" min="0" max="10" value="${ht.max_species}"></div></div>
         <div class="field"><label for="htC">Постоянные хэштеги</label><input id="htC" value="${esc((ht.constant || []).join(" "))}" placeholder="aiart furryart"></div>
         <div class="row" style="align-items:center"><div class="field"><span class="lbl">Где в посте</span>${segP(`data-pa="ht-pos"`, [["start", "Первой строкой"], ["end", "В конце"]], ht.position)}</div>
-          <div class="tgls" style="flex:1 1 300px">${byOrder([["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt (в описании)"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]]).map(([k, l]) => `<label class="tgl"><input type="checkbox" id="htU-${k}" ${ht.use[k] !== false ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
+          <div class="tgls" style="flex:1 1 300px">${byOrder([["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt (в описании)"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"], ["x", "X"]]).map(([k, l]) => `<label class="tgl"><input type="checkbox" id="htU-${k}" ${ht.use[k] !== false ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
         <div class="cardfoot"><button class="btn primary" data-pa="ht-save">Сохранить</button></div></section>`;
     }
 
@@ -1949,7 +1949,7 @@
       const sp = sg.platforms || {};
       const SIGP = [["telegram", "Telegram", "Ссылка становится кликабельным словом."], ["discord", "Discord", "Ссылка становится кликабельным словом, без карточек-превью."], ["vk", "ВКонтакте", "ВК не прячет ссылку под слово — получится «Текст: https://…»."],
         ["bluesky", "Bluesky", "Ссылка становится кликабельным словом. Весь пост Bluesky — до 300 символов, подпись лучше короткая."],
-        ["deviantart", "DeviantArt", "Уходит в описание работы как «Текст: https://…»."], ["reddit", "Reddit", "Подпись добавляется в текст поста."], ["joyreactor", "JoyReactor", "Подпись добавляется в текст поста."]];
+        ["deviantart", "DeviantArt", "Уходит в описание работы как «Текст: https://…»."], ["reddit", "Reddit", "Подпись добавляется в текст поста."], ["joyreactor", "JoyReactor", "Подпись добавляется в текст поста."], ["x", "X", "Подпись входит в лимит 280 символов."]];
       h += `<section class="card setc"><div class="head"><h2>Подписи ${hint("Дописываются в конец поста. Ссылка под словом: [Больше артов](https://t.me/канал). Обычная ссылка тоже работает.")}</h2>${ok("sig")}</div>
         ${byOrder(SIGP).map(([k, l, how]) => { const v = sp[k] || {}, en = v.en || {}, enFilled = !!((en.sfw || "").trim() || (en.nsfw || "").trim()); return `<div class="sigblk">
           <div class="sighead">${C().pbadge(k)}<label class="tgl"><input type="checkbox" id="siguse-${k}" ${sg.use[k] !== false ? "checked" : ""}><span><b>${l}</b> ${hint(how)}</span></label>
@@ -2071,12 +2071,14 @@
       <p class="muted small">Экспериментальный режим. Платные работы отправляются через отдельный браузер DeviantArt. Сначала выполните вход и пробный прогон. Обычные публикации продолжают работать через API.</p>
       <div class="row"><span class="badge ${d.browser_ok?'ok':'off'}">${d.browser_ok?'✓ Вход в браузере сохранён':'Вход в браузере не выполнен'}</span>
         <button class="btn small" data-pa="da-browser-login" ${s.daBrowserWaiting?'disabled':''}>Войти в браузере DeviantArt</button>
+        <button class="btn small" data-pa="da-tiers" ${s.daBrowserWaiting||!d.browser_ok?'disabled':''}>Загрузить тиры из аккаунта</button>
         <button class="btn small primary" data-pa="da-paid-dry" ${s.daBrowserWaiting||!d.browser_ok||!(d.premium_download||d.subscriber_only)?'disabled':''}>Проверить без публикации</button></div>
       ${s.info?.da_browser_job?.state==='running'?`<p class="muted small">${esc(s.info.da_browser_job.message||'Работаю с DeviantArt…')}</p>`:''}
       <label class="tgl"><input type="checkbox" id="dashow" ${d.show_window!==false?'checked':''}><span>Показывать окно браузера</span></label>
       <label class="tgl"><input type="checkbox" id="dapremium" ${d.premium_download?'checked':''}><span>Платное скачивание оригинала по умолчанию</span></label>
       <div class="field"><label for="daprice">Цена по умолчанию, USD</label><input id="daprice" inputmode="decimal" maxlength="10" value="${esc(d.premium_price_usd||'')}" placeholder="Укажите цену"></div>
       <label class="tgl"><input type="checkbox" id="dasubscriber" ${d.subscriber_only?'checked':''}><span>Публиковать для подписчиков по умолчанию</span></label>
+      ${(d.available_tiers||[]).length?`<div class="tgls">${d.available_tiers.map(name=>`<label class="tgl"><input type="checkbox" data-da-tier="${esc(name)}" ${(d.subscriber_tiers||[]).includes(name)?'checked':''}><span>${esc(name)}</span></label>`).join('')}</div>`:''}
       <div class="field"><label for="datiers">Тиры по умолчанию — по одному названию на строку</label><textarea id="datiers" rows="4" placeholder="Название уровня подписки">${esc((d.subscriber_tiers||[]).join('\n'))}</textarea></div>
       <p class="muted small">Укажите точные названия тиров из вашего аккаунта, по одному на строку. Перед отправкой CrossPost проверит выбранные тиры и цену. Параметры сохраняются автоматически.</p></details>`;
     if(d.paid_dry_note)h+=`<p class="ok small">${esc(d.paid_dry_note)}</p>`;
@@ -2428,8 +2430,8 @@
         s.pub = await api("pub_save", { section: "bluesky", changes: { enabled: !!snap.bson, include_title: !!snap.bstitle, alt_from_title: !!snap.bsalt,
           rating: val("bsrating") || "all", langs: val("bslang").split(/[\s,]+/).filter(Boolean).slice(0, 3) } });
         s.pubOk.bs = "Сохранено"; }); return true;
-      case "da-browser-login": case "da-paid-dry": await guard('da',async()=>{
-        await api(act==='da-browser-login'?'pub_da_browser_login':'pub_da_paid_dry');s.daBrowserWaiting=true;
+      case "da-browser-login": case "da-paid-dry": case "da-tiers": await guard('da',async()=>{
+        await api(act==='da-browser-login'?'pub_da_browser_login':act==='da-tiers'?'pub_da_tiers':'pub_da_paid_dry');s.daBrowserWaiting=true;
         await C().loadInfo();C().startPoll();
       });return true;
       case "da-login": await guard("da", async () => {
@@ -2878,6 +2880,12 @@
   }
 
   async function onChange(e) {
+    if(e.target.matches('[data-da-tier]')) {
+      const s=S(),name=e.target.dataset.daTier,selected=new Set(s.pub.deviantart.subscriber_tiers||[]);
+      if(e.target.checked)selected.add(name);else selected.delete(name);
+      s.pub=await C().api('pub_save',{section:'deviantart',changes:{subscriber_tiers:[...selected]}});
+      C().render();return true;
+    }
     const t = e.target, s = S(), api = tagApi;
     if (['source','target','file','replace'].includes(t.dataset.booruCopyField)) {
       s.booruCopyPrefs ||= {};

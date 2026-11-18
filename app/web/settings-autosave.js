@@ -51,7 +51,7 @@
     }
   }
 
-  const C=()=>window.CP, platforms=['telegram','discord','vk','bluesky','deviantart','e6ai','e621','floofgens','reddit','joyreactor'];
+  const C=()=>window.CP, platforms=['telegram','discord','vk','bluesky','deviantart','e6ai','e621','floofgens','reddit','joyreactor','x'];
   const allowed={
     common:['nickname','style_tags','hidden_tags','trends'],
     light:['scale','quality','background','subsampling','sharpen'],
@@ -60,7 +60,7 @@
     e6ai:['constant_tags','preselect','with_sources','with_description','source_platforms','source_link_mode'],
     bluesky:['enabled','include_title','alt_from_title','rating','langs'],
     deviantart:['enabled','is_ai_generated','noai','originals','tags_from','allow_free_download','show_window','premium_download','premium_price_usd','subscriber_only','subscriber_tiers','rating','gallery_id','gallery_name'],
-    reddit:['enabled','show_window','communities'],joyreactor:['enabled','show_window','ai_tags','constant_tags'],
+    x:['enabled','show_window'],reddit:['enabled','show_window','communities'],joyreactor:['enabled','show_window','ai_tags','constant_tags'],
     outputs:['by_date','jpeg','gif','video'],never:['tags'],
   };
   for(const site of ['e6ai','e621','floofgens']) { allowed[site]=['constant_tags','preselect','with_sources','with_description','source_platforms','source_link_mode'];allowed['never:'+site]=['tags']; }
@@ -70,7 +70,7 @@
     if(!el)return null;
     const id=el.id,v=el.value?.trim()||'',on=!!el.checked;
     if(!id)return null;
-    const social=/^bt-(reddit|joyreactor)-(enabled|window|[A-Za-z0-9_]{3,21}|ai|constant)$/.exec(id);
+    const social=/^bt-(reddit|joyreactor|x)-(enabled|window|[A-Za-z0-9_]{3,21}|ai|constant)$/.exec(id);
     if(social){const [,key,field]=social;
       if(field==='enabled'||field==='window')return {key,patch:{[field==='enabled'?'enabled':'show_window']:on}};
       if(key==='reddit'&&!['ai','constant'].includes(field))return {key,patch:{communities:{[field]:on}}};
@@ -84,14 +84,14 @@
     const ht={htOn:{enabled:on},htN:{max_species:Number(v)},htS:{rating_tags:{sfw:v.replace(/^#/,'')}},htQ:{rating_tags:{erotic:v.replace(/^#/,'')}},htE:{rating_tags:{explicit:v.replace(/^#/,'')}},htC:{constant:words(v).map(t=>t.replace(/^#/,''))}};
     if(ht[id])return {key:'hashtags',patch:ht[id]};
     if(id.startsWith('htU-')&&platforms.includes(id.slice(4)))return {key:'hashtags',patch:{use:{[id.slice(4)]:on}}};
-    const sig=/^sig-(telegram|discord|vk|bluesky|deviantart|reddit|joyreactor)-(en-)?(sfw|nsfw)$/.exec(id);
+    const sig=/^sig-(telegram|discord|vk|bluesky|deviantart|reddit|joyreactor|x)-(en-)?(sfw|nsfw)$/.exec(id);
     if(sig)return {key:'signatures',patch:{platforms:{[sig[1]]:sig[2]?{en:{[sig[3]]:el.value}}:{[sig[3]]:el.value}}}};
     if(id.startsWith('siguse-')&&platforms.includes(id.slice(7)))return {key:'signatures',patch:{use:{[id.slice(7)]:on}}};
-    const ver=/^ver-(telegram|discord|vk|bluesky|deviantart|reddit|joyreactor|e6ai|e621|floofgens)-(ru|en|clean)$/.exec(id);
+    const ver=/^ver-(telegram|discord|vk|bluesky|deviantart|reddit|joyreactor|x|e6ai|e621|floofgens)-(ru|en|clean)$/.exec(id);
     if(ver)return {key:'versions',patch:{[ver[1]]:['ru','en','clean'].filter(k=>document.getElementById(`ver-${ver[1]}-${k}`)?.checked)}};
     const tr={trbase:{base:v},trmodel:{model:v},trstyle:{style:el.value}};
     if(tr[id])return {key:'translate',patch:tr[id]};
-    const source=/^e6source-(e6ai|e621|floofgens)-(telegram|discord|vk|bluesky|deviantart|e6ai|e621|floofgens|reddit|joyreactor)$/.exec(id);
+    const source=/^e6source-(e6ai|e621|floofgens)-(telegram|discord|vk|bluesky|deviantart|e6ai|e621|floofgens|reddit|joyreactor|x)$/.exec(id);
     if(source)return {key:source[1],patch:{source_platforms:{[source[2]]:on}}};
     const linkMode=/^e6link-(e6ai|e621|floofgens)-(post|resource)$/.exec(id);
     if(linkMode)return {key:linkMode[1],patch:{source_link_mode:linkMode[2]}};
@@ -139,7 +139,7 @@
     if(box){
       if(!error){box.remove();return;}
       const details=invalid.size?'Проверьте заполнение выделенных полей.':[...queue.errors.values()].join('; ');
-      const sections={light:'light',hashtags:'hashtags',signatures:'signatures',versions:'versions',translate:'translate',e6ai:'e6ai',bluesky:'bluesky',deviantart:'deviantart',outputs:'files',never:'tags',common:'trends',reddit:'reddit',joyreactor:'joyreactor'};
+      const sections={light:'light',hashtags:'hashtags',signatures:'signatures',versions:'versions',translate:'translate',e6ai:'e6ai',bluesky:'bluesky',deviantart:'deviantart',outputs:'files',never:'tags',common:'trends',reddit:'reddit',joyreactor:'joyreactor',x:'x'};
       Object.assign(sections,{e621:'e621',floofgens:'floofgens','never:e6ai':'tags','never:e621':'tags','never:floofgens':'tags'});
       const links=[...new Set([...queue.errors.keys(),...[...invalid.values()].map(v=>v.scope)])].filter(key=>sections[key]).map(key=>`<button class="btn small" data-view-link="settings" data-tab="${sections[key]}">${window.I18N.t('Открыть настройки с ошибкой')}</button>`).join(' ');
       box.innerHTML=`<b>${window.I18N.t('Настройки не сохранены')}</b><p>${C().esc(window.I18N.t(details))}</p><button class="btn small" data-settings-save-retry>${window.I18N.t('Повторить сохранение')}</button> <button class="btn small ghost" data-settings-save-discard ${queue.active?'disabled':''}>${window.I18N.t('Убрать несохранённые правки')}</button> ${links}`;

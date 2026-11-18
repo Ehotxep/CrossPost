@@ -251,6 +251,38 @@ def _tiers(page,names):
     return verify_closed
 
 
+
+def read_tiers(page):
+    """Read public tier controls without changing the user's selection or draft."""
+    card=_section(page,SUBSCRIBERS,lambda s:s.locator('select,[role=combobox],[aria-haspopup]').count() or s.get_by_text('Choose Tier',exact=True).count())
+    native=card.locator('select')
+    if native.count()==1:
+        names=native.locator('option').evaluate_all("els=>els.filter(e=>e.value&&!e.disabled).map(e=>e.textContent.trim())")
+    else:
+        trigger=_find([card.get_by_role('combobox'),card.get_by_role('button',name=re.compile(r'Choose Tier|Selected|Tier|Выбрать уровень',re.I)),card.locator('[aria-haspopup]')])
+        opened=False
+        try:
+            if not card.locator('input[type=checkbox],[role=checkbox],[role=option]').filter(visible=True).count():
+                trigger.click();opened=True
+            popup=_find([page.get_by_role('listbox'),page.get_by_role('menu')],False)
+            controls=(popup if popup is not None else card).locator('input[type=checkbox],[role=checkbox],[role=option]').filter(visible=True)
+            if not controls.count():raise NotPublishedError('DeviantArt: список тиров не открылся или пуст')
+            names=controls.evaluate_all("els=>els.map(e=>(e.getAttribute('aria-label')||(e.labels?.length?[...e.labels].map(l=>l.textContent).join(' '):e.closest('label')?.textContent||e.textContent)).trim().replace(/\\s+/g,' '))")
+        finally:
+            if opened:trigger.click()
+    if not names or any(not n or len(n)>100 for n in names) or len(names)!=len(set(names)):
+        raise NotPublishedError('DeviantArt: список тиров пуст или неоднозначен')
+    return names
+
+
+def load_tiers(cfg,report):
+    if not cfg.get('browser_ok'):raise NotPublishedError('Сначала войдите в DeviantArt через браузер')
+    with B.session(platform='deviantart',headless=not cfg.get('show_window',True),wait=20) as (_,page):
+        report(message='Читаю доступные тиры DeviantArt без публикации')
+        page.goto(SUBMIT,wait_until='domcontentloaded',timeout=30000)
+        _wait_form(page)
+        return read_tiers(page)
+
 def _price(page):
     card=_section(page,PREMIUM,'input[type=number],input[inputmode=decimal],input[name*=price]')
     return _find([card.get_by_label(re.compile(r'^Price\s*\*?$',re.I)),

@@ -196,19 +196,36 @@ def _post_link(url, platform, community):
     parsed = urlparse(url)
     if not _site_host_ok(platform, url):
         return ''
-    pattern = (rf'/r/{re.escape(community)}/comments/[a-z0-9]+(?:/|$)' if platform == 'reddit' else r'^/post/\d+/?$')
+    pattern = (rf'/r/{re.escape(community)}/comments/[a-z0-9]+(?:/|$)' if platform == 'reddit' else r'^/[A-Za-z0-9_]{1,15}/status/\d+/?$' if platform=='x' else r'^/post/\d+/?$')
     if re.search(pattern, parsed.path, re.I):
         return parsed._replace(query='', fragment='').geturl()
     return ''
 
 
-def x_dry(files, headless=False, progress=lambda n: None, log=lambda s: None):
-    """Fill the X composer with generated test data; never submit a post."""
-    if len(files) != 1:
-        raise NotPublishedError('Для пробы X нужно одно тестовое изображение')
+
+def _x_text(editor):
+    # innerText adds extra line breaks to Chromium's contenteditable div/br
+    # structure. Selection text reflects what copy/paste from the editor yields.
+    return editor.evaluate("""e=>{const selection=getSelection(),old=[];
+      for(let i=0;i<selection.rangeCount;i++)old.push(selection.getRangeAt(i).cloneRange());
+      const range=document.createRange();range.selectNodeContents(e);
+      try{selection.removeAllRanges();selection.addRange(range);return selection.toString();}
+      finally{selection.removeAllRanges();for(const item of old)selection.addRange(item);}}
+    """)
+
+def x_post(files, text, *, dry_run=False, nsfw=False, headless=False, progress=lambda n: None, log=lambda s: None):
+    """Submit once, confirming only a new status link from the success toast."""
+    from app.publish.browser_targets import x_length
+    if nsfw:raise NotPublishedError("X: пока поддерживаются только SFW-публикации")
+    if not text.strip() or x_length(text)>280:raise NotPublishedError("X: текст должен содержать от 1 до 280 взвешенных символов")
+    submitted=False
+    if not 1 <= len(files) <= 4:
+        raise NotPublishedError('X: от 1 до 4 изображений')
     stage = 'открытие редактора X'
-    log(f'ожидаю свободный браузер (до {DRY_BROWSER_WAIT_SECONDS} с)')
-    with B.session(headless=headless, wait=DRY_BROWSER_WAIT_SECONDS, platform="x") as (ctx, page):
+    browser_wait=DRY_BROWSER_WAIT_SECONDS if dry_run else 600
+    upload_wait=DRY_UPLOAD_WAIT_SECONDS if dry_run else UPLOAD_WAIT_SECONDS
+    log(f'ожидаю свободный браузер (до {browser_wait} с)')
+    with B.session(headless=headless, wait=browser_wait, platform="x") as (ctx, page):
         try:
             log('открываю редактор X')
             _open_form(page, _url('x'))
@@ -221,43 +238,70 @@ def x_dry(files, headless=False, progress=lambda n: None, log=lambda s: None):
             existing = scope.locator('[data-testid="attachments"] img, [data-testid="tweetPhoto"] img')
             if editor.inner_text().strip() or existing.count():
                 raise NotPublishedError('В редакторе уже есть черновик. Сохраните или очистите его перед проверкой')
-            editor.fill('Crosspost test — not published')
+            editor.fill(text)
+            if _x_text(editor)!=text:raise NotPublishedError('X: текст редактора не совпадает с подготовленным')
             progress(.25)
             stage = 'загрузка изображения'
             picker = scope.locator('input[data-testid="fileInput"][type="file"]')
             if picker.count() != 1:
                 raise NotPublishedError('Не найдено единственное поле загрузки изображений')
             picker.set_input_files(files)
-            log(f'ожидаю подтверждение загрузки изображения (до {DRY_UPLOAD_WAIT_SECONDS} с)')
-            deadline = time.monotonic() + DRY_UPLOAD_WAIT_SECONDS
+            log(f'ожидаю подтверждение загрузки изображения (до {upload_wait} с)')
+            deadline = time.monotonic() + upload_wait
             while time.monotonic() < deadline:
-                if existing.count() == 1 and existing.evaluate_all('imgs=>imgs.every(i=>i.complete && i.naturalWidth>0)'):
+                if existing.count() == len(files) and existing.evaluate_all('imgs=>imgs.every(i=>i.complete && i.naturalWidth>0)'):
                     break
                 page.wait_for_timeout(250)
             else:
-                raise NotPublishedError(f'За {DRY_UPLOAD_WAIT_SECONDS} с не удалось подтвердить загрузку изображения')
+                raise NotPublishedError(f'За {upload_wait} с не удалось подтвердить загрузку изображения')
             progress(.8)
             stage = 'проверка кнопки публикации'
             button = _find([scope.locator('[data-testid="tweetButton"]'), scope.locator('[data-testid="tweetButtonInline"]')])
             if not button.is_enabled():
                 raise NotPublishedError('X не разрешает отправку: проверьте форму')
-            shot = B.dump(page, 'x-dry')
-            B.save_cookies(ctx)
-            progress(1)
-            return {'shot': shot, 'note': 'Пробный прогон: кнопка публикации не нажималась'}
+            if dry_run:
+                shot = B.dump(page, 'x-dry')
+                B.save_cookies(ctx)
+                progress(1)
+                return {'link':'','shot':shot,'note':'Пробный прогон: кнопка публикации не нажималась'}
+            if _x_text(editor)!=text or existing.count()!=len(files):
+                raise NotPublishedError('X: содержимое изменилось перед отправкой')
+            toast=page.locator('[data-testid="toast"]').filter(has_text=re.compile(r'(Your (post|Tweet) was sent|Пост отправлен|Твит отправлен|Ваш[а-я ]* (пост|твит).*отправлен)',re.I))
+            before=set(toast.locator('a[href]').evaluate_all('els=>els.map(e=>e.href)'))
+            submitted=True
+            button.click(timeout=10000)
+            deadline=time.monotonic()+60
+            while time.monotonic()<deadline:
+                # Never take a link from the timeline or an old notification.
+                links={_post_link(url,'x','') for url in toast.locator('a[href]').evaluate_all('els=>els.map(e=>e.href)') if url not in before}-{''}
+                direct=_post_link(page.url,'x','')
+                if direct:links.add(direct)
+                if len(links)==1:
+                    B.save_cookies(ctx);progress(1)
+                    return {'link':links.pop(),'note':''}
+                page.wait_for_timeout(250)
+            raise PublicationUnknown('X: отправка нажата, но ссылка не подтверждена')
         except Exception as error:
             try:
                 shot = B.dump(page, 'x-error')
             except Exception:
                 shot = ''
+            if submitted:
+                raise PublicationUnknown('X: возможно, опубликовано; проверьте сайт перед повтором' + (f' (снимок: {shot})' if shot else '')) from error
             detail = str(error) if isinstance(error, NotPublishedError) else type(error).__name__
             raise NotPublishedError(f'{stage}: {detail}' + (f' (снимок: {shot})' if shot else '')) from error
+
+
+
+def x_dry(files, headless=False, progress=lambda n:None, log=lambda s:None):
+    if len(files)!=1:raise NotPublishedError('Для пробы X нужно одно тестовое изображение')
+    return x_post(files,'Crosspost test — not published',dry_run=True,headless=headless,progress=progress,log=log)
 
 
 def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=False,
          tags=None, dry_run=False, headless=False, progress=lambda n: None, log=lambda s: None):
     if platform == 'x':
-        raise NotPublishedError('Публикация в X ещё не подключена')
+        return x_post(files,'\n\n'.join(part for part in (title,text) if part),dry_run=dry_run,nsfw=nsfw,headless=headless,progress=progress,log=log)
     target = _url(platform, community)
     if not files or len(files) > (10 if platform == 'reddit' else 1):
         raise NotPublishedError('Reddit: 1–10 изображений; JoyReactor: пока одно изображение')

@@ -102,6 +102,9 @@ def resource_link(platform, url):
             prefix = 'r' if match[1] == 'r' else 'user'
             return f'https://www.reddit.com/{prefix}/{match[2]}/'
         return 'https://www.reddit.com/'
+    if platform=='x' and host in ('x.com','www.x.com','twitter.com','www.twitter.com'):
+        match=re.fullmatch(r'/([A-Za-z0-9_]{1,15})/status/\d+/?',path)
+        return 'https://x.com/'+match[1] if match else None
     if platform == 'joyreactor' and host in ('joyreactor.cc','www.joyreactor.cc'):
         return 'https://joyreactor.cc/'
     if platform in PLATFORMS:

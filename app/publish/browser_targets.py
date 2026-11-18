@@ -26,7 +26,7 @@ def validate_changes(platform, changes):
     import copy
     allowed = {'enabled', 'show_window'}
     allowed |= ({'communities', 'flair_rules'} if platform == 'reddit' else
-                {'constant_tags', 'ai_tags', 'rating_tags', 'tag_aliases'})
+                {'constant_tags', 'ai_tags', 'rating_tags', 'tag_aliases'} if platform=='joyreactor' else set())
     if not isinstance(changes, dict) or set(changes) - allowed:
         raise ValueError('Неизвестные настройки браузерной площадки')
     out = copy.deepcopy(changes)
@@ -128,3 +128,20 @@ def joy_tags(cfg, draft, file_ids):
     result += [aliases[t] for t in sorted(image_tags(draft, file_ids)) if t in aliases]
     # Unknown booru tags are not blindly sent to a site with its own vocabulary.
     return list(dict.fromkeys(t.strip() for t in result if t.strip()))
+
+
+
+def x_length(text):
+    """Conservative Twitter weighting: t.co URLs, double-width Unicode/emoji.
+
+    Compound emoji are counted by codepoint, so some valid edge cases are
+    rejected rather than silently truncated or posted over the normal limit.
+    """
+    count=0
+    for part in re.split(r'(https?://[^\s<>]+)',text):
+        if re.fullmatch(r'https?://[^\s<>]+',part):
+            count+=23;continue
+        for ch in part:
+            n=ord(ch)
+            count+=1 if n<=0x10ff or 0x2000<=n<=0x200d or 0x2010<=n<=0x201f or 0x2032<=n<=0x2037 else 2
+    return count
