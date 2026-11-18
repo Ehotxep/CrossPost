@@ -2880,7 +2880,7 @@
   }
 
   async function onChange(e) {
-    if(e.target.matches('[data-da-tier]')) {
+    if(e.target.dataset?.daTier!==undefined) {
       const s=S(),name=e.target.dataset.daTier,selected=new Set(s.pub.deviantart.subscriber_tiers||[]);
       if(e.target.checked)selected.add(name);else selected.delete(name);
       s.pub=await C().api('pub_save',{section:'deviantart',changes:{subscriber_tiers:[...selected]}});
