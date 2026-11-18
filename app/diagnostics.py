@@ -1,13 +1,18 @@
 """Bounded in-memory timings. Only identifiers and numbers, never request data."""
 from collections import defaultdict, deque
 import math
+from itertools import count
 import re
 import threading
 
 LIMIT = 2000
 VIEWS = {'post', 'history', 'stats', 'trends', 'settings', 'unknown'}
 KINDS = {'api', 'server_api', 'serialize', 'render', 'navigation', 'longtask', 'resource'}
-_samples = deque(maxlen=LIMIT)
+EVENT_LIMIT, ROUTINE_LIMIT = 1500, 500
+POLL = {'info', 'activity', 'tagger_state', 'worker_status', 'news', 'ui_set'}
+_samples = deque(maxlen=EVENT_LIMIT)
+_routine = deque(maxlen=ROUTINE_LIMIT)
+_sequence = count()
 _lock = threading.Lock()
 
 
@@ -55,7 +60,9 @@ def record(kind, name, ms, ok=True, request_id=None):
     if isinstance(request_id, str) and re.fullmatch(r'[a-f0-9]{8}-[0-9]{1,8}', request_id):
         item['id'] = request_id
     with _lock:
-        _samples.append(item)
+        item['_sequence'] = next(_sequence)
+        target = _routine if name in POLL and ok and ms < 250 else _samples
+        target.append(item)
 
 
 def summarize(rows):
@@ -75,7 +82,7 @@ def summarize(rows):
 
 def snapshot(client=None):
     with _lock:
-        server = list(_samples)
+        server = sorted([*_samples, *_routine], key=lambda row: row.get('_sequence', 0))
     server = [r for r in sanitize(server) if r['kind'] in {'server_api', 'serialize'}]
     client = [r for r in sanitize(client) if r['kind'] in {'api', 'render', 'navigation', 'longtask', 'resource'}]
     return dict(limit=LIMIT, scope='current process and browser session',

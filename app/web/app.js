@@ -283,7 +283,7 @@
     navBadge(); updBadge(); updModal();
     const running = Object.values(S.info.trends).some((t) => t.job && t.job.state === "running") ||
       (S.info.tg_job && S.info.tg_job.state === "running") ||
-      (S.info.pub_job && S.info.pub_job.state === "running") || (S.info.vk_job && S.info.vk_job.state === "running") ||
+      (S.info.da_browser_job && S.info.da_browser_job.state === "running") || (S.info.pub_job && S.info.pub_job.state === "running") || (S.info.vk_job && S.info.vk_job.state === "running") ||
       Object.values(S.info.browser_jobs||{}).some(j=>j?.state==="running") ||
       (S.info.ins_job && S.info.ins_job.state === "running") || (S.info.update && S.info.update.job && S.info.update.job.state === "running");
     if (running && !poll) poll = setInterval(tick, 1000);
@@ -353,19 +353,22 @@
     try { S.tgCh = await api("tg_channels", { refresh: false }); } catch (e) { /* покажем позже */ }
   }
   // статус входа: сначала последний известный (сразу), настоящая проверка — следом, без ожидания экрана
+  let tgStatusCheck = null;
   async function loadTg(refresh) {
+    if (!refresh && !["telegram", "import", "net"].includes(S.platSec)) return;
     try {
       if (!S.tg) S.tg = await api("tg_status_quick");
       await loadChannels();
     } catch (e) { S.tgErr = e.message; }
-    const check = (async () => {
+    if (tgStatusCheck) { if (!refresh) return; await tgStatusCheck; }
+    const check = tgStatusCheck = (async () => {
       try {
-        S.tg = await api("tg_status");
+        S.tg = await api("tg_status", {}, {silent:!refresh});
         S.tgErr = S.tg.error || "";
         if (refresh && S.tg.authorized) S.tgCh = await api("tg_channels", { refresh: true });
       } catch (e) { S.tgErr = e.message; }
       if (S.view === "settings") quietRender();
-    })();
+    })().finally(() => { tgStatusCheck = null; });
     if (refresh) await check;
   }
   function quietRender() {
@@ -1678,7 +1681,7 @@
     const mon = e.target.closest("[data-modon]");
     if (mon) { S.info.modules = await api("modules_set", { key: mon.dataset.modon, on: true }); S.plan = null; await window.Pub.load("settings"); render(); return; }
     const ps = e.target.closest("[data-psec]");
-    if (ps) { S.platSec = ps.dataset.psec; store.set("platSec", S.platSec); render(); window.scrollTo(0, 0); return; }
+    if (ps) { S.platSec = ps.dataset.psec; store.set("platSec", S.platSec); render(); window.scrollTo(0, 0); await loadTg(false); return; }
     const link = e.target.closest("[data-view-link]");
     if (link) { e.preventDefault(); S.view = link.dataset.viewLink === "platforms" ? "settings" : link.dataset.viewLink; store.set("view", S.view);
       if (link.dataset.tab) { S.platSec = link.dataset.tab; store.set("platSec", S.platSec); }

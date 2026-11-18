@@ -205,6 +205,10 @@
       s.tagger = await C().api("tagger_status");
       if (!(s.tagger.job && s.tagger.job.state === "running")) s.tagWaiting = false;
     }
+    if (s.daBrowserWaiting) {
+      const result=await C().api('pub_da_browser_state');
+      if(result.job?.state!=='running') {s.daBrowserWaiting=false;s.pub=result.settings;if(result.job?.error){s.pubErr ||= {};s.pubErr.da=result.job.error;}}
+    }
     if (s.vkStatsWaiting && s.info && s.info.vk_stats_job && s.info.vk_stats_job.state !== "running") {
       s.vkStatsWaiting = false; s.pub = await C().api("pub_settings");
     }
@@ -658,18 +662,28 @@
     return !!(e6 && e6.enabled && !(draft().exclude || []).includes(BN()));
   }
   function booruCopyHtml(d) {
-    const s = S(), target = BN(), prefs = s.booruCopyPrefs?.[target] || {};
+    const s = S(), prefs = s.booruCopyPrefs?.[BN()] || {};
+    const target = BOORUS.includes(prefs.target) ? prefs.target : BN();
     const names = {e6ai:'blep.art',e621:'e621',floofgens:'floofgens.net'};
-    const sources = BOORUS.filter(site => site !== target).map(site => ({site, count:d.files.filter(f => (d.booru_posts?.[site]?.tags?.[f.id] || []).length).length}));
+    const sources = BOORUS.filter(site => site !== target).map(site => ({site, count:d.files.reduce((n,f) => n+(d.booru_posts?.[site]?.tags?.[f.id] || []).length,0)}));
     const available = sources.filter(item => item.count);
     const source = available.some(item => item.site === prefs.source) ? prefs.source : available[0]?.site;
-    return `<details class="more" data-booru-copy-panel data-detail-key="booru-copy-${target}"><summary>Копировать теги с другой площадки</summary>
-      ${!available.length ? `<p class="muted small">На других площадках ещё нет выбранных тегов для этих файлов.</p>` : `<div class="row booru-copy-controls">
-        <div class="field"><label for="booru-copy-source">Источник тегов</label><select id="booru-copy-source" data-booru-copy-field="source">${sources.map(item => `<option value="${item.site}" ${item.site === source ? 'selected' : ''} ${item.count ? '' : 'disabled'}>${names[item.site]} · ${item.count}</option>`).join('')}</select></div>
-        <div class="field"><label for="booru-copy-file">Для файлов</label><select id="booru-copy-file" data-booru-copy-field="file"><option value="all">Весь пост</option>${d.files.map((f,i) => `<option value="${esc(f.id)}" ${prefs.file === f.id ? 'selected' : ''}>${i+1}. ${esc(f.name || f.id)}</option>`).join('')}</select></div>
-        <div class="field"><label for="booru-copy-mode">Способ копирования</label><select id="booru-copy-mode" data-booru-copy-field="mode"><option value="merge">Добавить без дублей</option><option value="replace" ${prefs.mode === 'replace' ? 'selected' : ''}>Заменить теги</option></select></div>
-        <button class="btn small" data-pa="booru-copy-tags">Копировать в ${names[target]}</button></div>
-        <p class="muted small">Копируются выбранные теги соответствующих файлов. Файлы без исходных тегов пропускаются. Постоянные теги и настройки сайтов не меняются; проверку «Всё верно» нужно пройти заново.</p>`}</details>`;
+    return `<div class="booru-copy-panel" data-booru-copy-panel role="group" aria-label="Копирование тегов между площадками"><h4>Копировать теги между площадками</h4>
+      <div class="booru-copy-direction"><div class="field"><label for="booru-copy-source">Откуда</label><select id="booru-copy-source" data-booru-copy-field="source">${sources.map(item => `<option value="${item.site}" ${item.site === source ? 'selected' : ''} ${item.count ? '' : 'disabled'}>${names[item.site]} · тегов: ${item.count}</option>`).join('')}</select></div>
+      <span class="booru-copy-arrow" aria-hidden="true">→</span><div class="field"><label for="booru-copy-target">Куда</label><select id="booru-copy-target" data-booru-copy-field="target">${BOORUS.map(site=>`<option value="${site}" ${site===target?'selected':''}>${names[site]}</option>`).join('')}</select></div></div>
+      ${!available.length ? `<p class="muted small">На других площадках ещё нет выбранных тегов для этих файлов.</p>` : ''}
+      <div class="row booru-copy-controls"><div class="field"><label for="booru-copy-file">Для файлов</label><select id="booru-copy-file" data-booru-copy-field="file"><option value="all">Весь пост</option>${d.files.map((f,i) => `<option value="${esc(f.id)}" ${prefs.file === f.id ? 'selected' : ''}>${i+1}. ${esc(f.name || f.id)}</option>`).join('')}</select></div>
+      <label class="booru-copy-replace"><input type="checkbox" id="booru-copy-mode" data-booru-copy-field="replace" ${prefs.mode==='replace'?'checked':''}> Заменить выбранные теги</label>
+      <button class="btn primary" data-pa="booru-copy-tags" ${available.length?'':'disabled'}>Копировать</button></div>
+      <p class="muted small">По умолчанию теги добавляются без дублей. Исходные теги сохраняются. После копирования проверьте теги на принимающем сайте.</p></div>`;
+  }
+  async function selectBooruTags(site, run=false) {
+    const s=S();
+    if(!BOORUS.includes(site))return;
+    s.booruTagSite=site;s.e6db=null;s.e6form={};s.e6preds={};s.e6cats={};s.tagCat={};
+    draft();C().render();
+    try {const status=await C().api('e6db_status',{booru_site:site});if(BN()===site)s.e6db=status;}catch(_){/* form remains editable */}
+    if(BN()===site){await loadTags(run);C().render();}
   }
   function e6Html() {
     const s = S(), d = draft();
@@ -777,10 +791,7 @@
     if (!force && ae && ae.classList && ae.classList.contains("taginput") && el.contains(ae)) { paintSide(); return; }   // не мешаем печатать
     // открытые «Остальное» не схлопываем
     S().e6open = Object.fromEntries([...el.querySelectorAll("details.frest")].map((x) => [x.dataset.fid, x.open]));
-    const copyOpen = el.querySelector('[data-booru-copy-panel]')?.open;
     el.outerHTML = e6Html();
-    const copyPanel = document.querySelector('#e6card [data-booru-copy-panel]');
-    if (copyPanel && copyOpen) copyPanel.open = true;
     paintSide();
   }
   function e6toggle(id, row, tag, on) {
@@ -873,7 +884,7 @@
     const doneL = p.dests.filter((x) => x.done);
     const needs = p.dests.filter(isNeed);
     const row = (x) => `<label class="drow ${x.will ? "" : isNeed(x) ? "needrow" : "dim"}">${C().pbadge(x.platform, { cls: x.will || isNeed(x) ? "" : "off" })}
-        <span class="dn"><b translate="no">${esc(BOORUS.includes(x.platform) ? x.name : x.name.replace(/^[^·]+· /, ""))}</b><span>${x.will ? esc(x.details.join(", ")) : esc(x.reason)}${isNeed(x) ? ` · <a href="#" data-pa="e6need">к тегам</a>` : ""}</span></span>
+        <span class="dn"><b translate="no">${esc(BOORUS.includes(x.platform) ? x.name : x.name.replace(/^[^·]+· /, ""))}</b><span>${x.will ? esc(x.details.join(", ")) : esc(x.reason)}${isNeed(x) ? ` · <a href="#" data-pa="e6need" data-site="${esc(x.platform)}">к тегам</a>` : ""}</span></span>
         <span class="tgl"><input type="checkbox" ${x.will || isNeed(x) ? "checked" : ""} ${x.can_toggle || x.off ? "" : "disabled"} data-pa="toggle" data-key="${esc(x.key)}" aria-label="${esc(x.name)}"></span></label>`;
     // пока пост только собирается, «выберите рейтинг» и «добавьте картинки» — не ошибки, а подсказки:
     // красным они становятся, только если нажать «Опубликовать» раньше времени
@@ -1661,7 +1672,7 @@
       case "x": return p.x.browser_ok ? ["ok", "вход сохранён · только проверка"] : ["", "не подключено"];
       case "reddit": case "joyreactor": return p[sec].browser_ok ? [p[sec].enabled?"ok":"warn",p[sec].enabled?"через браузер · экспериментально":"отправка выключена"] : ["", "не подключено"];
       case "bluesky": { const b = p.bluesky_session || {}; return b.ok && p.bluesky.enabled ? ["ok", "@" + b.handle] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
-      case "deviantart": { const b = p.deviantart_session || {}; return b.ok && p.deviantart.enabled ? ["ok", b.username || "подключено"] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
+      case "deviantart": { const b = p.deviantart_session || {}, d=p.deviantart, paid=d.premium_download||d.subscriber_only, ready=paid?d.browser_ok:b.ok; return ready && d.enabled ? ["ok", paid?"браузер · платный доступ":b.username || "подключено"] : ready ? ["warn", "выключено"] : ["", "не подключено"]; }
       case "e6ai": case "e621": case "floofgens": { const cfg = p[sec]; return cfg.enabled && cfg.has_key ? ["ok", cfg.username || "подключено"] : ["", "не подключено"]; }
       case "hashtags": return p.hashtags.enabled ? ["ok", "включены"] : ["", "выключены"];
       case "signatures": { const on = TEXTP.filter((k) => { const v = (p.signatures.platforms || {})[k] || {}; return v.sfw || v.nsfw; });
@@ -1694,6 +1705,7 @@
 
     if (sec === "telegram") {
       h += `<section class="card setc"><div class="head"><h2>${C().pbadge("telegram")} Telegram</h2></div>${err("tg")}${ok("tg")}`;
+      h += `<p class="muted small">Подсказки каналов берутся из сохранённого списка. <button class="btn small ghost" data-pa="tg-known-refresh" ${busy("tg")}>Обновить список из Telegram</button></p>`;
       if (!tg.has_token || s.tgNewToken) {
         h += `<details class="how" ${tg.has_token ? "" : "open"}><summary>Как подключить бота</summary><ol class="steps">
             <li>Если бота ещё нет: напишите <a href="#" data-open="https://t.me/BotFather">@BotFather</a> и отправьте /newbot.</li>
@@ -2022,7 +2034,7 @@
   }
   function daHtml(err, ok, busy) {
     const s = S(), p = s.pub, d = p.deviantart, ss = p.deviantart_session || {}, hint = C().hint;
-    let h = `<section class="card setc"><div class="head"><h2>${C().pbadge("deviantart")} DeviantArt ${hint("Официальный API DeviantArt. Каждая картинка — отдельная работа. Эротика уходит как Mature (moderate, nudity); откровенное правила DeviantArt запрещают — такие посты сюда не уходят. Видео DeviantArt не принимает.")}</h2>
+    let h = `<section class="card setc"><div class="head"><h2>${C().pbadge("deviantart")} DeviantArt ${hint("Обычные публикации — через API; платное скачивание и тиры — через отдельный браузер (экспериментально). Каждая картинка — отдельная работа. Эротика уходит как Mature (moderate, nudity); откровенное правила DeviantArt запрещают — такие посты сюда не уходят. Видео DeviantArt не принимает.")}</h2>
       ${ss.ok ? `<span class="badge ok">✓ ${esc(ss.username || "подключено")}</span>` : `<span class="badge off">не подключено</span>`}</div>${err("da")}${ok("da")}`;
     if (!ss.ok) {
       h += `<ol class="steps"><li>Откройте <a href="#" data-open="https://www.deviantart.com/developers/apps">deviantart.com/developers/apps</a> → <b>Register Application</b>.</li>
@@ -2052,6 +2064,23 @@
         <div class="cardfoot"><button class="btn primary" data-pa="da-save">Сохранить</button><button class="btn ghost" data-pa="da-logout">Выйти</button>
           <span class="muted small">Вход действует 3 месяца, потом DeviantArt попросит войти заново.</span></div>`;
     }
+    if(!ss.ok)h+=`<div class="tgls"><label class="tgl"><input type="checkbox" id="daon" ${d.enabled?'checked':''}><span>Публиковать на DeviantArt</span></label>
+      <label class="tgl"><input type="checkbox" id="daai" ${d.is_ai_generated!==false?'checked':''}><span>Отмечать как созданное ИИ</span></label>
+      <label class="tgl"><input type="checkbox" id="danoai" ${d.noai!==false?'checked':''}><span>Запретить использовать для обучения ИИ</span></label></div>`;
+    h += `<details class="more" data-detail-key="da-access-defaults" ${s.editorDetails?.['da-access-defaults']?'open':''}><summary>Продажи и подписки — параметры по умолчанию</summary>
+      <p class="muted small">Экспериментальный режим. Платные работы отправляются через отдельный браузер DeviantArt. Сначала выполните вход и пробный прогон. Обычные публикации продолжают работать через API.</p>
+      <div class="row"><span class="badge ${d.browser_ok?'ok':'off'}">${d.browser_ok?'✓ Вход в браузере сохранён':'Вход в браузере не выполнен'}</span>
+        <button class="btn small" data-pa="da-browser-login" ${s.daBrowserWaiting?'disabled':''}>Войти в браузере DeviantArt</button>
+        <button class="btn small primary" data-pa="da-paid-dry" ${s.daBrowserWaiting||!d.browser_ok||!(d.premium_download||d.subscriber_only)?'disabled':''}>Проверить без публикации</button></div>
+      ${s.info?.da_browser_job?.state==='running'?`<p class="muted small">${esc(s.info.da_browser_job.message||'Работаю с DeviantArt…')}</p>`:''}
+      <label class="tgl"><input type="checkbox" id="dashow" ${d.show_window!==false?'checked':''}><span>Показывать окно браузера</span></label>
+      <label class="tgl"><input type="checkbox" id="dapremium" ${d.premium_download?'checked':''}><span>Платное скачивание оригинала по умолчанию</span></label>
+      <div class="field"><label for="daprice">Цена по умолчанию, USD</label><input id="daprice" inputmode="decimal" maxlength="10" value="${esc(d.premium_price_usd||'')}" placeholder="Укажите цену"></div>
+      <label class="tgl"><input type="checkbox" id="dasubscriber" ${d.subscriber_only?'checked':''}><span>Публиковать для подписчиков по умолчанию</span></label>
+      <div class="field"><label for="datiers">Тиры по умолчанию — по одному названию на строку</label><textarea id="datiers" rows="4" placeholder="Название уровня подписки">${esc((d.subscriber_tiers||[]).join('\n'))}</textarea></div>
+      <p class="muted small">Укажите точные названия тиров из вашего аккаунта, по одному на строку. Перед отправкой CrossPost проверит выбранные тиры и цену. Параметры сохраняются автоматически.</p></details>`;
+    if(d.paid_dry_note)h+=`<p class="ok small">${esc(d.paid_dry_note)}</p>`;
+    if(d.paid_dry_shot)h+=`<figure class="shot"><img src="/bdebug/${encodeURIComponent(d.paid_dry_shot)}?t=${tok()}" alt="Пробный прогон DeviantArt"></figure>`;
     return h + `</section>`;
   }
   function filesHtml(err, ok, busy, tgl, hint) {
@@ -2399,6 +2428,10 @@
         s.pub = await api("pub_save", { section: "bluesky", changes: { enabled: !!snap.bson, include_title: !!snap.bstitle, alt_from_title: !!snap.bsalt,
           rating: val("bsrating") || "all", langs: val("bslang").split(/[\s,]+/).filter(Boolean).slice(0, 3) } });
         s.pubOk.bs = "Сохранено"; }); return true;
+      case "da-browser-login": case "da-paid-dry": await guard('da',async()=>{
+        await api(act==='da-browser-login'?'pub_da_browser_login':'pub_da_paid_dry');s.daBrowserWaiting=true;
+        await C().loadInfo();C().startPoll();
+      });return true;
       case "da-login": await guard("da", async () => {
         await api("pub_da_login", { client_id: val("daid"), client_secret: val("dasecret") });
         s.daWaiting = true;
@@ -2437,8 +2470,8 @@
         poll(); return true;
       }
       case "booru-copy-tags": {
-        const source = val('booru-copy-source'), target = BN();
-        const mode = val('booru-copy-mode') || 'merge', file = val('booru-copy-file') || 'all';
+        const source = val('booru-copy-source'), target = val('booru-copy-target') || BN();
+        const mode = snap['booru-copy-mode'] ? 'replace' : 'merge', file = val('booru-copy-file') || 'all';
         const names = {e6ai:'blep.art',e621:'e621',floofgens:'floofgens.net'};
         const result = window.PostState.copyBooruTags(d, source, target, {mode,file});
         if (!result.copied) { C().toast('Нет выбранных тегов для копирования', 'warn'); return true; }
@@ -2446,7 +2479,7 @@
         d.booru_posts = result.posts;
         draft(); // Rebind the active site's editor aliases to the copied slot.
         await e6changed(true);
-        C().toast(`Теги скопированы: ${result.copied}. Пропущено файлов без тегов: ${result.skipped}`, 'ok');
+        C().toast(`Теги скопированы в ${names[target]}. Обработано файлов: ${result.copied}, пропущено: ${result.skipped}.`, 'ok');
         return true;
       }
       case "e6copy": {
@@ -2467,7 +2500,7 @@
         };
         poll(); return true;
       }
-      case "e6need": { const el = document.getElementById("e6card"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return true; }
+      case "e6need": { await selectBooruTags(a.dataset.site || BN()); const el = document.getElementById("e6card"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return true; }
       case "e6run": await loadTags(true, true); return true;
       case "view-close": s.viewFile = null; C().render(); return true;
       case "view-prev": viewStep(-1); return true;
@@ -2729,6 +2762,7 @@
         if (s.pubKnown && s.pubKnown.authorized) { try { s.topics = await api("pub_tg_topics", { chat_id: info.id }); } catch (e) { s.topics = null; } }
       }); return true;
       case "tg-groupdel": await saveSec("telegram", { group: { id: "", title: "", sfw_topic: 0, nsfw_topic: 0, sfw_topic_title: "", nsfw_topic_title: "" } }); s.topics = null; C().render(); return true;
+      case "tg-known-refresh": await guard("tg", async () => { s.pubKnown = await api("pub_tg_known", {refresh:true}); }); return true;
       case "tg-topics": await guard("tg", async () => { s.topics = await api("pub_tg_topics", { chat_id: s.pub.telegram.group.id }); }); return true;
       case "tg-topicsave": await guard("tg", async () => {
         const g = {};
@@ -2783,13 +2817,7 @@
       case "vk-method": s.pub = await api("pub_vk_method", { method: a.dataset.val }); C().render(); return true;
       case "vk-blogin": await guard("vk", async () => { await api("pub_vk_browser_login"); s.vkWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
       case "vk-bgroup": await guard("vk", async () => { s.pub = await api("pub_vk_browser_group", { group: val("vkbgroup") }); s.pubOk.vk = "Группа сохранена. Сделайте пробный прогон."; }); return true;
-      case "booru-tags": {
-        s.booruTagSite = a.dataset.site;
-        s.e6db = null; s.e6form = {}; s.e6preds = {}; s.e6cats = {}; s.tagCat = {};
-        draft();
-        try { s.e6db = await tagApi('e6db_status'); s.e6learn = await tagApi('e6_learned'); } catch (err) { /* errors are shown by the corresponding cards */ }
-        await loadTags(false); C().render(); return true;
-      }
+      case "booru-tags": await selectBooruTags(a.dataset.site); return true;
       case "vk-stats": await guard("vk", async () => { await api("pub_vk_stats", { url: val("vkstats") }); s.vkStatsWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
       case "vk-recon": await guard("vk", async () => { await api("pub_vk_recon", { url: val("vkstats") }); s.vkWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
       case "vk-dry": await guard("vk", async () => { await api("pub_vk_dry", { kind: a.dataset.kind || "images" }); s.vkWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
@@ -2851,9 +2879,10 @@
 
   async function onChange(e) {
     const t = e.target, s = S(), api = tagApi;
-    if (['source','file','mode'].includes(t.dataset.booruCopyField)) {
+    if (['source','target','file','replace'].includes(t.dataset.booruCopyField)) {
       s.booruCopyPrefs ||= {};
-      s.booruCopyPrefs[BN()] = {...s.booruCopyPrefs[BN()], [t.dataset.booruCopyField]:t.value};
+      s.booruCopyPrefs[BN()] = {...s.booruCopyPrefs[BN()], ...(t.dataset.booruCopyField==='replace'?{mode:t.checked?'replace':'merge'}:{[t.dataset.booruCopyField]:t.value})};
+      if(t.dataset.booruCopyField==='target')C().render();
       return true;
     }
     if(t.dataset.redditCustomFlair){
@@ -2898,8 +2927,8 @@
       d.exclude = d.exclude.filter((x) => x !== k);
       if (!t.checked) d.exclude.push(k);
       saveDraft(); await refreshPlan(); paintSide();
-      if (k === "e6ai" && t.checked) { await loadTags(true); if (s.view === "post") C().render(); }   // включили — подбираем теги
-      else if (k === "e6ai") { s.e6form = {}; if (s.view === "post") C().render(); }
+      if (BOORUS.includes(k) && t.checked) await selectBooruTags(k,true);
+      else if (BOORUS.includes(k)) { s.e6form = {}; if (s.view === "post") C().render(); }
       return true;
     }
     if (t.dataset.dfield === "multi") {

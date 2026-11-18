@@ -105,6 +105,8 @@ DEFAULTS = {
         "enabled": False, "client_id": "", "client_secret": "", "redirect_uri": "http://localhost:8765/callback",
         "rating": "all",         # откровенное сюда не уходит никогда — правила DeviantArt
         "is_ai_generated": True, "noai": True, "allow_comments": True, "allow_free_download": False,
+        "browser_ok": False, "show_window": True, "paid_dry_shot": "", "paid_dry_note": "",
+        "premium_download": False, "premium_price_usd": "", "subscriber_only": False, "subscriber_tiers": [],
         "gallery_id": "", "gallery_name": "", "originals": True,   # PNG-оригинал (до 30 МБ), иначе лёгкая версия
         "tags_from": "hashtags",  # hashtags — теги из хэштегов поста; none — без тегов
     },
@@ -285,6 +287,11 @@ def save(cfg: dict) -> dict:
 @_locked
 def update(section: str, changes: dict) -> dict:
     cfg = load(raw=True)
+    if section == 'deviantart':
+        from app.publish.da_access import validate_changes
+        changes = validate_changes(changes)
+        if any(k in changes and changes[k] != cfg[section].get(k) for k in ('premium_download','premium_price_usd','subscriber_only','subscriber_tiers','is_ai_generated','noai','gallery_id')):
+            changes.update(paid_dry_note='',paid_dry_shot='')
     if section in BOORU_PLATFORMS and 'source_link_mode' in changes and changes['source_link_mode'] not in ('post','resource'):
         raise ValueError('Неизвестный вид ссылки-источника')
     if section in BOORU_PLATFORMS and 'source_platforms' in changes:

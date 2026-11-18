@@ -39,6 +39,7 @@ class Api:
                 "tg_job": self.jobs.get("tg:sync"), "pub_job": self.jobs.get("publish"),
                 "ins_job": self.jobs.get("insights:tag"),
                 "browser_jobs": {p: self.jobs.get(p + ":auth") for p in ('reddit', 'joyreactor', 'x')},
+                "da_browser_job": self.jobs.get("da:browser"),
                 "vk_job": self.jobs.get("vk:auth"), "vk_stats_job": self.jobs.get("vk:stats"), "modules": self.modules(), "tagger_paused": __import__("app.tagger.remote", fromlist=["x"]).paused, "levels": self._levels(),
                 "update": self._update_info()}
 
@@ -106,7 +107,8 @@ class Api:
         return PS.module_on(key)
 
     # --- панель процессов: всё, что сейчас идёт в фоне ---
-    JOB_LABELS = {"tg:pool": ("Запас прокси Telegram", "settings:net"), "ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды blep.art", "trends"), "trends:e621": ("Тренды e621", "trends"), "trends:floofgens": ("Тренды floofgens.net", "trends"),
+    JOB_LABELS = {
+        "da:browser": ("DeviantArt: платная публикация", "settings:deviantart"),"tg:pool": ("Запас прокси Telegram", "settings:net"), "ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды blep.art", "trends"), "trends:e621": ("Тренды e621", "trends"), "trends:floofgens": ("Тренды floofgens.net", "trends"),
                   "e6db": ("База тегов blep.art", "settings:tags"), "tagger:install": ("Установка теггера", "settings:tags"),
                   "tagger:run": ("Подбор тегов", "post"), "publish": ("Публикация", "post"),
                   "tg:sync": ("Загрузка из Telegram", "settings:import"), "insights:tag": ("Разметка истории теггером", "stats"),
@@ -573,6 +575,34 @@ class Api:
         deviantart.logout()
         return self.pub_settings()
 
+    def pub_da_browser_login(self):
+        from app.publish import da_web, settings as PS
+        def run(report):
+            da_web.login(report)
+            PS.update('deviantart',{'browser_ok':True,'enabled':True})
+        return self.jobs.start('da:browser',run)
+
+    def pub_da_browser_state(self):
+        return {'job':self.jobs.get('da:browser'),'settings':self.pub_settings()}
+
+    def pub_da_paid_dry(self):
+        from app.publish import settings as PS,da_web
+        from app.publish.da_access import blocked_reason,requested
+        cfg=PS.load()['deviantart']
+        if not requested(cfg):raise ValueError('Выберите платное скачивание или тиры DeviantArt')
+        reason=blocked_reason(cfg)
+        if reason:raise ValueError(reason)
+        def run(report):
+            from PIL import Image
+            import io
+            data=io.BytesIO();Image.new('RGB',(800,600),(91,103,240)).save(data,format='PNG')
+            result=da_web.publish(cfg,[('crosspost-test-original.png',data.getvalue(),'image/png')],
+                'CrossPost test - not published','CrossPost paid access test',[], 'sfw',dry_run=True,
+                progress=lambda value:report(progress=value))[0]
+            PS.update('deviantart',{'paid_dry_shot':result.get('shot',''),'paid_dry_note':result.get('note','')})
+            report(progress=1,message=result.get('note','Пробный прогон завершён без публикации'))
+        return self.jobs.start('da:browser',run)
+
     def pub_da_galleries(self):
         from app.publish import settings as PS
         import app.publish.runner  # noqa: F401
@@ -681,14 +711,19 @@ class Api:
             raise ValueError("Сначала укажите токен бота")
         return tg_bot.chat_info(cfg, chat, need_post=not group)
 
-    def pub_tg_known(self):
-        """Каналы и группы, которые знает импорт (если выполнен вход через API — с пометкой канал/группа)."""
-        try:
-            authorized = self.tg.keys() is not None and self.tg.status().get("authorized")
-        except Exception:
-            authorized = False
-        rows = self.tg.channels(refresh=bool(authorized))
-        return {"authorized": bool(authorized),
+    def pub_tg_known(self, refresh: bool = False):
+        """Saved chat suggestions are local; contact Telegram only on explicit refresh."""
+        from app import cache
+        if refresh:
+            status = self.tg_status()
+            authorized = bool(status.get('authorized'))
+            if not authorized:
+                raise ValueError(status.get('error') or 'Для обновления списка войдите в Telegram через API')
+        else:
+            saved = cache.read('tg_status')
+            authorized = bool(saved and saved.get('data', {}).get('authorized'))
+        rows = self.tg.channels(refresh=bool(refresh and authorized))
+        return {"authorized": authorized,
                 "chats": [{"chat_id": r["chat_id"], "title": r["title"], "username": r["username"],
                            "broadcast": r.get("broadcast")} for r in rows]}
 

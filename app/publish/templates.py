@@ -14,7 +14,7 @@ OPTIONS = {
     'discord': ('include_title', 'no_previews', 'blur_nsfw', 'max_file_mb', 'short_links'),
     'reddit': (), 'joyreactor': (),
     'vk': ('include_title',), 'bluesky': ('include_title', 'alt_from_title', 'langs'),
-    'deviantart': ('is_ai_generated', 'noai', 'originals', 'tags_from'),
+    'deviantart': ('is_ai_generated', 'noai', 'originals', 'tags_from', 'premium_download', 'premium_price_usd', 'subscriber_only', 'subscriber_tiers'),
     'e6ai': ('constant_tags', 'with_description', 'with_sources', 'source_platforms', 'source_link_mode'),
     'e621': ('constant_tags', 'with_description', 'with_sources', 'source_platforms', 'source_link_mode'),
     'floofgens': ('constant_tags', 'with_description', 'with_sources', 'source_platforms', 'source_link_mode'),

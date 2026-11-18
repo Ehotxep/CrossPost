@@ -465,14 +465,20 @@ def plan(draft: dict) -> dict:
     # DeviantArt
     use("deviantart")
     da = cfg["deviantart"]
+    from app.publish.da_access import blocked_reason, requested
     da_tok = core_common.load_token("deviantart") or {}
-    if da.get("enabled") and da_tok.get("access_token"):
+    if da.get("enabled") and (da_tok.get("access_token") or (requested(da) and da.get("browser_ok"))):
         configured.append("deviantart")
-        name = f"DeviantArt · {da_tok.get('username') or 'аккаунт'}"
+        name = "DeviantArt · аккаунт браузера" if requested(da) else f"DeviantArt · {da_tok.get('username') or 'аккаунт'}"
         if rating == "explicit":
             add("deviantart", "deviantart", name, False, "откровенное запрещено правилами DeviantArt", toggle=False)
         elif not _allowed(da.get("rating"), mature):
             add("deviantart", "deviantart", name, False, _rating_reason(da.get("rating")), toggle=False)
+        elif blocked_reason(da):
+            reason = blocked_reason(da)
+            add('deviantart','deviantart',name,False,reason)
+            if 'deviantart' not in off:
+                errors.append('DeviantArt: '+reason)
         elif kind == "video":
             add("deviantart", "deviantart", name, False, "DeviantArt не принимает видео", toggle=False)
         elif kind == "gif" and anim["size"] > DA.FILE_MAX_BYTES:
@@ -480,7 +486,10 @@ def plan(draft: dict) -> dict:
         else:
             n = len(files)
             what = "GIF" if kind == "gif" else (f"{n} работ{'а' if n == 1 else 'ы' if n < 5 else ''}" + (" PNG-оригиналами" if da.get("originals", True) else " JPEG-превью"))
-            add("deviantart", "deviantart", name, True, details=[what + (" · Mature" if mature else "") + (" · отмечено как ИИ" if da.get("is_ai_generated", True) else "")])
+            if requested(da):
+                what = f"{n} работ · " + ("JPEG-превью + платный оригинал" if da.get('premium_download') else "оригиналы для подписчиков")
+            access = (f" · Premium Download ${da['premium_price_usd']} USD" if da.get('premium_download') else '') + (' · тиры: '+', '.join(da.get('subscriber_tiers',[])) if da.get('subscriber_only') else '')
+            add("deviantart", "deviantart", name, True, details=[what + (" · Mature" if mature else "") + (" · отмечено как ИИ" if da.get("is_ai_generated", True) else "") + access])
 
     # Each booru is an independent target. Its tags are validated against its own database.
     for platform in B.PLATFORMS:
@@ -609,6 +618,13 @@ def _save_pub():
                 # Связь фиксируется до первой отправки: после падения процесса отсутствие
                 # результата нельзя принять за гарантированный отказ и повторить пост.
                 c.execute("UPDATE scheduled SET pub_id=? WHERE id=?", (cur.lastrowid, sid))
+
+
+def _da_paid_checkpoint(key, items):
+    # Persist each confirmed work before starting another file in the batch.
+    _set(key, paid_confirmed=items,
+         link=next((r['url'] for r in items.values() if r.get('url')), ''))
+    _save_pub()
 
 
 UNATTENDED_WAIT = 45 * 60   # публикация по расписанию без человека: повторы загрузки PNG не дольше 45 минут
@@ -1050,9 +1066,13 @@ def _run(draft, report, only):
                 elif key == "deviantart":
                     from platforms import deviantart as DA
                     da = cfg["deviantart"]
+                    from app.publish.da_access import requested
+                    paid = requested(da)
+                    if not paid and any(x.get('paid_confirmed') for x in state()['dests'] if x['key']==key):
+                        raise NotPublishedError('Часть работ уже опубликована платно: повтор в обычном режиме остановлен')
                     up = []
                     for f in files:
-                        if kind == "images" and not (da.get("originals", True) and f["size"] <= DA.FILE_MAX_BYTES):
+                        if not paid and kind == "images" and not (da.get("originals", True) and f["size"] <= DA.FILE_MAX_BYTES):
                             im = prep.get_light(f["id"], f["path"], cfg["light"], max_bytes=DA.FILE_MAX_BYTES)
                             up.append((Path(f["name"]).stem + ".jpg", im.data, im.mime))
                         else:
@@ -1062,8 +1082,11 @@ def _run(draft, report, only):
                     tags = HT.final(cfg, draft) if da.get("tags_from", "hashtags") == "hashtags" else []
                     tags = [t for t in tags if t.lower() not in ("sfw", "nsfw")]
                     _set(key, message="загружаю на DeviantArt…"); prog(0.1)
+                    current = next((x for x in state()['dests'] if x['key']==key), {})
+                    kwargs = {'already':current.get('paid_confirmed',{}),
+                              'confirmed':lambda items:_da_paid_checkpoint(key,items)} if paid else {}
                     urls = DA.publish(da, up, title_for(cfg, draft, "deviantart"), signed_text(cfg, draft, "deviantart"), tags,
-                                      draft["rating"], progress=prog)
+                                      draft["rating"], progress=prog, **kwargs)
                     _set(key, state="done", message="", link=next((u["url"] for u in urls if u["url"]), ""),
                          deviation_ids=[u["id"] for u in urls if u["id"]], note=f"{len(urls)} работ{'ы' if 1 < len(urls) < 5 else ''}" if len(urls) > 1 else "")
                 elif key.startswith('reddit:') or key == 'joyreactor':
@@ -1132,7 +1155,7 @@ def _run(draft, report, only):
                 if not _posted_but_failed(key, e):
                     # Эти адаптеры создают одну запись на место. Для многошаговых
                     # площадок отказ последнего шага не исключает частичный успех.
-                    safe = key.startswith(("telegram:", "discord:", "reddit:")) or key in ("bluesky", "joyreactor")
+                    safe = key.startswith(("telegram:", "discord:", "reddit:")) or key in ("bluesky", "joyreactor") or (key=='deviantart' and bool(cfg['deviantart'].get('premium_download') or cfg['deviantart'].get('subscriber_only')))
                     _set(key, state="error", outcome="not_sent" if safe else "unknown", message=mask_secrets(str(e)))
             except (Cancelled, _Stop):   # «Отмена»: если пост уже вышел — остаётся «дослать PNG», иначе место просто не отправлено
                 if not _posted_but_failed(key, "отменено"):

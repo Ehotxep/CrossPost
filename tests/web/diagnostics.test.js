@@ -22,7 +22,7 @@ test('waiting requests remain visible and finished requests record no payloads',
 });
 test('navigation waits for related requests and rendering, without counting quiet timeout',()=>{
   const {api,time,settle}=load();api.begin('stats');time(10);const request=api.request('stats_overview');
-  time(300);settle();assert.equal(api.snapshot().filter(r=>r.kind==='navigation').length,0);
+  time(300);settle();assert.equal(api.snapshot().filter(r=>r.kind==='navigation'&&!r.pending).length,0);
   request.finish();time(310);const rendered=api.rendering('stats');time(320);rendered();time(1000);settle();
   const nav=api.snapshot().find(r=>r.kind==='navigation');assert.equal(nav.ms,320);assert.equal(nav.ok,true);
 });
@@ -30,7 +30,8 @@ test('switching away records unfinished navigation and buffer stays bounded',()=
   const {api,time}=load();api.begin('stats');time(20);api.begin('post');
   assert.equal(api.snapshot()[0].ok,false);
   for(let i=0;i<1200;i++)api.request('info').finish();
-  assert.equal(api.snapshot().length,1000);
+  assert.ok(api.snapshot().length<=1000);
+  assert.ok(api.snapshot().some(row=>row.kind==='navigation'));
 });
 
 test('thumbnail timing strips URLs and tokens; long tasks store only the view',()=>{
@@ -41,4 +42,13 @@ test('thumbnail timing strips URLs and tokens; long tasks store only the view',(
   const rows=api.snapshot();assert.equal(rows.length,2);assert.equal(rows[0].name,'thumbnail');
   assert.equal(rows[1].kind,'longtask');assert.equal(rows[1].name,'stats');
   assert.ok(!JSON.stringify(rows).includes('SECRET'));assert.ok(!JSON.stringify(rows).includes('PRIVATE'));
+});
+
+test('polling cannot evict navigation or a slow request',()=>{
+  const {api,time,settle}=load();api.begin('history');const req=api.request('post_history_search');
+  time(6000);req.finish();settle();
+  for(let i=0;i<5000;i++)api.request('info').finish();
+  assert.ok(api.snapshot().some(row=>row.name==='post_history_search'&&row.ms===6000));
+  assert.ok(api.snapshot().some(row=>row.kind==='navigation'&&row.name==='history'));
+  assert.ok(api.snapshot().length<=1000);
 });

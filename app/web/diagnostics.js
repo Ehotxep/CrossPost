@@ -2,16 +2,19 @@
 (() => {
   'use strict';
   const LIMIT=1000, views=new Set(['post','history','stats','trends','settings','unknown']);
-  const rows=[], active=new Map(), prefix=Math.floor(Math.random()*0x100000000).toString(16).padStart(8,'0');
-  let seq=0, navigation=null, timer=null;
+  const rows=[], routine=[], active=new Map(), prefix=Math.floor(Math.random()*0x100000000).toString(16).padStart(8,'0');
+  let seq=0, sampleSeq=0, navigation=null, timer=null;
   const now=()=>performance.now();
   const view=()=>views.has(window.CP?.S.view)?window.CP.S.view:'unknown';
   function record(kind,name,ms,ok=true,extra={}) {
     if(!Number.isFinite(ms)||ms<0||ms>3600000)return;
     if(['render','navigation','longtask'].includes(kind)&&!views.has(name))return;
     if(kind==='api'&&!/^[a-z][a-z0-9_]{0,79}$/.test(name))return;
-    rows.push({kind,name,ms:Math.round(ms*100)/100,ok:!!ok,...extra});
-    if(rows.length>LIMIT)rows.splice(0,rows.length-LIMIT);
+    const polling=['info','activity','tagger_state','worker_status','news','ui_set'].includes(name);
+    const background=ok&&ms<250&&((kind==='api'&&polling)||(kind==='render'&&ms<50)||kind==='resource');
+    const target=background?routine:rows, limit=background?250:750;
+    target.push({kind,name,ms:Math.round(ms*100)/100,ok:!!ok,...extra,_sequence:++sampleSeq});
+    if(target.length>limit)target.splice(0,target.length-limit);
   }
   function settle() {
     clearTimeout(timer);
@@ -76,5 +79,5 @@
         .observe({type:'resource',buffered:true});
     }
   } catch (_) { /* ResourceTiming is optional too. URLs never enter the buffer. */ }
-  window.PerfUI={request,rendering,begin,snapshot:()=>rows.map(row=>({...row})).concat([...active.values()].map(({start,...row})=>({...row,ms:now()-start,ok:false,pending:true}))).slice(-LIMIT)};
+  window.PerfUI={request,rendering,begin,snapshot:()=>[...rows,...routine].sort((a,b)=>a._sequence-b._sequence).map(({_sequence,...row})=>({...row})).concat([...active.values()].map(({start,...row})=>({...row,ms:now()-start,ok:false,pending:true}))).concat(navigation?[{kind:'navigation',name:navigation.view,ms:now()-navigation.start,ok:false,pending:true}]:[]).slice(-LIMIT)};
 })();

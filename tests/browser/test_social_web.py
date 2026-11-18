@@ -14,7 +14,8 @@ from diagnostics import capture_failure, watch_page
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from app.publish import social_web as W
-from core.common import NotPublishedError, PublicationUnknown
+from app.publish import vk_web as V
+from core.common import NotPublishedError, PublicationUnknown, PlatformError
 
 
 UPLOAD = '''<script>
@@ -76,6 +77,72 @@ class SocialBrowser(unittest.TestCase):
             raise
         finally:
             context.close()
+
+    @contextmanager
+    def vk_fixture(self, trigger='<button id="create">Создать</button>', menu=True, ignore_first=False):
+        page=watch_page(self.browser.new_page())
+        source='''<section data-testid="comment"><button onclick="window.wrong++">Создать</button>
+          <div contenteditable="true" role="textbox" id="comment">Comment draft</div></section>
+          <article><span>Пост</span></article>''' + trigger + '''
+          <div role="menu" id="menu" hidden><button role="menuitem" id="post">Пост</button><button>Клип</button></div>
+          <div role="dialog" id="composer" hidden><div contenteditable="true" role="textbox" id="text"></div>
+            <input type="file" accept="image/*" multiple><div id="photos"></div>
+            <button onclick="window.submits++">Опубликовать</button></div>
+          <script>
+          window.submits=window.wrong=window.clicks=0;
+          const composer=document.getElementById('composer'),menu=document.getElementById('menu');
+          document.getElementById('post').onclick=()=>{menu.hidden=true;composer.hidden=false;};
+          document.querySelector('input[type=file]').onchange=e=>{
+            for(const file of e.target.files){const img=new Image();img.src=URL.createObjectURL(file);document.getElementById('photos').append(img);}
+          };
+          </script>'''
+        try:
+            page.set_content(source)
+            page.evaluate("""({menu,ignore})=>{document.getElementById('create').onclick=()=>{
+                window.clicks++;if(ignore&&window.clicks===1)return;
+                if(menu)document.getElementById('menu').hidden=false;
+                else document.getElementById('composer').hidden=false;
+            }}""",{'menu':menu,'ignore':ignore_first})
+            yield page
+        except BaseException:
+            capture_failure(page,self.id()+'-vk')
+            raise
+        finally:
+            page.close()
+
+    def test_vk_create_without_old_testid_opens_fills_and_attaches_in_editor(self):
+        with self.vk_fixture() as page, patch.object(page,'wait_for_load_state',side_effect=AssertionError('no networkidle wait')):
+            editor,scope=V._open_composer(page,timeout_ms=5000)
+            editor.fill('New VK post')
+            V._attach(page,[self.image])
+            page.locator('#photos img').wait_for()
+            self.assertEqual(scope.get_attribute('id'),'composer')
+            self.assertEqual(page.locator('#text').inner_text(),'New VK post')
+            self.assertEqual(page.locator('#comment').inner_text(),'Comment draft')
+            self.assertEqual(page.evaluate('window.wrong+window.submits'),0)
+
+    def test_vk_direct_accessible_create_button_and_existing_editor(self):
+        with self.vk_fixture('<div role="button" aria-label="Create" tabindex="0" id="create">+</div>',menu=False) as page:
+            V._open_composer(page,timeout_ms=3000)
+            V._open_composer(page,timeout_ms=3000)
+            self.assertEqual(page.evaluate('window.clicks'),1)
+            self.assertEqual(page.evaluate('window.submits'),0)
+
+    def test_vk_retries_create_before_page_becomes_interactive(self):
+        with self.vk_fixture('<button data-testid="group_publish_create_button" id="create">Создать</button>',ignore_first=True) as page:
+            V._open_composer(page,timeout_ms=6000)
+            self.assertEqual(page.evaluate('window.clicks'),2)
+            self.assertEqual(page.evaluate('window.submits'),0)
+
+    def test_vk_ambiguous_create_buttons_and_comment_dialog_are_not_used(self):
+        with self.vk_fixture() as page:
+            page.evaluate("""()=>{
+                document.getElementById('create').insertAdjacentHTML('afterend','<button onclick="window.wrong++">Создать</button>');
+                document.body.insertAdjacentHTML('beforeend','<div role="dialog"><div class="comment" contenteditable="true">Reply</div><button>Отправить</button></div>');
+            }""")
+            with self.assertRaisesRegex(PlatformError,'однозначная кнопка'):
+                V._open_composer(page,timeout_ms=500)
+            self.assertEqual(page.evaluate('window.clicks+window.wrong+window.submits'),0)
 
     def test_dry_run_fills_rating_flair_tags_and_files_without_submitting(self):
         for platform in ('reddit', 'joyreactor'):

@@ -28,6 +28,7 @@ node tests/web/settings-autosave.test.js
 node tests/web/diagnostics.test.js
 python tests/browser/test_workflows.py
 python tests/browser/test_social_web.py
+python tests/browser/test_da_paid.py
 ```
 
 Браузерные проверки требуют Chromium из Playwright (`python -m playwright install chromium`). Для установленного Chromium можно задать `PLAYWRIGHT_CHROMIUM_EXECUTABLE`. Команды и ограничения среды описывать честно; недоступную проверку не считать пройденной. Для C# следовать `native/README.md` в соответствующей ветке.

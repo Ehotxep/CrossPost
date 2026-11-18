@@ -180,10 +180,18 @@ def _b(v) -> str:
     return "true" if v else "false"
 
 
-def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=None) -> list[str]:
+def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=None, confirmed=None, already=None) -> list[str]:
     """files — [(name, data, mime)]. Возвращает ссылки на работы."""
     if rating == "explicit":
         raise PlatformError("DeviantArt не принимает откровенный контент")
+    from app.publish.da_access import blocked_reason, requested
+    reason = blocked_reason(c)
+    if reason:
+        from core.common import NotPublishedError
+        raise NotPublishedError(reason)
+    if requested(c):
+        from app.publish import da_web
+        return da_web.publish(c,files,(title or c.get("default_title") or "Untitled").strip(),text,clean_tags(tags),rating,progress=progress,confirmed=confirmed,already=already)
     from core import retry
     tok = _token(c)
     auth = {"Authorization": f"Bearer {tok}"}

@@ -24,17 +24,27 @@ class PerformanceDiagnostics(unittest.TestCase):
         self.assertNotIn('view',result[1])
 
     def test_ring_is_bounded_and_percentiles_include_failures_but_not_pending_errors(self):
-        with patch.object(D, '_samples', D.deque(maxlen=D.LIMIT)):
+        with patch.object(D, '_samples', D.deque(maxlen=D.EVENT_LIMIT)), patch.object(D, '_routine', D.deque(maxlen=D.ROUTINE_LIMIT)):
             for i in range(D.LIMIT+10):
                 D.record('server_api','post_plan',i,ok=i%2==0)
             data = D.snapshot([{'kind':'api','name':'post_plan','ms':10,'ok':False,'pending':True}])
-        self.assertEqual(len(data['recent_server']),D.LIMIT)
+        self.assertEqual(len(data['recent_server']),D.EVENT_LIMIT)
         group=data['server'][0]
-        self.assertEqual(group['n'],D.LIMIT)
+        self.assertEqual(group['n'],D.EVENT_LIMIT)
         self.assertEqual(group['max_ms'],D.LIMIT+9)
-        self.assertEqual(group['p95_ms'],1909)
+        self.assertEqual(group['p95_ms'],1934)
         self.assertEqual(data['client'][0]['errors'],0)
         self.assertEqual(data['client'][0]['pending'],1)
+
+    def test_polling_cannot_evict_slow_requests(self):
+        with patch.object(D, '_samples', D.deque(maxlen=D.EVENT_LIMIT)), patch.object(D, '_routine', D.deque(maxlen=D.ROUTINE_LIMIT)):
+            D.record('server_api','stats_overview',5000)
+            for _ in range(5000):
+                D.record('server_api','info',20)
+            rows=D.snapshot()['recent_server']
+        self.assertTrue(any(row['name']=='stats_overview' for row in rows))
+        self.assertLessEqual(len(rows),D.LIMIT)
+        self.assertEqual(sum(row['name']=='info' for row in rows),D.ROUTINE_LIMIT)
 
     def test_export_includes_sanitized_timings_and_removes_old_exception_messages(self):
         from app import perf, db

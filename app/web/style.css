@@ -1349,3 +1349,15 @@ input[aria-invalid="true"] { border-color: var(--bad); }
 .source-platform-options { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
 .source-platform-choice { display: flex; align-items: center; gap: 9px; min-width: 0; cursor: pointer; font-size: 13px; }
 @media (max-width: 640px) { .source-link-options { grid-template-columns: 1fr; } .source-platform-options { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+
+.booru-copy-panel { margin:16px 0; padding:16px; border:1px solid var(--line); border-radius:10px; }
+.booru-copy-panel h4 { margin:0 0 12px; }
+.booru-copy-direction { display:grid; grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr); align-items:end; gap:10px; }
+.booru-copy-direction select { width:100%; min-width:0; }
+.booru-copy-arrow { align-self:center; text-align:center; color:var(--ink-3); }
+.booru-copy-replace { display:flex; gap:8px; align-items:center; flex:1 1 160px; font-size:13px; }
+.booru-copy-replace input { flex:0 0 auto; width:16px; height:16px; accent-color:var(--accent-fill); }
+@media(max-width:540px) { .booru-copy-direction { grid-template-columns:minmax(0,1fr); } .booru-copy-arrow { display:none; } }
+
+.booru-copy-controls { margin-top:12px; gap:12px; }
+.booru-copy-panel .field > label { display:block; margin-bottom:6px; }

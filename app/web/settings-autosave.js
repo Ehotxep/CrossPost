@@ -59,7 +59,7 @@
     signatures:['platforms','use'],versions:platforms,translate:['base','model','style'],
     e6ai:['constant_tags','preselect','with_sources','with_description','source_platforms','source_link_mode'],
     bluesky:['enabled','include_title','alt_from_title','rating','langs'],
-    deviantart:['enabled','is_ai_generated','noai','originals','tags_from','allow_free_download','rating','gallery_id','gallery_name'],
+    deviantart:['enabled','is_ai_generated','noai','originals','tags_from','allow_free_download','show_window','premium_download','premium_price_usd','subscriber_only','subscriber_tiers','rating','gallery_id','gallery_name'],
     reddit:['enabled','show_window','communities'],joyreactor:['enabled','show_window','ai_tags','constant_tags'],
     outputs:['by_date','jpeg','gif','video'],never:['tags'],
   };
@@ -100,7 +100,8 @@
     if(booru)return {key:booru[2],patch:e6[booru[1]]};
     const bs={bson:{enabled:on},bstitle:{include_title:on},bsalt:{alt_from_title:on},bsrating:{rating:v},bslang:{langs:words(v).slice(0,3)}};
     if(bs[id])return {key:'bluesky',patch:bs[id]};
-    const da={daon:{enabled:on},daai:{is_ai_generated:on},danoai:{noai:on},daorig:{originals:on},datags:{tags_from:on?'hashtags':'none'},dadl:{allow_free_download:on},darating:{rating:v}};
+    const da={dashow:{show_window:on},daon:{enabled:on},daai:{is_ai_generated:on},danoai:{noai:on},daorig:{originals:on},datags:{tags_from:on?'hashtags':'none'},dadl:{allow_free_download:on},darating:{rating:v}};
+    Object.assign(da,{dapremium:{premium_download:on},daprice:{premium_price_usd:v.trim()},dasubscriber:{subscriber_only:on},datiers:{subscriber_tiers:v.split(/\n/).map(t=>t.trim()).filter(Boolean)}});
     if(da[id])return {key:'deviantart',patch:da[id]};
     if(id==='dagal')return {key:'deviantart',patch:{gallery_id:v,gallery_name:v?(C().S.daGal||[]).find(g=>g.id===v)?.name||'':''}};
     const output={fdate:'by_date',fjpeg:'jpeg',fgif:'gif',fvideo:'video'};

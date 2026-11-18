@@ -32,6 +32,12 @@ settings.update('discord',{'enabled':True,'webhooks':[{'name':'Новый пос
 updates.check_async=lambda:None
 runner.D.post=lambda *args,**kwargs:[]
 runner.E6.check=lambda cfg:{'name':cfg['username']}
+from app.publish import da_web
+da_web.login=lambda report:report(progress=1,message='Fixture login')
+def da_dry(cfg,files,title,text,tags,rating,**kwargs):
+ assert kwargs.get('dry_run') is True
+ return [{'shot':'','note':'Пробный прогон: доступ проверен, кнопка публикации не нажималась'}]
+da_web.publish=da_dry
 with db.tx() as c:
  for i in range(65):
   c.execute('INSERT INTO publications(created,title,text,files,dests,draft) VALUES (?,?,?,?,?,?)',('2026-01-01T12:00:00+00:00','Новый пост' if i==0 else 'Post '+str(i),'','[]',json.dumps([{'key':'discord:0','platform':'discord','name':'Discord','state':'done'}]),'{}'))
@@ -141,6 +147,59 @@ main()
             page.get_by_role('heading',name='Самые медленные запросы за сеанс').wait_for()
         finally:
             close_page(page, self.id())
+
+    def test_unrelated_settings_do_not_probe_telegram_and_silent_probe_is_deduplicated(self):
+        page=self.new_page()
+        held=[]
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("CP.S.platSec='diag'")
+            page.route('**/api/tg_status',lambda route:held.append(route))
+            page.locator('#nav [data-view="settings"]').click()
+            page.locator('[data-action="perf-report"]').wait_for()
+            self.assertEqual(len(held),0)
+            with page.expect_request('**/api/tg_status'):
+                page.locator('.platnav [data-psec="telegram"]').click()
+            page.wait_for_function("CP.S.tg && !document.querySelector('#nav .busy')")
+            self.assertEqual(len(held),1)
+            page.locator('.platnav [data-psec="diag"]').click()
+            page.locator('.platnav [data-psec="telegram"]').click()
+            page.wait_for_timeout(100)
+            self.assertEqual(len(held),1)
+            held.pop().fulfill(content_type='application/json',body=json.dumps({'ok':True,'result':{'authorized':False}}))
+        finally:
+            for route in held:route.abort()
+            close_page(page,self.id())
+
+    def test_telegram_suggestions_refresh_is_explicit_and_does_not_trap_navigation(self):
+        page=self.new_page()
+        held=[]
+        calls=[]
+        try:
+            def known(route):
+                args=route.request.post_data_json
+                calls.append(args)
+                if args.get('refresh'):
+                    held.append(route)
+                else:
+                    route.fulfill(content_type='application/json',body=json.dumps({'ok':True,'result':{'authorized':False,'chats':[]}}))
+            page.route('**/api/pub_tg_known',known)
+            page.goto(self.base,wait_until='networkidle')
+            page.locator('#nav [data-view="settings"]').click()
+            page.wait_for_function('CP.S.pubKnown!=null')
+            self.assertFalse(any(args.get('refresh') for args in calls))
+            page.locator('.platnav [data-psec="telegram"]').click()
+            page.locator('[data-pa="tg-known-refresh"]').click()
+            page.wait_for_function("document.querySelector('[data-pa=tg-known-refresh]').disabled")
+            self.assertEqual(len(held),1)
+            page.locator('#nav [data-view="post"]').click()
+            page.locator('#ptitle').wait_for()
+            held.pop().fulfill(content_type='application/json',body=json.dumps({'ok':True,'result':{'authorized':True,'chats':[]}}))
+            page.wait_for_function('CP.S.pubKnown.authorized===true')
+            self.assertEqual(page.evaluate('CP.S.view'),'post')
+        finally:
+            for route in held:route.abort()
+            close_page(page,self.id())
 
     def test_booru_sites_have_independent_settings_and_post_switches(self):
         page = self.new_page()
@@ -270,6 +329,100 @@ main()
         finally:
             close_page(page, self.id())
 
+    def test_all_booru_switches_create_tag_panel_and_link_opens_correct_site(self):
+        old=self.api('pub_settings')
+        config_path=Path(self.tmp.name)/'publish.json'
+        original_config=config_path.read_bytes()
+        page=self.new_page(viewport={'width':1360,'height':1000})
+        sites=('e6ai','e621','floofgens')
+        try:
+            for site in sites:
+                self.api('modules_set',key=site,on=True)
+                self.api('pub_e6ai',site=site,username=site+'fixture',api_key='fixture-key')
+            buffer=io.BytesIO();Image.new('RGB',(32,32),'blue').save(buffer,format='PNG')
+            image=self.session.post(self.base+'/upload?name=booru-panel.png',headers=self.headers,data=buffer.getvalue()).json()['result']
+            page.goto(self.base,wait_until='networkidle')
+            for site in sites:
+                page.evaluate("""async image=>{CP.S.view='post';CP.S.draft={files:[image],title:'Tags',text:'',rating:'sfw',signature:false,
+                  exclude:['e6ai','e621','floofgens'],booru_posts:{}};await Pub.load('post');CP.render()}""",image)
+                self.assertEqual(page.locator('#e6card').count(),0)
+                page.locator(f'[data-pa="toggle"][data-key="{site}"]').check()
+                page.locator('#e6card').wait_for()
+                page.wait_for_function('site=>CP.S.booruTagSite===site',arg=site)
+                link=page.locator(f'[data-pa="e6need"][data-site="{site}"]')
+                link.wait_for()
+                page.evaluate("document.getElementById('e6card').remove()")
+                link.click()
+                page.locator('#e6card').wait_for()
+                self.assertEqual(page.evaluate('CP.S.booruTagSite'),site)
+            # Copy to an excluded destination without enabling publication there.
+            page.evaluate("""id=>{CP.S.draft.booru_posts.e6ai={tags:{[id]:['wolf','solo']},meta:{}};CP.render()}""",image['id'])
+            page.locator('#booru-copy-target').select_option('e621')
+            page.locator('#booru-copy-source').select_option('e6ai')
+            page.locator('[data-pa="booru-copy-tags"]').click()
+            page.wait_for_function('id=>CP.S.draft.booru_posts.e621?.tags[id]?.includes("wolf")',arg=image['id'])
+            self.assertTrue(page.evaluate('CP.S.draft.exclude.includes("e621")'))
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e6ai.tags[id]',image['id']),['wolf','solo'])
+            page.set_viewport_size({'width':390,'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
+        finally:
+            close_page(page,self.id())
+            restore=config_path.with_suffix('.restore')
+            restore.write_bytes(original_config);restore.replace(config_path)
+
+    def test_deviantart_browser_login_and_paid_dry_run_use_saved_defaults(self):
+        page=self.new_page()
+        old=self.api('pub_settings')['deviantart']
+        fields=('browser_ok','enabled','premium_download','premium_price_usd','subscriber_only','subscriber_tiers')
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='deviantart';await Pub.load('settings');CP.render()}")
+            page.locator('details[data-detail-key="da-access-defaults"] summary').click()
+            page.locator('#daprice').fill('5.50')
+            page.locator('#dapremium').check()
+            page.locator('#datiers').fill('Tip Jar\nBig Tip Jar')
+            page.locator('#dasubscriber').check()
+            page.locator('[data-pa="da-browser-login"]').click()
+            page.wait_for_function('CP.S.pub.deviantart.browser_ok===true && !CP.S.daBrowserWaiting')
+            self.assertIn('платный доступ',page.locator('.platnav [data-psec=deviantart]').inner_text())
+            page.locator('[data-pa="da-paid-dry"]').click()
+            page.get_by_text('Пробный прогон: доступ проверен, кнопка публикации не нажималась',exact=True).wait_for()
+            self.assertEqual(self.api('pub_settings')['deviantart']['subscriber_tiers'],['Tip Jar','Big Tip Jar'])
+        finally:
+            close_page(page,self.id())
+            self.api('pub_save',section='deviantart',changes={k:old[k] for k in fields})
+
+    def test_deviantart_paid_defaults_autosave_and_survive_reload(self):
+        page=self.new_page()
+        old=self.api('pub_settings')['deviantart']
+        fields=('premium_download','premium_price_usd','subscriber_only','subscriber_tiers')
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='deviantart';CP.store.set('view','settings');CP.store.set('platSec','deviantart');await Pub.load('settings');CP.render()}")
+            page.locator('details[data-detail-key="da-access-defaults"] summary').click()
+            page.locator('#daprice').fill('5,50')
+            page.locator('#datiers').fill('Tip Jar\nBig Tip Jar')
+            page.locator('#dapremium').check()
+            page.locator('#dasubscriber').check()
+            self.assertTrue(page.evaluate('SettingsAutosave.flush()'))
+            saved=self.api('pub_settings')['deviantart']
+            self.assertEqual(saved['premium_price_usd'],'5.50')
+            self.assertEqual(saved['subscriber_tiers'],['Tip Jar','Big Tip Jar'])
+            self.assertTrue(saved['premium_download'])
+            page.reload(wait_until='domcontentloaded')
+            page.locator('#ptitle').wait_for()
+            page.locator('#nav [data-view="settings"]').click()
+            page.locator('.platnav [data-psec="deviantart"]').click()
+            page.locator('#daprice').wait_for(state='attached')
+            self.assertEqual(page.locator('#daprice').input_value(),'5.50')
+            self.assertTrue(page.locator('#dapremium').is_checked())
+            panel=page.locator('details[data-detail-key="da-access-defaults"]')
+            if not panel.evaluate('el=>el.open'):panel.locator('summary').click()
+            self.assertIn('Платные работы отправляются через отдельный браузер',panel.inner_text())
+        finally:
+            close_page(page,self.id())
+            self.api('pub_save',section='deviantart',changes={k:old[k] for k in fields})
+
     def test_copy_tags_between_booru_sites_preserves_source_and_requires_review(self):
         old = self.api('pub_settings')
         page = self.new_page(viewport={'width':1360,'height':1000})
@@ -294,7 +447,7 @@ main()
                 await Pub.load('post');CP.render();
             }""",images)
             panel = page.locator('#e6card [data-booru-copy-panel]')
-            panel.locator('summary').click()
+            self.assertTrue(panel.is_visible())
             page.locator('#booru-copy-source').select_option('e6ai')
             page.locator('[data-pa="booru-copy-tags"]').click()
             page.wait_for_function("id=>CP.S.draft.booru_posts.e621.tags[id].includes('wolf')",arg=images[0]['id'])
@@ -306,7 +459,7 @@ main()
             self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',b),['forest'])
             page.locator('#booru-copy-source').select_option('floofgens')
             page.locator('#booru-copy-file').select_option(a)
-            page.locator('#booru-copy-mode').select_option('replace')
+            page.locator('#booru-copy-mode').check()
             page.once('dialog',lambda dialog:dialog.dismiss())
             page.locator('[data-pa="booru-copy-tags"]').click()
             self.assertIn('wolf',page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',a))

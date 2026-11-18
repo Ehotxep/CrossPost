@@ -77,6 +77,12 @@ FIELD = [
     "[placeholder*='Напишите'], [placeholder*='нового']",
     "#page_block_submit_post, .submit_post_field, .post_field_wrap",
 ]
+CREATE = [
+    "[data-testid='group_publish_create_button']",
+    lambda p: p.get_by_role("button", name=re.compile(r"^\s*[+＋]?\s*(Создать|Создать публикацию|Create|Create publication)\s*$", re.I)),
+    lambda p: p.get_by_role("link", name=re.compile(r"^\s*[+＋]?\s*(Создать пост|Создать запись|Create post)\s*$", re.I)),
+] + FIELD
+
 EDITOR = ["#post_field[contenteditable='true']", "[data-testid*='posting'] [contenteditable='true']",
           "[contenteditable='true'][role='textbox']", "[contenteditable='true']"]
 PHOTO_BTN = [
@@ -116,7 +122,8 @@ DIALOG = "[role='dialog'], [aria-modal='true']"
 MENU_POST = [
     lambda p: p.get_by_role("menuitem", name=re.compile(r"^\s*(Пост|Запись|Новый пост|Post)(\s|$)", re.I)),
     lambda p: p.get_by_role("option", name=re.compile(r"^\s*(Пост|Запись|Post)(\s|$)", re.I)),
-    lambda p: p.get_by_text(re.compile(r"^\s*(Пост|Запись|Новый пост|Новая запись|Post)\s*$", re.I)),
+    lambda p: p.locator("[role='menu'], [role='listbox'], [data-testid*='dropdown']").get_by_text(
+        re.compile(r"^\s*(Пост|Запись|Новый пост|Новая запись|Post)\s*$", re.I)),
 ]
 
 
@@ -278,55 +285,69 @@ def _close_draft(page, editor):
 
 def _dialog_editor(page):
     scope = _scope(page)
-    if scope is NO_DIALOG:
+    if scope is NO_DIALOG or not _composer_like(scope):
         return None, None
     loc = scope.locator("[contenteditable='true']")
     for i in range(min(loc.count(), 5)):
         el = loc.nth(i)
-        if el.is_visible():
+        if el.is_visible() and not _in_comments(el):
             return el, scope
     return None, None
 
 
-def _open_composer(page):
-    """Новый ВК: «+ Создать» (data-testid=group_publish_create_button) → «Пост» → окно «Новый пост».
-    Пробуем до трёх раз: первый клик иногда приходится на ещё не «оживший» интерфейс страницы."""
-    try:
-        page.wait_for_load_state("networkidle", timeout=15000)
-    except Exception:
-        pass
+def _composer_control(page, candidates):
+    """Use only an unambiguous visible control, never a comment or a wall post."""
+    for candidate in candidates:
+        try:
+            loc = candidate(page) if callable(candidate) else page.locator(candidate)
+            visible = []
+            count = loc.count()
+            if count > 30:
+                continue
+            for i in range(count):
+                el = loc.nth(i)
+                if (el.is_visible() and el.is_enabled() and not _in_comments(el)
+                        and not el.evaluate("e => !!e.closest('article, [data-testid=post]')")):
+                    visible.append(el)
+            if len(visible) == 1:
+                return visible[0]
+        except Exception:
+            continue
+    return None
+
+
+def _open_composer(page, timeout_ms: int = 30000):
+    """Open either the Create → Post menu or the direct editor; no networkidle wait."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    next_create = next_choice = 0
+    creates = choices = 0
     menu_seen = False
-    for attempt in range(3):
+    while time.monotonic() < deadline:
         editor, scope = _dialog_editor(page)
         if editor is not None:
             return editor, scope
-        btn = B.first_visible(page, ["[data-testid='group_publish_create_button']"] + FIELD, 15000)
-        if not btn:
-            raise PlatformError("не нашла кнопку «Создать» — проверьте, что вы админ группы")
-        btn.click()
-        deadline = time.time() + 6
-        while time.time() < deadline:
-            editor, scope = _dialog_editor(page)
-            if editor is not None:
-                return editor, scope
-            item = B.first_visible(page, MENU_POST, 300)   # «Создать» открывает меню: пост, клип, история…
-            if item:
-                menu_seen = True
-                item.click()
-                end = time.time() + 10
-                while time.time() < end:
-                    editor, scope = _dialog_editor(page)
-                    if editor is not None:
-                        return editor, scope
-                    page.wait_for_timeout(300)
-                break
-            page.wait_for_timeout(300)
-        try:
-            page.keyboard.press("Escape")
-        except Exception:
-            pass
-        page.wait_for_timeout(1000)
-    raise PlatformError("окно «Новый пост» не открылось" + ("" if menu_seen else " (меню «Создать» не появилось или в нём нет пункта «Пост»)"))
+        item = _composer_control(page, MENU_POST)
+        if item is not None and choices < 3 and time.monotonic() >= next_choice:
+            menu_seen = True
+            try:
+                item.click(timeout=min(1500, max(1, int((deadline-time.monotonic())*1000))))
+                choices += 1
+                next_create = next_choice = time.monotonic() + 4
+            except Exception:
+                next_choice = time.monotonic() + .5
+        elif item is None and creates < 3 and time.monotonic() >= next_create:
+            button = _composer_control(page, CREATE)
+            if button is not None:
+                try:
+                    button.click(timeout=min(1500, max(1, int((deadline-time.monotonic())*1000))))
+                    creates += 1
+                    next_create = time.monotonic() + 2
+                except Exception:
+                    next_create = time.monotonic() + .5
+        page.wait_for_timeout(min(200, max(1, int((deadline-time.monotonic())*1000))))
+    if not creates and not menu_seen:
+        raise PlatformError("Не найдена однозначная кнопка создания поста ВК. Проверьте вход и права администратора; возможно, ВК изменил форму.")
+    raise PlatformError("Окно нового поста ВК не открылось" + (" после выбора «Пост»" if menu_seen else ": меню «Создать» не появилось"))
 
 
 def _attach(page, files):
@@ -491,6 +512,7 @@ def post(group_id: str, files: list[str], text: str, dry_run: bool = False, head
                 raise PlatformError("в браузере не выполнен вход во ВК — «Настройки» → ВКонтакте → «Войти в браузере»")
             title = re.sub(r"\s*\|\s*(ВКонтакте|VK)\s*$", "", page.title() or "").strip()
             progress(0.1)
+            log("открываю редактор новой записи")
             editor, scope = _open_composer(page)
             _clear_draft(page, editor)   # остатки прошлого черновика (ВК их сохраняет)
             editor.click()

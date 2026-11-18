@@ -2856,3 +2856,40 @@ Object.assign(window.EN_DICT, {
 });
 
 Object.assign(window.EN_DICT, {"среднее {mean} мс · P95 {p95} мс · макс. {max} мс":"mean {mean} ms · P95 {p95} ms · max {max} ms"});
+
+Object.assign(window.EN_DICT, {"Подсказки каналов берутся из сохранённого списка.":"Channel suggestions use the saved list.", "Обновить список из Telegram":"Refresh list from Telegram"});
+
+Object.assign(window.EN_DICT, {"Для обновления списка войдите в Telegram через API":"Sign in to Telegram through the API to refresh the list"});
+
+Object.assign(window.EN_DICT, {
+  "Копировать теги между площадками": "Copy tags between platforms",
+  "Копирование тегов между площадками": "Copying tags between platforms",
+  "Откуда": "From",
+  "Куда": "To",
+  "Заменить выбранные теги": "Replace selected tags",
+  "По умолчанию теги добавляются без дублей. Исходные теги сохраняются. После копирования проверьте теги на принимающем сайте.": "Tags are merged without duplicates by default. Source tags are preserved. Review tags on the destination site after copying.",
+  "Платное скачивание оригинала по умолчанию": "Paid original downloads by default",
+  "Цена по умолчанию, USD": "Default price, USD",
+  "Укажите цену": "Enter a price",
+  "Публиковать для подписчиков по умолчанию": "Publish to subscribers by default",
+  "Тиры по умолчанию — по одному названию на строку": "Default tiers — one name per line",
+  "Название уровня подписки": "Subscription tier name",
+  "Платный режим DeviantArt должен быть переключателем": "The paid DeviantArt mode must be a boolean",
+  "Цена DeviantArt должна быть строкой в USD": "The DeviantArt price must be a USD string",
+  "Укажите положительную цену в USD, не более двух знаков после запятой": "Enter a positive USD price with at most two decimal places",
+  "Укажите названия тиров DeviantArt списком, до 100 символов каждое": "Enter DeviantArt tier names as a list, at most 100 characters each"
+});
+
+Object.assign(window.EN_DICT, {"{site} · тегов: {count}": "{site} · tags: {count}", "Теги скопированы в {site}. Обработано файлов: {count}, пропущено: {skipped}.": "Tags copied to {site}. Files processed: {count}, skipped: {skipped}."});
+
+Object.assign(window.EN_DICT, {
+  "Продажи и подписки — параметры по умолчанию": "Sales and subscriptions — defaults",
+  "Экспериментальный режим. Платные работы отправляются через отдельный браузер DeviantArt. Сначала выполните вход и пробный прогон. Обычные публикации продолжают работать через API.": "Experimental mode. Paid works use a separate DeviantArt browser. Sign in and run a dry test first. Regular works continue to use the API.",
+  "Войти в браузере DeviantArt": "Sign in through the DeviantArt browser",
+  "Проверить без публикации": "Test without publishing",
+  "✓ Вход в браузере сохранён": "✓ Browser login saved",
+  "Вход в браузере не выполнен": "Not signed in through the browser",
+  "Укажите точные названия тиров из вашего аккаунта, по одному на строку. Перед отправкой CrossPost проверит выбранные тиры и цену. Параметры сохраняются автоматически.": "Enter exact tier names from your account, one per line. CrossPost checks the selected tiers and price before submitting. Settings save automatically.",
+  "Пробный прогон DeviantArt": "DeviantArt dry run",
+  "Работаю с DeviantArt…": "Working with DeviantArt…"
+});
