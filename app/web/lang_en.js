@@ -2899,3 +2899,11 @@ Object.assign(window.EN_DICT, {
   "Подпись входит в лимит 280 символов.": "The signature counts towards the 280-character limit.",
   "X: пока только SFW, до четырёх изображений и 280 взвешенных символов. Текст не обрезается. При неизвестном результате проверьте сайт перед повтором.": "X currently supports SFW only, up to four images and 280 weighted characters. Text is not truncated. Verify the site before retrying an unknown result."
 });
+
+Object.assign(window.EN_DICT, {
+  "Режим публикации DeviantArt": "DeviantArt publishing mode",
+  "Обычная · API": "Regular · API",
+  "Подготовить в Sta.sh": "Prepare in Sta.sh",
+  "Обычная публикация через OAuth API. Цена и отдельный браузерный вход не нужны.": "Regular publishing uses the OAuth API. No price or separate browser sign-in is required.",
+  "Цена скачивания, USD (только для Premium Download)": "Download price, USD (Premium Download only)"
+});

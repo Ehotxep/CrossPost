@@ -136,9 +136,33 @@ def _discard_owned_draft(page,title):
         return False
 
 
+
+ROBOT_ERROR=('DeviantArt отклонил проверку на робота в браузере CrossPost. '
+             'Платная отправка через этот браузер сейчас недоступна. '
+             'Для обычных публикаций выберите «Обычная · API»: цена и браузерный вход не нужны.')
+
+
+def _robot_state(page):
+    """Recognise the visible challenge; never click/solve or retry it."""
+    def visible(frame,pattern):
+        loc=frame.get_by_text(re.compile(pattern,re.I))
+        return any(loc.nth(i).is_visible() for i in range(min(loc.count(),8)))
+    state=''
+    for frame in page.frames[:8]:
+        try:
+            denied=visible(frame,r'Access to this page has been denied because')
+            challenge=denied or visible(frame,r'^Confirm\s+you.?re\s+not\s+a\s+robot\.?$') or visible(frame,r'^PRESS\s*&\s*HOLD$')
+            if challenge:
+                state='challenge'
+                if denied and visible(frame,r'^Please try again\.?$'):return 'blocked'
+        except Exception:
+            continue
+    return state
+
 def _wait_form(page,timeout=30):
     end=time.monotonic()+timeout
     while time.monotonic()<end:
+        if _robot_state(page):raise NotPublishedError(ROBOT_ERROR)
         if '/users/login' in page.url or '/join' in page.url:
             raise NotPublishedError('Войдите в DeviantArt через «Войти в браузере» в настройках')
         if _title(page,False) is not None or page.locator('input[type=file]').count():
@@ -149,12 +173,21 @@ def _wait_form(page,timeout=30):
 
 def login(report,timeout=600):
     with B.session(platform='deviantart',headless=False,wait=20) as (ctx,page):
-        page.goto(SUBMIT,wait_until='domcontentloaded',timeout=30000)
+        page.goto(SUBMIT,wait_until='commit',timeout=30000)
         report(progress=.2,message='Войдите в DeviantArt в открывшемся браузере и откройте создание работы')
         end=time.monotonic()+timeout
+        challenge_seen=False
         while time.monotonic()<end:
             if not ctx.pages:
                 raise NotPublishedError('Окно входа DeviantArt закрыто')
+            robot=_robot_state(page)
+            if robot=='blocked':raise NotPublishedError(ROBOT_ERROR)
+            if robot and not challenge_seen:
+                challenge_seen=True
+                end=min(end,time.monotonic()+120)
+                report(progress=.2,message='DeviantArt показал проверку на робота. Пройдите её вручную в окне браузера; ожидание до 2 минут. Для обычных публикаций этот вход не нужен.')
+            if robot:
+                page.wait_for_timeout(500);continue
             host=urlparse(page.url).hostname
             if host in ('www.deviantart.com','deviantart.com') and '/submit' in urlparse(page.url).path:
                 # Presence of an editable submission form, not merely any DA cookie.
@@ -163,7 +196,7 @@ def login(report,timeout=600):
                     report(progress=1,message='Редактор DeviantArt доступен, вход сохранён')
                     return
             page.wait_for_timeout(500)
-        raise NotPublishedError('Вход в DeviantArt не завершён за 10 минут')
+        raise NotPublishedError(ROBOT_ERROR if challenge_seen else 'Вход в DeviantArt не завершён за 10 минут')
 
 
 def _body(scope,text):

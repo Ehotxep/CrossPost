@@ -71,7 +71,7 @@ def composition(draft):
             transform = ('Оригинал' if original else
                          f"JPEG-превью: масштаб {cfg['light']['scale']}, качество {cfg['light']['quality']}") if f['kind'] == 'image' else 'Исходный файл; перекодирование при необходимости по лимитам площадки'
             if platform=='deviantart' and (cfg[platform].get('premium_download') or cfg[platform].get('subscriber_only')):
-                transform='Уменьшенное JPEG-превью + платный оригинал без изменений' if cfg[platform].get('premium_download') else 'Оригинал для выбранных тиров'
+                transform='Черновик Sta.sh с JPEG-превью; оригинал прикрепляется вручную' if cfg[platform].get('premium_download') and f['kind']=='image' else 'Файл работы в черновике Sta.sh'
             previews.append({k: f.get(k) for k in ('id', 'name', 'kind', 'size', 'width', 'height')})
             previews[-1].update(transform=transform, tags=tags)
             if platform == 'bluesky':
@@ -124,17 +124,12 @@ def readiness(draft, remote=False):
                     if isinstance(limit,(int,float)) and limit<=0:
                         check.update(state='error',message='Ключ принят, но доступная квота загрузок исчерпана')
                 elif platform=='deviantart':
-                    from app.publish.da_access import requested,blocked_reason
-                    if requested(cfg[platform]):
-                        reason=blocked_reason(cfg[platform])
-                        check.update(state='error' if reason else 'unchecked',message=reason or 'Платный режим: запустите пробный прогон DeviantArt; браузер автоматически не открывается')
-                    else:
-                        from platforms import deviantart
-                        token=deviantart._token(cfg[platform])
-                        response=requests.get(f'{deviantart.API}/user/whoami',headers={'Authorization':'Bearer '+token},timeout=(5,15),allow_redirects=False)
-                        identity=deviantart._json(response,'проверка входа')
-                        if not identity.get('username'):raise ValueError('DeviantArt не подтвердил аккаунт')
-                        check.update(state='ok',message='OAuth-вход подтверждён: '+identity['username'])
+                    from platforms import deviantart
+                    token=deviantart._token(cfg[platform])
+                    response=requests.get(f'{deviantart.API}/user/whoami',headers={'Authorization':'Bearer '+token},timeout=(5,15),allow_redirects=False)
+                    identity=deviantart._json(response,'проверка входа')
+                    if not identity.get('username'):raise ValueError('DeviantArt не подтвердил аккаунт')
+                    check.update(state='ok',message='OAuth-вход подтверждён: '+identity['username'])
                 else:
                     check['message'] = 'Вход и права нужно проверить в настройках площадки; автоматическая проверка здесь недоступна'
             except Exception as e:

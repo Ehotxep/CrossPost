@@ -46,43 +46,21 @@ class DeviantArtAccessDefaults(unittest.TestCase):
         self.assertEqual(effective['deviantart']['premium_price_usd'],'10.00')
         self.assertNotIn('client_secret',profile['deviantart'])
 
-    def test_paid_modes_stop_before_upload_or_auth_while_inactive_defaults_do_not_block(self):
-        self.assertEqual(blocked_reason({'premium_price_usd':'5.00','subscriber_tiers':['Tip Jar']}),'')
-        for mode in ('premium_download','subscriber_only'):
-            with self.subTest(mode=mode),patch.object(DA,'_token',side_effect=AssertionError('must not authenticate')):
-                with self.assertRaises(NotPublishedError):
-                    DA.publish({mode:True},[('image.png',b'original','image/png')],'Title','',[],'sfw')
-
-    def test_paid_destination_is_blocked_in_plan_and_can_be_excluded(self):
+    def test_paid_plan_requires_oauth_but_not_browser_price_or_tiers(self):
         from app.publish import runner
         importlib.reload(runner)
-        cfg=copy.deepcopy(S.DEFAULTS)
-        cfg['deviantart'].update(enabled=True,premium_download=True,premium_price_usd='5.00')
-        f={'id':'0123456789abcdef','name':'art.png','kind':'image','path':Path(self.tmp.name)/'art.png','size':8}
-        f['path'].write_bytes(b'original')
-        draft={'files':[f['id']],'title':'Art','text':'','rating':'sfw','signature':False,'exclude':[],'booru_posts':{}}
-        with patch.object(runner.S,'load',return_value=cfg),patch.object(runner,'_files',return_value=[f]), \
-                patch.object(runner.core_common,'load_token',return_value={'access_token':'fixture-token'}):
-            result=runner.plan(draft)
-            dest=next(d for d in result['dests'] if d['platform']=='deviantart')
-            self.assertFalse(dest['will'])
-            self.assertTrue(any('браузер' in e for e in result['errors']))
-            draft['exclude']=['deviantart']
-            self.assertFalse(any('браузер' in e for e in runner.plan(draft)['errors']))
-
-    def test_browser_paid_plan_can_use_saved_browser_login_without_oauth(self):
-        from app.publish import runner
-        importlib.reload(runner)
-        cfg=copy.deepcopy(S.DEFAULTS)
-        cfg['deviantart'].update(enabled=True,browser_ok=True,premium_download=True,premium_price_usd='5.00')
-        file={'id':'0123456789abcdef','name':'art.png','kind':'image','path':Path(self.tmp.name)/'art.png','size':8}
-        file['path'].write_bytes(b'original')
-        draft={'files':[file['id']],'title':'Art','text':'','rating':'sfw','signature':False,'exclude':[],'booru_posts':{}}
-        with patch.object(runner.S,'load',return_value=cfg),patch.object(runner,'_files',return_value=[file]),patch.object(runner.core_common,'load_token',return_value={}):
-            result=runner.plan(draft)
-        dest=next(d for d in result['dests'] if d['platform']=='deviantart')
-        self.assertTrue(dest['will'])
-        self.assertIn('$5.00 USD',' '.join(dest['details']))
+        cfg = copy.deepcopy(S.DEFAULTS)
+        cfg["deviantart"].update(enabled=True, premium_download=True, subscriber_only=True)
+        f = {"id":"0123456789abcdef", "name":"art.png", "kind":"image",
+             "path":Path(self.tmp.name)/"art.png", "size":8}
+        f["path"].write_bytes(b"original")
+        draft = {"files":[f["id"]], "title":"Art", "text":"", "rating":"sfw", "signature":False}
+        with patch.object(runner.S,"load",return_value=cfg), patch.object(runner,"_files",return_value=[f]), \
+                patch.object(runner.core_common,"load_token",return_value={"access_token":"fixture"}):
+            dest = next(d for d in runner.plan(draft)["dests"] if d["platform"]=="deviantart")
+        self.assertTrue(dest["will"])
+        self.assertTrue(dest["stash_options"]["premium_download"])
+        self.assertIn("Sta.sh", " ".join(dest["details"]))
 
     def test_paid_batch_keeps_original_bytes_separate_and_resumes_confirmed_files(self):
         import io,hashlib
@@ -141,3 +119,39 @@ class DeviantArtAccessDefaults(unittest.TestCase):
                     (runner.state()['pub_id'],)).fetchone()[0])
             self.assertEqual(stored[0]['paid_confirmed'],rows)
             self.assertEqual(stored[0]['link'],rows['hash']['url'])
+
+    def test_ordinary_publish_uses_api_without_price_tiers_or_browser(self):
+        from app.publish import da_web
+        from core import retry
+        from unittest.mock import Mock
+        cfg=copy.deepcopy(S.DEFAULTS['deviantart'])
+        cfg.update(premium_download=False,subscriber_only=False,browser_ok=False,premium_price_usd='',subscriber_tiers=[])
+        responses=[Mock(status_code=200),Mock(status_code=200)]
+        responses[0].json.return_value={'itemid':123}
+        responses[1].json.return_value={'url':'https://www.deviantart.com/fixture/art/Art-123','deviationid':'fixture-id'}
+        with patch.object(DA,'_token',return_value='fixture'),patch.object(retry,'post',side_effect=responses) as post,patch.object(da_web,'publish') as browser:
+            result=DA.publish(cfg,[('art.png',b'original','image/png')],'Title','Body',[],'sfw')
+        self.assertEqual(result[0]['id'],'fixture-id')
+        self.assertEqual(post.call_count,2);browser.assert_not_called()
+        self.assertNotIn('price',str(post.call_args_list))
+
+    def test_paid_preparation_submits_only_and_resumes_from_saved_draft(self):
+        from core import retry
+        from unittest.mock import Mock
+        cfg = dict(premium_download=True, subscriber_only=True, browser_ok=False)
+        files = [("one.jpg", b"first", "image/jpeg"), ("two.jpg", b"second", "image/jpeg")]
+        response = Mock(status_code=200)
+        response.json.return_value = {"itemid": 37}
+        saved = {}
+        with patch.object(DA, "_token", return_value="fixture"), \
+                patch.object(retry, "post", return_value=response) as post:
+            rows = DA.publish(cfg, files, "Title", "Description", ["wolf"], "sfw",
+                              already={"0": {"name":"one.jpg","id":"","url":"https://sta.sh/01"}},
+                              confirmed=saved.update)
+        post.assert_called_once()
+        self.assertTrue(post.call_args.args[0].endswith("/stash/submit"))
+        self.assertFalse(post.call_args.kwargs["idempotent"])
+        self.assertEqual(post.call_args.kwargs["data"]["artist_comments"], "Description")
+        self.assertEqual(post.call_args.kwargs["data"]["tags[]"], ["wolf"])
+        self.assertEqual(rows[1]["url"], "https://sta.sh/011")
+        self.assertEqual(saved["1"], rows[1])

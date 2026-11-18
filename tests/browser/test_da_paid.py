@@ -76,6 +76,35 @@ class DeviantArtPaidBrowser(unittest.TestCase):
         with patch.object(W.B,'dump',return_value='da-paid-test.png'):
             return W.post(page,cfg or self.config(),self.preview,self.original,'Paid artwork','Description',['wolf','forest'],'sfw',dry)
 
+    def test_robot_failure_stops_login_without_clicks_or_cookie_success(self):
+        from unittest.mock import Mock
+        source='''<h2>Confirm you're not a robot.</h2><button onclick="window.clicks++">PRESS &amp; HOLD</button>
+          <p>Please try again</p><p>Access to this page has been denied because we believe you are using automation tools</p>
+          <script>window.clicks=0</script>'''
+        with self.form(source) as (ctx,page):
+            @contextmanager
+            def session(**kwargs):yield ctx,page
+            with patch.object(W.B,'session',session),patch.object(W.B,'save_cookies') as save:
+                with self.assertRaisesRegex(NotPublishedError,'отклонил проверку на робота'):W.login(Mock(),timeout=2)
+            self.assertEqual(page.evaluate('window.clicks'),0);save.assert_not_called()
+            self.assertEqual(W._robot_state(page),'blocked')
+
+    def test_manual_challenge_waits_without_automatically_pressing_button(self):
+        from unittest.mock import Mock
+        source=FORM+'''<section id=challenge><h2>Confirm you're not a robot.</h2>
+          <button onclick="window.challengeClicks++">PRESS &amp; HOLD</button></section><script>window.challengeClicks=0</script>'''
+        with self.form(source) as (ctx,page):
+            @contextmanager
+            def session(**kwargs):yield ctx,page
+            report=Mock()
+            # A local simulation of a user completing the challenge, not a
+            # solver or an interaction with a real CAPTCHA service.
+            def user_completes(ms):page.locator('#challenge').evaluate('e=>e.remove()')
+            with patch.object(W.B,'session',session),patch.object(W.B,'save_cookies'),patch.object(page,'wait_for_timeout',side_effect=user_completes):
+                W.login(report,timeout=2)
+            self.assertTrue(any('вручную' in call.kwargs.get('message','') for call in report.call_args_list))
+            self.assertEqual(page.evaluate('window.challengeClicks'),0)
+
     def test_read_tiers_preserves_selected_access_and_existing_draft(self):
         source=FORM.replace('<input type=checkbox>Other Tier','<input type=checkbox checked>Other Tier')
         with self.form(source) as (_,page):

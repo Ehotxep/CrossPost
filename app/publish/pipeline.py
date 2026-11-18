@@ -117,6 +117,8 @@ def add(draft: dict) -> dict:
     p = runner.plan(draft)
     if p["errors"]:
         raise ValueError(p["errors"][0])
+    from app.publish.da_access import preserve_preparation
+    draft = preserve_preparation(draft, p)
     n = sum(1 for d in p["dests"] if d["will"])
     if not n:
         raise ValueError("Выберите, куда публиковать: сейчас ни одно место не включено")

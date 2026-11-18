@@ -157,13 +157,31 @@ class WorkflowFeatures(unittest.TestCase):
         self.assertEqual(check.call_count,3)
         upload.assert_not_called();browser.assert_not_called()
 
-    def test_paid_da_readiness_does_not_open_sites(self):
-        from app.publish import da_web
-        self.settings.update('deviantart',{'premium_download':True,'premium_price_usd':'5','browser_ok':True})
-        selected=[{'platform':'deviantart','key':'deviantart','name':'DA','will':True}]
-        with patch.object(self.runner,'plan',return_value={'dests':selected,'errors':[]}),patch.object(da_web.B,'session') as browser:
-            result=self.review.readiness({},remote=True)
-        self.assertFalse(result['access_verified']);browser.assert_not_called()
+    def test_paid_da_runner_saves_drafts_without_marking_public_link(self):
+        from datetime import datetime, timedelta, timezone
+        from app.publish import schedule
+        from core import retry
+        from platforms import deviantart
+        self.settings.update("deviantart", {"enabled": True, "premium_download": True})
+        draft = dict(files=[self.image()], title="Title", text="Description",
+                     rating="sfw", signature=False, hashtags=["wolf"])
+        response = Mock(status_code=200)
+        response.json.return_value = {"itemid": 37}
+        with patch.object(self.runner.core_common, "load_token", return_value={"access_token":"fixture"}), \
+                patch.object(deviantart, "_token", return_value="fixture"), \
+                patch.object(retry, "post", return_value=response) as post:
+            run_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+            job = schedule.add(draft, run_at)
+            queued = json.loads(self.db.query("SELECT draft FROM scheduled WHERE id=?", (job["id"],))[0]["draft"])
+            self.settings.update("deviantart", {"premium_download": False})
+            self.runner.start(queued, lambda **kwargs: None)
+        post.assert_called_once()
+        self.assertTrue(post.call_args.args[0].endswith("/stash/submit"))
+        dest = next(d for d in self.runner.state()["dests"] if d["key"]=="deviantart")
+        self.assertEqual(dest["outcome"], "prepared")
+        self.assertFalse(dest["link"])
+        saved = self.runner.history(1)[0]["dests"][0]
+        self.assertEqual(saved["stash_drafts"]["0"]["url"], "https://sta.sh/011")
 
     def seed_backup(self):
         draft = self.discord()

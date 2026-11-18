@@ -276,6 +276,11 @@ def _for_single_publication(pub_id: int) -> dict:
         if d.get("platform") == "reddit" and d.get("state") == "done":
             item["stats_url"] = reddit_stats_url(d.get("link"))
         from app.publish import settings as _PS
+        if d.get("stash_drafts"):
+            item["stash_drafts"] = d["stash_drafts"]
+            item["why"] = "Черновики Sta.sh. Для публикации откройте их в DeviantArt."
+            dests.append(item)
+            continue
         if d.get("state") != "done":
             item["why"] = "Публикация завершилась не полностью; ниже — подтверждённые изображения" if refs else "не опубликовано"
         elif d.get("platform") == "reddit":

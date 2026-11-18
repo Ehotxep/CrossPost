@@ -39,7 +39,6 @@ class Api:
                 "tg_job": self.jobs.get("tg:sync"), "pub_job": self.jobs.get("publish"),
                 "ins_job": self.jobs.get("insights:tag"),
                 "browser_jobs": {p: self.jobs.get(p + ":auth") for p in ('reddit', 'joyreactor', 'x')},
-                "da_browser_job": self.jobs.get("da:browser"),
                 "vk_job": self.jobs.get("vk:auth"), "vk_stats_job": self.jobs.get("vk:stats"), "modules": self.modules(), "tagger_paused": __import__("app.tagger.remote", fromlist=["x"]).paused, "levels": self._levels(),
                 "update": self._update_info()}
 
@@ -108,7 +107,7 @@ class Api:
 
     # --- панель процессов: всё, что сейчас идёт в фоне ---
     JOB_LABELS = {
-        "da:browser": ("DeviantArt: платная публикация", "settings:deviantart"),"tg:pool": ("Запас прокси Telegram", "settings:net"), "ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды blep.art", "trends"), "trends:e621": ("Тренды e621", "trends"), "trends:floofgens": ("Тренды floofgens.net", "trends"),
+        "tg:pool": ("Запас прокси Telegram", "settings:net"), "ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды blep.art", "trends"), "trends:e621": ("Тренды e621", "trends"), "trends:floofgens": ("Тренды floofgens.net", "trends"),
                   "e6db": ("База тегов blep.art", "settings:tags"), "tagger:install": ("Установка теггера", "settings:tags"),
                   "tagger:run": ("Подбор тегов", "post"), "publish": ("Публикация", "post"),
                   "tg:sync": ("Загрузка из Telegram", "settings:import"), "insights:tag": ("Разметка истории теггером", "stats"),
@@ -574,44 +573,6 @@ class Api:
         from platforms import deviantart
         deviantart.logout()
         return self.pub_settings()
-
-    def pub_da_browser_login(self):
-        from app.publish import da_web, settings as PS
-        def run(report):
-            da_web.login(report)
-            PS.update('deviantart',{'browser_ok':True,'enabled':True,'available_tiers':[],'tiers_checked_at':''})
-        return self.jobs.start('da:browser',run)
-
-    def pub_da_browser_state(self):
-        return {'job':self.jobs.get('da:browser'),'settings':self.pub_settings()}
-
-    def pub_da_tiers(self):
-        from app.publish import da_web,settings as PS
-        from datetime import datetime,timezone
-        cfg=PS.load()['deviantart']
-        def run(report):
-            names=da_web.load_tiers(cfg,report)
-            PS.update('deviantart',{'available_tiers':names,'tiers_checked_at':datetime.now(timezone.utc).isoformat()})
-            report(progress=1,message=f'Загружено тиров: {len(names)}')
-        return self.jobs.start('da:browser',run)
-
-    def pub_da_paid_dry(self):
-        from app.publish import settings as PS,da_web
-        from app.publish.da_access import blocked_reason,requested
-        cfg=PS.load()['deviantart']
-        if not requested(cfg):raise ValueError('Выберите платное скачивание или тиры DeviantArt')
-        reason=blocked_reason(cfg)
-        if reason:raise ValueError(reason)
-        def run(report):
-            from PIL import Image
-            import io
-            data=io.BytesIO();Image.new('RGB',(800,600),(91,103,240)).save(data,format='PNG')
-            result=da_web.publish(cfg,[('crosspost-test-original.png',data.getvalue(),'image/png')],
-                'CrossPost test - not published','CrossPost paid access test',[], 'sfw',dry_run=True,
-                progress=lambda value:report(progress=value))[0]
-            PS.update('deviantart',{'paid_dry_shot':result.get('shot',''),'paid_dry_note':result.get('note','')})
-            report(progress=1,message=result.get('note','Пробный прогон завершён без публикации'))
-        return self.jobs.start('da:browser',run)
 
     def pub_da_galleries(self):
         from app.publish import settings as PS
@@ -1442,6 +1403,8 @@ class Api:
         if p["errors"]:
             raise ValueError(p["errors"][0])
         duplicates.require_confirmation(draft, duplicate_ack)
+        from app.publish.da_access import preserve_preparation
+        draft = preserve_preparation(draft, p)
         self._tg_ctx()
         from core.fsutil import file_lock
         from app.paths import data_dir

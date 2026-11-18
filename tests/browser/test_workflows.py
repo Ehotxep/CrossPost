@@ -32,15 +32,8 @@ settings.update('discord',{'enabled':True,'webhooks':[{'name':'Новый пос
 updates.check_async=lambda:None
 runner.D.post=lambda *args,**kwargs:[]
 runner.E6.check=lambda cfg:{'name':cfg['username']}
-from app.publish import da_web
-da_web.login=lambda report:report(progress=1,message='Fixture login')
-da_web.load_tiers=lambda cfg,report:['Tip Jar','Big Tip Jar','Other Tier']
 from app.publish import social_web
 social_web.login=lambda platform,report:report(progress=1,message='Fixture browser login')
-def da_dry(cfg,files,title,text,tags,rating,**kwargs):
- assert kwargs.get('dry_run') is True
- return [{'shot':'','note':'Пробный прогон: доступ проверен, кнопка публикации не нажималась'}]
-da_web.publish=da_dry
 with db.tx() as c:
  for i in range(65):
   c.execute('INSERT INTO publications(created,title,text,files,dests,draft) VALUES (?,?,?,?,?,?)',('2026-01-01T12:00:00+00:00','Новый пост' if i==0 else 'Post '+str(i),'','[]',json.dumps([{'key':'discord:0','platform':'discord','name':'Discord','state':'done'}]),'{}'))
@@ -395,34 +388,48 @@ main()
             close_page(page,self.id())
             restore=path.with_suffix('.restore');restore.write_bytes(original);restore.replace(path)
 
-    def test_deviantart_browser_login_and_paid_dry_run_use_saved_defaults(self):
+    def test_deviantart_ordinary_mode_does_not_require_browser_or_price(self):
         page=self.new_page()
-        old=self.api('pub_settings')['deviantart']
-        fields=('browser_ok','enabled','premium_download','premium_price_usd','subscriber_only','subscriber_tiers','available_tiers','tiers_checked_at')
+        path=Path(self.tmp.name)/'publish.json';original=path.read_bytes()
         try:
+            self.api('pub_save',section='deviantart',changes={'premium_download':False,'subscriber_only':False,'premium_price_usd':'','browser_ok':False})
             page.goto(self.base,wait_until='networkidle')
             page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='deviantart';await Pub.load('settings');CP.render()}")
+            self.assertFalse(page.locator('#daprice').is_visible())
+            self.assertFalse(page.locator('[data-pa=da-browser-login]').is_visible())
+            self.assertIn('Цена и отдельный браузерный вход не нужны',page.locator('main').inner_text())
+            page.locator('[data-pa=da-access-mode][data-val=paid]').click()
             page.locator('details[data-detail-key="da-access-defaults"] summary').click()
-            page.locator('#daprice').fill('5.50')
-            page.locator('#dapremium').check()
-            page.locator('#datiers').fill('Tip Jar\nBig Tip Jar')
             page.locator('#dasubscriber').check()
-            page.locator('[data-pa="da-browser-login"]').click()
-            page.wait_for_function('CP.S.pub.deviantart.browser_ok===true && !CP.S.daBrowserWaiting')
-            self.assertIn('платный доступ',page.locator('.platnav [data-psec=deviantart]').inner_text())
-            page.locator('[data-pa="da-tiers"]').click()
-            page.wait_for_function('CP.S.pub.deviantart.available_tiers.length===3 && !CP.S.daBrowserWaiting')
-            page.locator('[data-da-tier="Other Tier"]').check()
-            page.wait_for_function('CP.S.pub.deviantart.subscriber_tiers.includes("Other Tier")')
-            page.locator('[data-da-tier="Other Tier"]').uncheck()
-            page.wait_for_function('!CP.S.pub.deviantart.subscriber_tiers.includes("Other Tier")')
+            page.wait_for_function('CP.S.pub.deviantart.subscriber_only')
+            page.locator('#dapremium').uncheck()
+            page.wait_for_function('!CP.S.pub.deviantart.premium_download')
+            self.assertTrue(page.locator('#daprice').is_disabled())
+            page.locator('#dapremium').check()
+            page.wait_for_function('CP.S.pub.deviantart.premium_download')
+            page.locator('#daprice').fill('invalid-price')
+            page.locator('#daprice').blur()
+            page.locator('#settings-save-error').wait_for()
+            page.locator('[data-pa=da-access-mode][data-val=ordinary]').click()
+            page.wait_for_function('!CP.S.pub.deviantart.subscriber_only && !CP.S.pub.deviantart.premium_download')
+            self.assertFalse(page.locator('[data-pa=da-browser-login]').is_visible())
+            self.assertFalse(json.loads((Path(self.tmp.name)/'ui.json').read_text()).get('settingsPending',{}).get('jobs'))
+            page.reload(wait_until='networkidle')
+            self.assertEqual(page.locator('#settings-save-error').count(),0)
+            page.evaluate("""() => {
+                CP.S.view = 'post'; CP.S.postMode = 'progress';
+                CP.S.pubState = {title:'Test',rating:'sfw',dests:[
+                    {key:'deviantart',name:'DeviantArt',state:'done',outcome:'prepared',
+                     stash_drafts:{0:{url:'https://sta.sh/011',name:'Art.jpg'}}}
+                ]};
+                CP.render();
+            }""")
+            self.assertTrue(page.locator('[data-open="https://sta.sh/011"]').is_visible())
+            self.assertIn('черновики готовы', page.locator('[data-send-key="deviantart"]').get_attribute('aria-label'))
 
-            page.locator('[data-pa="da-paid-dry"]').click()
-            page.get_by_text('Пробный прогон: доступ проверен, кнопка публикации не нажималась',exact=True).wait_for()
-            self.assertEqual(self.api('pub_settings')['deviantart']['subscriber_tiers'],['Tip Jar','Big Tip Jar'])
         finally:
             close_page(page,self.id())
-            self.api('pub_save',section='deviantart',changes={k:old[k] for k in fields})
+            restore=path.with_suffix('.restore');restore.write_bytes(original);restore.replace(path)
 
     def test_deviantart_paid_defaults_autosave_and_survive_reload(self):
         page=self.new_page()
@@ -431,6 +438,7 @@ main()
         try:
             page.goto(self.base,wait_until='networkidle')
             page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='deviantart';CP.store.set('view','settings');CP.store.set('platSec','deviantart');await Pub.load('settings');CP.render()}")
+            page.locator('[data-pa=da-access-mode][data-val=paid]').click()
             page.locator('details[data-detail-key="da-access-defaults"] summary').click()
             page.locator('#daprice').fill('5,50')
             page.locator('#datiers').fill('Tip Jar\nBig Tip Jar')
@@ -450,7 +458,7 @@ main()
             self.assertTrue(page.locator('#dapremium').is_checked())
             panel=page.locator('details[data-detail-key="da-access-defaults"]')
             if not panel.evaluate('el=>el.open'):panel.locator('summary').click()
-            self.assertIn('Платные работы отправляются через отдельный браузер',panel.inner_text())
+            self.assertIn('CrossPost загрузит черновики через OAuth API',panel.inner_text())
         finally:
             close_page(page,self.id())
             self.api('pub_save',section='deviantart',changes={k:old[k] for k in fields})

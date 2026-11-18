@@ -205,10 +205,6 @@
       s.tagger = await C().api("tagger_status");
       if (!(s.tagger.job && s.tagger.job.state === "running")) s.tagWaiting = false;
     }
-    if (s.daBrowserWaiting) {
-      const result=await C().api('pub_da_browser_state');
-      if(result.job?.state!=='running') {s.daBrowserWaiting=false;s.pub=result.settings;if(result.job?.error){s.pubErr ||= {};s.pubErr.da=result.job.error;}}
-    }
     if (s.vkStatsWaiting && s.info && s.info.vk_stats_job && s.info.vk_stats_job.state !== "running") {
       s.vkStatsWaiting = false; s.pub = await C().api("pub_settings");
     }
@@ -899,7 +895,7 @@
     else if (!d.rating) h += `<p class="muted small">Выберите рейтинг — здесь появится список мест.</p>`;
     else {
       h += `<div class="dlist">${will.map(row).join("")}${needs.map(row).join("")}${off.map(row).join("")}</div>`;
-      if (doneL.length) h += `<div class="dlist donel"><span class="muted small">Уже опубликовано</span>${doneL.map((x) => `<div class="drow dim">${C().pbadge(x.platform, { cls: "" })}
+      if (doneL.length) h += `<div class="dlist donel"><span class="muted small">Уже обработано</span>${doneL.map((x) => `<div class="drow dim">${C().pbadge(x.platform, { cls: "" })}
         <span class="dn"><b translate="no">${esc(x.name.replace(/^[^·]+· /, ""))}</b><span>✓ ${esc(x.reason)}</span></span></div>`).join("")}</div>`;
       if (skip.length) h += `<details class="more"><summary>Не уйдёт: ${skip.length}</summary><div class="dlist">${skip.map(row).join("")}</div></details>`;
     }
@@ -923,7 +919,7 @@
       h += whenHtml() + `<div class="splitbtn"><button class="btn primary big" data-pa="schedule" ${ok ? "" : "disabled"}>${at ? `Запланировать на ${fmtWhen(at)}` : "Выберите время"}</button>
         <button class="btn big" data-set="when" data-val="now" data-tip="Не планировать — опубликовать сейчас" aria-label="Не планировать">${C().ICON.close}</button></div>`;
     } else {
-      h += `<div class="splitbtn"><button class="btn primary big" data-pa="publish" ${can ? "" : "disabled"}>${window.I18N.key('post.publish')}</button>
+      h += `<div class="splitbtn"><button class="btn primary big" data-pa="publish" ${can ? "" : "disabled"}>${will.length && will.every(x=>x.stash_options) ? 'Подготовить в Sta.sh' : window.I18N.key('post.publish')}</button>
         <button class="btn primary big" data-set="when" data-val="later" data-tip="Запланировать на время" aria-label="Запланировать" ${d.rating ? "" : "disabled"}>${C().ICON.clock}</button></div>
         <button class="btn big" style="width:100%;margin-top:8px" data-pa="pipe-add" ${can && will.length && d.rating ? "" : "disabled"} data-tip="Положить пост в очередь: Crosspost сам выберет лучшее свободное время по вашей статистике и опубликует">В конвейер</button>`;
     }
@@ -981,25 +977,28 @@
         x.state === "done" && /возможно|скорее всего|не удалось найти|не удалось.*ссылк/i.test(x.note || "");
       const state = ambiguous ? "uncertain" : ["queued", "running", "done", "error"].includes(x.state) ? x.state : "queued";
       const previous = previousSendStates.get(x.key);
-      const justSent = state === "done" && (previous === "running" || previous === "queued");
+      const justSent = x.outcome !== "prepared" && state === "done" && (previous === "running" || previous === "queued");
       const justFailed = state === "error" && (previous === "running" || previous === "queued");
       previousSendStates.set(x.key, state);
-      const label = {queued:"в очереди", running:"отправляется", done:"опубликовано", error:"отказ", uncertain:"результат не подтверждён"}[state];
+      const label = {queued:"в очереди", running:"отправляется", done:x.outcome === "prepared" ? "черновики готовы" : "опубликовано", error:"отказ", uncertain:"результат не подтверждён"}[state];
       const symbol = {done:"✓", error:"×", uncertain:"?"}[state] || "";
       const tip = `${x.name || x.platform || x.key}: ${label}`;
       return `<span data-send-key="${esc(x.key)}" class="send-dest ${state}${justSent ? ' just-sent' : ''}${justFailed ? ' just-failed' : ''}" role="img" aria-label="${esc(tip)}" data-tip="${esc(tip)}" title="${esc(tip)}">${C().pbadge(x.platform || (x.key || '').split(':')[0])}${symbol ? `<span class="send-dest-mark" aria-hidden="true">${symbol}</span>` : ''}</span>`;
     };
     const row = (x) => {
-      const [ic, lbl] = (x.state === "error" && x.outcome !== "not_sent" ? ["?", "возможно, опубликовано"] : STATE_ICON[x.state]) || ["?", x.state];
+      const unknownLabel = x.stash_options ? "Возможно, черновик уже создан в Sta.sh." : "Возможно, опубликовано.";
+      const [ic, lbl] = (x.outcome === "prepared" ? ["✓", "Черновики готовы"] : x.state === "error" && x.outcome !== "not_sent" ? ["?", unknownLabel] : STATE_ICON[x.state]) || ["?", x.state];
       const warn = x.note && /⚠/.test(x.note);
       return `<div class="prow ${x.state}"><span class="pic" title="${lbl}">${ic}</span>
         <div style="flex:1;min-width:0"><b translate="no">${esc(x.name)}</b><br>
           <span class="muted small">${esc((x.details || []).join(" · "))}</span>
           ${x.state === "running" ? `<div class="progress thin progress-active" role="progressbar" aria-label="${esc(x.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct(x.progress)}"><div style="width:${pct(x.progress)}%"></div></div>` : ""}
           ${x.state === "running" && x.message ? `<span class="small">${esc(x.message)} ${Math.round((x.progress || 0) * 100)}%</span>` : ""}
-          ${x.state === "error" ? `<br><span class="err small">${x.outcome !== "not_sent" ? "Возможно, опубликовано. " : ""}${esc(x.message)}</span>` : ""}
+          ${x.state === "error" ? `<br><span class="err small">${x.outcome !== "not_sent" ? esc(unknownLabel) + " " : ""}${esc(x.message)}</span>` : ""}
           ${(() => { const m = /снимок экрана: ([\w.-]+\.png)/.exec((x.message || "") + " " + (x.note || "")); return m ? `<figure class="shot"><img src="/bdebug/${encodeURIComponent(m[1])}?t=${tok()}" alt="Снимок экрана"><figcaption class="muted small">Так выглядела страница в момент ошибки — пришлите этот снимок, если непонятно, что пошло не так.</figcaption></figure>` : ""; })()}
-          ${x.note ? `<br><span class="small ${warn ? "warn" : "muted"}">${esc(x.note)}</span>` : ""}</div>
+          ${x.note ? `<br><span class="small ${warn ? "warn" : "muted"}">${esc(x.note)}</span>` : ""}
+          ${stashDraftLinks(x)}
+          ${x.stash_options && x.state === "error" && x.outcome !== "not_sent" ? '<a href="#" class="small" data-open="https://sta.sh/">Проверить черновики в Sta.sh</a>' : ""}</div>
         ${x.link && /^https?:/.test(x.link) ? `<a href="#" class="small" data-open="${esc(x.link)}">Открыть</a>` : ""}</div>`;
     };
     return `<div class="head"><div><h1 translate="no">${esc(st.title || "Публикация")}</h1>
@@ -1020,6 +1019,14 @@
       </div>
       <p class="note">Обычный повтор отправит пост только туда, где подтверждён отказ. При неизвестном результате сначала проверьте площадку: пост мог уже появиться. Если пост уже вышел, а не дошли только PNG, они дошлются к нему же — второй пост не создаётся.</p>
       ${journalHtml(st.pub_id,'progress')}`;
+  }
+
+  function stashDraftLinks(destination) {
+    return Object.values(destination.stash_drafts || {}).map(item =>
+      /^https:\/\/sta\.sh\/0[a-z0-9]+$/.test(item.url)
+        ? `<div><a href="#" class="small" data-open="${esc(item.url)}">Открыть черновик в Sta.sh · ${esc(item.name)}</a></div>`
+        : ""
+    ).join("");
   }
 
   // ---------------- История ----------------
@@ -1105,7 +1112,7 @@
   }
   const destBadges = (dests) => `<div class="pbs">${dests.map((x) => {
     const st = x.state === "error" ? "err" : x.state === "done" ? "" : "wait";
-    const tip = `${x.name}: ${x.state === "done" ? "опубликовано" : x.state === "error" ? (x.outcome !== "not_sent" ? "возможно, опубликовано — " : "ошибка — ") + (x.message || "") : "не дошло"}`;
+    const tip = `${x.name}: ${x.state === "done" ? (x.outcome === "prepared" ? "черновики готовы" : "опубликовано") : x.state === "error" ? (x.outcome !== "not_sent" ? "возможно, опубликовано — " : "ошибка — ") + (x.message || "") : "не дошло"}`;
     return C().pbadge(x.platform || (x.key || "").split(":")[0], { cls: st, tip, link: x.state === "done" && /^https?:/.test(x.link || "") ? x.link : "" });
   }).join("")}</div>`;
   // единая шкала успеха: ×3+ супер-хит, ×2–3 хит, ×1,3–2 выше нормы, ниже ×0,77 — слабее
@@ -1576,11 +1583,12 @@
       if (v >= L.hit || (pc != null && pc >= 0.9)) h += `<div class="banner-hit ${v >= L.super ? "super" : ""}">${C().ICON.trophy}<span><b>${v >= L.super ? "Супер-хит" : v >= L.hit ? "Хит канала" : "Сильный пост"}</b>${pc != null ? ` — входит в топ-${Math.max(1, Math.round((1 - pc) * 100))}% публикаций канала` : ""}${top.index ? "" : ", пока по оценке первых часов"}</span>${mk(v, !top.index, "big")}</div>`;
       else if (v < 0.77) h += `<div class="banner-hit low"><span>Пост идёт слабее обычного для канала${pc != null ? ` — лучше ${Math.round(pc * 100)}% публикаций` : ""}</span>${mk(v, !top.index, "big")}</div>`;
     }
-    const shown = d.dests.filter((x) => x.editable || x.stats || x.e6ai || x.booru_metrics || x.nums || x.stats_url || !x.why);   // ссылка на статистику доступна и без автоматического сбора
+    const shown = d.dests.filter((x) => x.stash_drafts || x.editable || x.stats || x.e6ai || x.booru_metrics || x.nums || x.stats_url || !x.why);   // ссылка на статистику доступна и без автоматического сбора
     if (!shown.length) h += `<p class="muted small">Площадки этого поста не отдают цифр — смотреть их можно только на самой площадке.</p>`;
     for (const x of shown) {
       const plat = x.platform || (x.key || "").split(":")[0];
       h += `<div class="pdest"><div class="pdhead">${C().pbadge(plat)}<b translate="no">${esc(x.name)}</b>${x.link && /^https?:/.test(x.link) ? `<a href="#" data-open="${esc(x.link)}" class="small">открыть</a>` : ""}${x.stats_url ? `<a href="#" data-open="${esc(x.stats_url)}" class="small">Статистика Reddit</a>` : ""}</div>`;
+      h += stashDraftLinks(x);
       if(x.editable) h+=`<button class="btn small" data-pa="tg-edit" data-id="${x.source_pub_id||d.id}" data-key="${esc(x.key)}">Редактировать в Telegram</button>`;
       const edit=s.tgEdit;
       if(edit&&edit.pub_id===(x.source_pub_id||d.id)&&edit.key===x.key){
@@ -1672,7 +1680,7 @@
       case "x": return p.x.browser_ok ? ["ok", "вход сохранён · только проверка"] : ["", "не подключено"];
       case "reddit": case "joyreactor": case "x": return p[sec].browser_ok ? [p[sec].enabled?"ok":"warn",p[sec].enabled?"через браузер · экспериментально":"отправка выключена"] : ["", "не подключено"];
       case "bluesky": { const b = p.bluesky_session || {}; return b.ok && p.bluesky.enabled ? ["ok", "@" + b.handle] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
-      case "deviantart": { const b = p.deviantart_session || {}, d=p.deviantart, paid=d.premium_download||d.subscriber_only, ready=paid?d.browser_ok:b.ok; return ready && d.enabled ? ["ok", paid?"браузер · платный доступ":b.username || "подключено"] : ready ? ["warn", "выключено"] : ["", "не подключено"]; }
+      case "deviantart": { const b = p.deviantart_session || {}, d=p.deviantart, paid=d.premium_download||d.subscriber_only, ready=b.ok; return ready && d.enabled ? ["ok", paid?"черновики Sta.sh":b.username || "подключено"] : ready ? ["warn", "выключено"] : ["", "не подключено"]; }
       case "e6ai": case "e621": case "floofgens": { const cfg = p[sec]; return cfg.enabled && cfg.has_key ? ["ok", cfg.username || "подключено"] : ["", "не подключено"]; }
       case "hashtags": return p.hashtags.enabled ? ["ok", "включены"] : ["", "выключены"];
       case "signatures": { const on = TEXTP.filter((k) => { const v = (p.signatures.platforms || {})[k] || {}; return v.sfw || v.nsfw; });
@@ -2001,7 +2009,7 @@
     if (sec === "files") h += filesHtml(err, ok, busy, tgl, hint) + backupsHtml();
     if (sec === "media") h += mediaHtml();
     if (sec === "bluesky") h += blueskyHtml(err, ok, busy);
-    if (sec === "deviantart") h += daHtml(err, ok, busy);
+    if (sec === "deviantart") h += daHtml(err, ok, busy, segP);
     if (LANGP.some(([key])=>key===sec)) {
       h += `<section class="card setc"><h2>Текст публикации</h2><div class="field"><label>Язык публикации</label><div class="seg" role="group" aria-label="Язык публикации">
           ${[["main","Русский"],["both","Оба"],["en","Английский"]].map(([value,label])=>`<button type="button" data-platform-language="${sec}" data-language="${value}" class="${(p.text_lang?.[sec]||"main")===value?"on":""}" aria-pressed="${(p.text_lang?.[sec]||"main")===value}">${label}</button>`).join("")}</div></div>
@@ -2032,9 +2040,9 @@
     }
     return h + `</section>`;
   }
-  function daHtml(err, ok, busy) {
+  function daHtml(err, ok, busy, segP) {
     const s = S(), p = s.pub, d = p.deviantart, ss = p.deviantart_session || {}, hint = C().hint;
-    let h = `<section class="card setc"><div class="head"><h2>${C().pbadge("deviantart")} DeviantArt ${hint("Обычные публикации — через API; платное скачивание и тиры — через отдельный браузер (экспериментально). Каждая картинка — отдельная работа. Эротика уходит как Mature (moderate, nudity); откровенное правила DeviantArt запрещают — такие посты сюда не уходят. Видео DeviantArt не принимает.")}</h2>
+    let h = `<section class="card setc"><div class="head"><h2>${C().pbadge("deviantart")} DeviantArt ${hint("Обычные публикации — через API; платные работы подготавливаются в Sta.sh. Каждая картинка — отдельная работа. Эротика уходит как Mature (moderate, nudity); откровенное правила DeviantArt запрещают — такие посты сюда не уходят. Видео DeviantArt не принимает.")}</h2>
       ${ss.ok ? `<span class="badge ok">✓ ${esc(ss.username || "подключено")}</span>` : `<span class="badge off">не подключено</span>`}</div>${err("da")}${ok("da")}`;
     if (!ss.ok) {
       h += `<ol class="steps"><li>Откройте <a href="#" data-open="https://www.deviantart.com/developers/apps">deviantart.com/developers/apps</a> → <b>Register Application</b>.</li>
@@ -2067,22 +2075,16 @@
     if(!ss.ok)h+=`<div class="tgls"><label class="tgl"><input type="checkbox" id="daon" ${d.enabled?'checked':''}><span>Публиковать на DeviantArt</span></label>
       <label class="tgl"><input type="checkbox" id="daai" ${d.is_ai_generated!==false?'checked':''}><span>Отмечать как созданное ИИ</span></label>
       <label class="tgl"><input type="checkbox" id="danoai" ${d.noai!==false?'checked':''}><span>Запретить использовать для обучения ИИ</span></label></div>`;
-    h += `<details class="more" data-detail-key="da-access-defaults" ${s.editorDetails?.['da-access-defaults']?'open':''}><summary>Продажи и подписки — параметры по умолчанию</summary>
-      <p class="muted small">Экспериментальный режим. Платные работы отправляются через отдельный браузер DeviantArt. Сначала выполните вход и пробный прогон. Обычные публикации продолжают работать через API.</p>
-      <div class="row"><span class="badge ${d.browser_ok?'ok':'off'}">${d.browser_ok?'✓ Вход в браузере сохранён':'Вход в браузере не выполнен'}</span>
-        <button class="btn small" data-pa="da-browser-login" ${s.daBrowserWaiting?'disabled':''}>Войти в браузере DeviantArt</button>
-        <button class="btn small" data-pa="da-tiers" ${s.daBrowserWaiting||!d.browser_ok?'disabled':''}>Загрузить тиры из аккаунта</button>
-        <button class="btn small primary" data-pa="da-paid-dry" ${s.daBrowserWaiting||!d.browser_ok||!(d.premium_download||d.subscriber_only)?'disabled':''}>Проверить без публикации</button></div>
-      ${s.info?.da_browser_job?.state==='running'?`<p class="muted small">${esc(s.info.da_browser_job.message||'Работаю с DeviantArt…')}</p>`:''}
-      <label class="tgl"><input type="checkbox" id="dashow" ${d.show_window!==false?'checked':''}><span>Показывать окно браузера</span></label>
+    const paid=d.premium_download||d.subscriber_only;
+    h+=`<div class="field"><span class="lbl">Режим публикации DeviantArt</span>${segP('data-pa="da-access-mode"',[["ordinary","Обычная · API"],["paid","Подготовить в Sta.sh"]],paid?'paid':'ordinary')}</div>
+      ${!paid?'<p class="muted small">Обычная публикация через OAuth API. Цена и отдельный браузерный вход не нужны.</p>':''}`;
+    h += `<details class="more" data-detail-key="da-access-defaults" ${!paid?'hidden':''} ${s.editorDetails?.['da-access-defaults']?'open':''}><summary>Продажи и подписки — параметры по умолчанию</summary>
+      <p class="muted small">CrossPost загрузит черновики через OAuth API. Откройте их в Sta.sh, проверьте параметры и опубликуйте вручную. Для Premium Download прикрепите исходный файл и задайте цену в редакторе DeviantArt.</p>
       <label class="tgl"><input type="checkbox" id="dapremium" ${d.premium_download?'checked':''}><span>Платное скачивание оригинала по умолчанию</span></label>
-      <div class="field"><label for="daprice">Цена по умолчанию, USD</label><input id="daprice" inputmode="decimal" maxlength="10" value="${esc(d.premium_price_usd||'')}" placeholder="Укажите цену"></div>
+      <div class="field"><label for="daprice">Цена скачивания, USD (только для Premium Download)</label><input id="daprice" ${!d.premium_download?'disabled':''} inputmode="decimal" maxlength="10" value="${esc(d.premium_price_usd||'')}" placeholder="Укажите цену"></div>
       <label class="tgl"><input type="checkbox" id="dasubscriber" ${d.subscriber_only?'checked':''}><span>Публиковать для подписчиков по умолчанию</span></label>
-      ${(d.available_tiers||[]).length?`<div class="tgls">${d.available_tiers.map(name=>`<label class="tgl"><input type="checkbox" data-da-tier="${esc(name)}" ${(d.subscriber_tiers||[]).includes(name)?'checked':''}><span>${esc(name)}</span></label>`).join('')}</div>`:''}
       <div class="field"><label for="datiers">Тиры по умолчанию — по одному названию на строку</label><textarea id="datiers" rows="4" placeholder="Название уровня подписки">${esc((d.subscriber_tiers||[]).join('\n'))}</textarea></div>
-      <p class="muted small">Укажите точные названия тиров из вашего аккаунта, по одному на строку. Перед отправкой CrossPost проверит выбранные тиры и цену. Параметры сохраняются автоматически.</p></details>`;
-    if(d.paid_dry_note)h+=`<p class="ok small">${esc(d.paid_dry_note)}</p>`;
-    if(d.paid_dry_shot)h+=`<figure class="shot"><img src="/bdebug/${encodeURIComponent(d.paid_dry_shot)}?t=${tok()}" alt="Пробный прогон DeviantArt"></figure>`;
+      <p class="muted small">Цена и названия тиров необязательны. CrossPost покажет их как напоминание при подготовке.</p></details>`;
     return h + `</section>`;
   }
   function filesHtml(err, ok, busy, tgl, hint) {
@@ -2430,9 +2432,11 @@
         s.pub = await api("pub_save", { section: "bluesky", changes: { enabled: !!snap.bson, include_title: !!snap.bstitle, alt_from_title: !!snap.bsalt,
           rating: val("bsrating") || "all", langs: val("bslang").split(/[\s,]+/).filter(Boolean).slice(0, 3) } });
         s.pubOk.bs = "Сохранено"; }); return true;
-      case "da-browser-login": case "da-paid-dry": case "da-tiers": await guard('da',async()=>{
-        await api(act==='da-browser-login'?'pub_da_browser_login':act==='da-tiers'?'pub_da_tiers':'pub_da_paid_dry');s.daBrowserWaiting=true;
-        await C().loadInfo();C().startPoll();
+      case "da-access-mode": await guard('da',async()=>{
+        const paid=a.dataset.val==='paid';
+        if(paid && (s.pub.deviantart.premium_download||s.pub.deviantart.subscriber_only))return;
+        s.pub=await api('pub_save',{section:'deviantart',changes:paid?{premium_download:true}:{premium_download:false,subscriber_only:false}});
+        s.pubErr.da='';s.reviewKey=null;s.readiness=null;s.composition=null;
       });return true;
       case "da-login": await guard("da", async () => {
         await api("pub_da_login", { client_id: val("daid"), client_secret: val("dasecret") });
@@ -2880,12 +2884,7 @@
   }
 
   async function onChange(e) {
-    if(e.target.dataset?.daTier!==undefined) {
-      const s=S(),name=e.target.dataset.daTier,selected=new Set(s.pub.deviantart.subscriber_tiers||[]);
-      if(e.target.checked)selected.add(name);else selected.delete(name);
-      s.pub=await C().api('pub_save',{section:'deviantart',changes:{subscriber_tiers:[...selected]}});
-      C().render();return true;
-    }
+
     const t = e.target, s = S(), api = tagApi;
     if (['source','target','file','replace'].includes(t.dataset.booruCopyField)) {
       s.booruCopyPrefs ||= {};

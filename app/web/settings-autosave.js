@@ -122,6 +122,7 @@
       const o=s.outputs||await api('outputs_get',{});
       s.outputs=await api('outputs_set',{folder:o.custom?o.dir:'',by_date:o.by_date,jpeg:o.jpeg,gif:o.gif,video:o.video,move:false,...patch});
     }else{s.pub=await api('pub_save',{section:key,changes:patch});s.reviewKey=null;s.composition=null;s.readiness=null;}
+    if(key==='deviantart' && ('premium_download' in patch || 'subscriber_only' in patch))C().render();
     lastSaved=true;
   }
   const queue=new SaveQueue(save,()=>{persist();paint();});
@@ -206,6 +207,20 @@
     if(target.closest('[data-settings-save-discard]')){
       event.preventDefault();if(queue.active)return true;
       queue.pending.clear();queue.errors.clear();invalid.clear();seen.clear();persist();C().render();return true;
+    }
+    if(target.closest('[data-pa="da-access-mode"][data-val="ordinary"]')) {
+      // Returning to ordinary posting must not be trapped by an invalid draft
+      // price. Keep successfully saved defaults and unrelated pending edits.
+      clearTimeout(timer);await queue.flush();
+      const job=queue.pending.get('deviantart');
+      if(job) {
+        for(const field of ['premium_download','subscriber_only','premium_price_usd','subscriber_tiers'])delete job.patch[field];
+        for(const id of ['dapremium','dasubscriber','daprice','datiers'])delete job.values[id];
+        if(!Object.keys(job.patch).length)queue.pending.delete('deviantart');
+        queue.errors.delete('deviantart');
+      }
+      for(const id of ['dapremium','dasubscriber','daprice','datiers']){invalid.delete(id);seen.delete(id);}
+      persist();paint();await C().store.flush?.();
     }
     if(!target.closest('button,a,[role="button"]')||!dirty())return false;
     const ok=await flush();

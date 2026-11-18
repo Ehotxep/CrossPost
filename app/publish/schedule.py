@@ -72,6 +72,8 @@ def add(draft: dict, run_at: str) -> dict:
     p = runner.plan(draft)
     if p["errors"]:
         raise ValueError(p["errors"][0])
+    from app.publish.da_access import preserve_preparation
+    draft = preserve_preparation(draft, p)
     n = sum(1 for d in p["dests"] if d["will"])
     with db.tx() as c:
         cur = c.execute("""INSERT INTO scheduled (run_at, created, title, rating, draft, dests, state)
@@ -118,6 +120,8 @@ def save_edit(sid, token, revision, draft, run_at=None):
     plan = runner.plan(draft)
     if plan['errors'] or not any(d['will'] for d in plan['dests']):
         raise ValueError((plan['errors'] or ['Выберите получателей поста'])[0])
+    from app.publish.da_access import preserve_preparation
+    draft = preserve_preparation(draft, plan)
     dt = _parse(run_at) if run_at else None
     if dt and dt < _now() + timedelta(minutes=1):
         raise ValueError('Выберите новое время в будущем')

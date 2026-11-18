@@ -48,3 +48,14 @@ def blocked_reason(cfg):
         return 'Для платной публикации войдите в DeviantArt через браузер'
     return ''
 
+
+
+def preserve_preparation(draft, plan):
+    """Keep a queued Sta.sh draft from becoming a public post after settings change."""
+    for destination in plan["dests"]:
+        options = destination.get("stash_options")
+        if destination["will"] and options:
+            profile = dict(draft.get("profile") or {})
+            profile["deviantart"] = {**(profile.get("deviantart") or {}), **options}
+            return dict(draft, profile=profile)
+    return draft

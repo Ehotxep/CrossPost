@@ -471,20 +471,15 @@ def plan(draft: dict) -> dict:
     # DeviantArt
     use("deviantart")
     da = cfg["deviantart"]
-    from app.publish.da_access import blocked_reason, requested
+    from app.publish.da_access import requested
     da_tok = core_common.load_token("deviantart") or {}
-    if da.get("enabled") and (da_tok.get("access_token") or (requested(da) and da.get("browser_ok"))):
+    if da.get("enabled") and da_tok.get("access_token"):
         configured.append("deviantart")
-        name = "DeviantArt · аккаунт браузера" if requested(da) else f"DeviantArt · {da_tok.get('username') or 'аккаунт'}"
+        name = "DeviantArt · черновики Sta.sh" if requested(da) else f"DeviantArt · {da_tok.get('username') or 'аккаунт'}"
         if rating == "explicit":
             add("deviantart", "deviantart", name, False, "откровенное запрещено правилами DeviantArt", toggle=False)
         elif not _allowed(da.get("rating"), mature):
             add("deviantart", "deviantart", name, False, _rating_reason(da.get("rating")), toggle=False)
-        elif blocked_reason(da):
-            reason = blocked_reason(da)
-            add('deviantart','deviantart',name,False,reason)
-            if 'deviantart' not in off:
-                errors.append('DeviantArt: '+reason)
         elif kind == "video":
             add("deviantart", "deviantart", name, False, "DeviantArt не принимает видео", toggle=False)
         elif kind == "gif" and anim["size"] > DA.FILE_MAX_BYTES:
@@ -493,9 +488,18 @@ def plan(draft: dict) -> dict:
             n = len(files)
             what = "GIF" if kind == "gif" else (f"{n} работ{'а' if n == 1 else 'ы' if n < 5 else ''}" + (" PNG-оригиналами" if da.get("originals", True) else " JPEG-превью"))
             if requested(da):
-                what = f"{n} работ · " + ("JPEG-превью + платный оригинал" if da.get('premium_download') else "оригиналы для подписчиков")
-            access = (f" · Premium Download ${da['premium_price_usd']} USD" if da.get('premium_download') else '') + (' · тиры: '+', '.join(da.get('subscriber_tiers',[])) if da.get('subscriber_only') else '')
+                media = "JPEG-превью" if kind == "images" and da.get("premium_download") else "файлы работ"
+                what = f"{n} · {media} в Sta.sh, публикация вручную"
+            access = ""
+            if da.get("premium_download") and da.get("premium_price_usd"):
+                access += f" · цена вручную: {da['premium_price_usd']} USD"
+            if da.get("subscriber_only") and da.get("subscriber_tiers"):
+                access += " · тиры вручную: " + ", ".join(da["subscriber_tiers"])
             add("deviantart", "deviantart", name, True, details=[what + (" · Mature" if mature else "") + (" · отмечено как ИИ" if da.get("is_ai_generated", True) else "") + access])
+            if requested(da):
+                dests[-1]["stash_options"] = {field: da.get(field) for field in
+                    ("premium_download", "subscriber_only", "premium_price_usd", "subscriber_tiers")}
+
 
     # Each booru is an independent target. Its tags are validated against its own database.
     for platform in B.PLATFORMS:
@@ -553,7 +557,7 @@ def plan(draft: dict) -> dict:
         if d["key"] in uncertain:
             d.update(will=False, can_toggle=False, reason="возможно, опубликовано — проверьте площадку; повтор доступен на экране публикации после подтверждения")
         if d["key"] in done:
-            d.update(will=False, off=False, can_toggle=False, need=[], done=True, reason="уже опубликовано")
+            d.update(will=False, off=False, can_toggle=False, need=[], done=True, reason="черновики уже подготовлены" if d.get("stash_options") else "уже опубликовано")
     will = [d for d in dests if d["will"]]
     if done and files and not will:
         errors.append("Новых мест нет — включите площадку, куда дослать пост")
@@ -1075,12 +1079,21 @@ def _run(draft, report, only):
                     from platforms import deviantart as DA
                     da = cfg["deviantart"]
                     from app.publish.da_access import requested
+                    current = next(x for x in state()["dests"] if x["key"] == key)
+                    if current.get("stash_options"):
+                        da = dict(da, **current["stash_options"])
                     paid = requested(da)
-                    if not paid and any(x.get('paid_confirmed') for x in state()['dests'] if x['key']==key):
-                        raise NotPublishedError('Часть работ уже опубликована платно: повтор в обычном режиме остановлен')
+                    if current.get("paid_confirmed"):
+                        raise NotPublishedError("Часть работ уже опубликована старым способом. Проверьте DeviantArt перед новой отправкой")
+                    if paid:
+                        _set(key, stash_options={field: da.get(field) for field in
+                             ("premium_download", "subscriber_only", "premium_price_usd", "subscriber_tiers")})
+                        _save_pub()
                     up = []
                     for f in files:
-                        if not paid and kind == "images" and not (da.get("originals", True) and f["size"] <= DA.FILE_MAX_BYTES):
+                        if kind == "images" and (
+                                (paid and da.get("premium_download")) or f["size"] > DA.FILE_MAX_BYTES
+                                or (not paid and not da.get("originals", True))):
                             im = prep.get_light(f["id"], f["path"], cfg["light"], max_bytes=DA.FILE_MAX_BYTES)
                             up.append((Path(f["name"]).stem + ".jpg", im.data, im.mime))
                         else:
@@ -1090,13 +1103,21 @@ def _run(draft, report, only):
                     tags = HT.final(cfg, draft) if da.get("tags_from", "hashtags") == "hashtags" else []
                     tags = [t for t in tags if t.lower() not in ("sfw", "nsfw")]
                     _set(key, message="загружаю на DeviantArt…"); prog(0.1)
-                    current = next((x for x in state()['dests'] if x['key']==key), {})
-                    kwargs = {'already':current.get('paid_confirmed',{}),
-                              'confirmed':lambda items:_da_paid_checkpoint(key,items)} if paid else {}
+                    def checkpoint(items):
+                        _set(key, stash_drafts=items)
+                        _save_pub()
+
+                    kwargs = {"already": current.get("stash_drafts", {}), "confirmed": checkpoint} if paid else {}
                     urls = DA.publish(da, up, title_for(cfg, draft, "deviantart"), signed_text(cfg, draft, "deviantart"), tags,
                                       draft["rating"], progress=prog, **kwargs)
-                    _set(key, state="done", message="", link=next((u["url"] for u in urls if u["url"]), ""),
-                         deviation_ids=[u["id"] for u in urls if u["id"]], note=f"{len(urls)} работ{'ы' if 1 < len(urls) < 5 else ''}" if len(urls) > 1 else "")
+                    if paid:
+                        _set(key, state="done", outcome="prepared", message="", link="",
+                             note="Черновики в Sta.sh. Проверьте рейтинг и настройки работы, задайте цену или тиры и опубликуйте вручную.")
+                    else:
+                        _set(key, state="done", message="", link=next((u["url"] for u in urls if u["url"]), ""),
+                             deviation_ids=[u["id"] for u in urls if u["id"]],
+                             note=f"Работ опубликовано: {len(urls)}" if len(urls) > 1 else "")
+
                 elif key.startswith('reddit:') or key in ('joyreactor','x'):
                     from app.publish import social_web
                     from app.paths import sub
@@ -1226,10 +1247,11 @@ def _run(draft, report, only):
     _set(running=False)
     _save_pub()
     st = state()
-    ok = sum(1 for d in st["dests"] if d["state"] == "done")
+    prepared = sum(d.get("outcome") == "prepared" for d in st["dests"])
+    ok = sum(d["state"] == "done" and d.get("outcome") != "prepared" for d in st["dests"])
     bad = sum(1 for d in st["dests"] if d["state"] == "error")
     _notify_netfail()
-    report(progress=1.0, message=f"опубликовано: {ok}" + (f", ошибок: {bad}" if bad else "") + (" — нет связи с api.telegram.org" if net_failed(st["dests"]) else ""))
+    report(progress=1.0, message=f"опубликовано: {ok}" + (f", подготовлено: {prepared}" if prepared else "") + (f", ошибок: {bad}" if bad else "") + (" — нет связи с api.telegram.org" if net_failed(st["dests"]) else ""))
 
 
 class _Stop(Exception):

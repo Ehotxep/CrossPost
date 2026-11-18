@@ -166,11 +166,12 @@
   function uiFlush(keepalive) {
     const ch = uiPend; uiPend = {}; clearTimeout(uiT); uiT = null;
     if (!Object.keys(ch).length) return;
-    fetch("/api/ui_set", { method: "POST", keepalive: !!keepalive, headers: { "Content-Type": "application/json", "X-Token": window.API_TOKEN },
-      body: JSON.stringify({ changes: ch }) }).catch(() => { Object.assign(uiPend, ch); });
+    return fetch("/api/ui_set", { method: "POST", keepalive: !!keepalive, headers: { "Content-Type": "application/json", "X-Token": window.API_TOKEN },
+      body: JSON.stringify({ changes: ch }) }).catch(() => { uiPend = {...ch, ...uiPend}; });
   }
   window.addEventListener("beforeunload", () => uiFlush(true));
   const store = {
+    flush: uiFlush,
     get(k, d) {
       if (Object.prototype.hasOwnProperty.call(UI, k)) return UI[k] === null ? d : UI[k];
       try { const v = localStorage.getItem("cp:" + k); if (v !== null) { const x = JSON.parse(v); store.set(k, x); return x; } } catch (e) { /* нет — ну и ладно */ }
@@ -283,7 +284,7 @@
     navBadge(); updBadge(); updModal();
     const running = Object.values(S.info.trends).some((t) => t.job && t.job.state === "running") ||
       (S.info.tg_job && S.info.tg_job.state === "running") ||
-      (S.info.da_browser_job && S.info.da_browser_job.state === "running") || (S.info.pub_job && S.info.pub_job.state === "running") || (S.info.vk_job && S.info.vk_job.state === "running") ||
+      (S.info.pub_job && S.info.pub_job.state === "running") || (S.info.vk_job && S.info.vk_job.state === "running") ||
       Object.values(S.info.browser_jobs||{}).some(j=>j?.state==="running") ||
       (S.info.ins_job && S.info.ins_job.state === "running") || (S.info.update && S.info.update.job && S.info.update.job.state === "running");
     if (running && !poll) poll = setInterval(tick, 1000);

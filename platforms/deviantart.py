@@ -20,7 +20,7 @@ import webbrowser
 
 import requests
 
-from core.common import PlatformError, load_token, save_token
+from core.common import PlatformError, PublicationUnknown, load_token, save_token
 
 NAME = "DeviantArt"
 MAX_IMAGES = 10
@@ -180,18 +180,14 @@ def _b(v) -> str:
     return "true" if v else "false"
 
 
-def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=None, confirmed=None, already=None) -> list[str]:
-    """files — [(name, data, mime)]. Возвращает ссылки на работы."""
+def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=None, confirmed=None, already=None) -> list[dict]:
+    """Send works via OAuth, or return Sta.sh drafts for paid preparation."""
     if rating == "explicit":
         raise PlatformError("DeviantArt не принимает откровенный контент")
-    from app.publish.da_access import blocked_reason, requested
-    reason = blocked_reason(c)
-    if reason:
-        from core.common import NotPublishedError
-        raise NotPublishedError(reason)
-    if requested(c):
-        from app.publish import da_web
-        return da_web.publish(c,files,(title or c.get("default_title") or "Untitled").strip(),text,clean_tags(tags),rating,progress=progress,confirmed=confirmed,already=already)
+    from app.publish.da_access import requested
+    prepare_only = requested(c)
+    if prepare_only:
+        already = dict(already or {})
     from core import retry
     tok = _token(c)
     auth = {"Authorization": f"Bearer {tok}"}
@@ -200,14 +196,41 @@ def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=N
     urls = []
     for i, (name, data, mime) in enumerate(files):
         t = base if len(files) == 1 else f"{base[:TITLE_MAX - 8]} ({i + 1}/{len(files)})"
+        key = str(i)
+        if prepare_only and key in already:
+            urls.append(already[key])
+            continue
         sub = {"title": t[:TITLE_MAX], "artist_comments": text or "",
                "is_ai_generated": _b(c.get("is_ai_generated", True)), "noai": _b(c.get("noai", True))}
         if tags:
             sub["tags[]"] = tags
-        j = _json(retry.post(f"{API}/stash/submit", idempotent=True, what="DeviantArt: загрузка", data=sub,
-                             files={"file": (name, data, mime)}, headers=auth, timeout=600), "загрузка")
+        try:
+            response = retry.post(f"{API}/stash/submit", idempotent=not prepare_only,
+                                  what="DeviantArt: загрузка в Sta.sh", data=sub,
+                                  files={"file": (name, data, mime)}, headers=auth, timeout=600)
+        except PublicationUnknown as error:
+            if not prepare_only:
+                raise
+            raise PublicationUnknown("Не удалось подтвердить создание черновика. Проверьте Sta.sh перед повтором.") from error
+        j = _json(response, "загрузка")
         if not j.get("itemid"):
             raise PlatformError(f"DeviantArt (загрузка): {j}")
+        if prepare_only:
+            item_id = int(j["itemid"])
+            if item_id <= 0:
+                raise PlatformError("DeviantArt не вернул корректный номер черновика Sta.sh")
+            digits = ""
+            while item_id:
+                item_id, remainder = divmod(item_id, 36)
+                digits = "0123456789abcdefghijklmnopqrstuvwxyz"[remainder] + digits
+            item = {"url": "https://sta.sh/0" + digits, "id": "", "name": name}
+            urls.append(item)
+            already[key] = item
+            if confirmed:
+                confirmed(dict(already))
+            if progress:
+                progress((i + 1) / len(files))
+            continue
         if progress:
             progress((i + 0.6) / len(files))
         mature = rating == "erotic"
