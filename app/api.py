@@ -1412,7 +1412,9 @@ class Api:
         with file_lock(data_dir() / 'publication-start'):
             if backups.pending():
                 raise ValueError('Перезапустите приложение для завершения восстановления')
-            return self.jobs.start("publish", lambda report: runner.start(draft, report))
+            if not self.jobs.start("publish", lambda report: runner.start(draft, report)):
+                raise ValueError("Предыдущая публикация ещё идёт")
+            return True
 
     def post_schedule(self, draft: dict, run_at: str, duplicate_ack: str = ''):
         """Запланировать пост на дату (ISO, с часовым поясом или по времени этого компьютера)."""
@@ -1462,7 +1464,7 @@ class Api:
         from app.publish import schedule
         schedule.publish_now(sid)
         if not worker.status()["running"]:   # фоновой отправки нет — публикуем из окна
-            threading.Thread(target=schedule.tick, args=(self,), daemon=True).start()
+            threading.Thread(target=schedule.dispatch_now, args=(self,), daemon=True).start()
         return schedule.items()
 
     # --- конвейер: очередь постов, время выбирает программа ---
@@ -1681,16 +1683,28 @@ class Api:
         from app.insights import warmup as W
         if not _re.fullmatch(r"\d{4}-\d{2}", ym or ""):
             raise ValueError("Месяц в виде ГГГГ-ММ")
-        from app.insights import ext_posts
+        from app.insights import calendar, ext_posts
         try:
             ext_posts.mirror_vk()   # свежие замеры ВК — сразу, без ожидания 3-часового круга (локально, без сети)
         except Exception:  # noqa: BLE001
             from app.applog import log
             log("календарь: не удалось подтянуть замеры ВК")
         ext_posts.sync_async()   # посты ВК и Bluesky, вышедшие мимо Crosspost, — раз в 3 часа, в фоне
-        r = cache.get(W.calendar_name(ym), W.calendar_compute(ym), W.calendar_key(), max_age=1800)
+        hidden = calendar.hidden_atoms()
+        visibility = calendar.visibility_key(hidden)
+        r = cache.get(W.calendar_name(ym), lambda: calendar.month(ym, hidden=hidden),
+                      W.calendar_key(), max_age=1800,
+                      accept_cached=lambda data: data.get("visibility") == visibility)
         return dict(r["data"], _cache={"at": r["at"], "stale": r["stale"], "refreshing": r["refreshing"]},
                     ext=ext_posts.state())
+
+    def cal_hide(self, atoms: list):
+        from app.insights import calendar
+        return calendar.set_visibility(atoms, hidden=True)
+
+    def cal_restore(self, atoms: list):
+        from app.insights import calendar
+        return calendar.set_visibility(atoms, hidden=False)
 
     def cal_merge(self, atoms: list, force: bool = False):
         """Объединить выбранные работы календаря в одну (атомы — исходные посты)."""

@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS scheduled (
 """)
 for _col in ("queue INTEGER DEFAULT 0",    # 1 — пост из конвейера (время выбирает сама программа)
              "revision INTEGER DEFAULT 0", "edit_token TEXT", "edit_prev TEXT",
+             "send_now INTEGER NOT NULL DEFAULT 0", # одноразовая ручная отправка, даже при паузе конвейера
              "pinned INTEGER DEFAULT 0",   # 1 — время закреплено вручную, конвейер его не двигает
              "qpos REAL",                  # место в очереди конвейера
              "tries INTEGER DEFAULT 0",    # повторы после сбоя
@@ -135,7 +136,7 @@ def save_edit(sid, token, revision, draft, run_at=None):
         if state == 'pending' and _parse(at) < _now() + timedelta(minutes=1):
             raise ValueError('Прежнее время прошло — выберите новое')
         c.execute("""UPDATE scheduled SET draft=?,title=?,rating=?,dests=?,run_at=?,state=?,pinned=?,
-                     error=NULL,tries=0,edit_token=NULL,edit_prev=NULL,revision=revision+1 WHERE id=?""",
+                     error=NULL,tries=0,send_now=0,edit_token=NULL,edit_prev=NULL,revision=revision+1 WHERE id=?""",
                   (json.dumps(draft, ensure_ascii=False), (draft.get('title') or draft.get('text') or '')[:80],
                    draft.get('rating'), sum(bool(d['will']) for d in plan['dests']), at, state,
                    1 if row['queue'] and dt else row['pinned'], int(sid)))
@@ -149,7 +150,7 @@ def cancel_edit(sid, token, revision):
         if row is None:
             raise ValueError('Пост изменился — обновите очередь')
         state = row['edit_prev'] or 'missed'
-        if state == 'pending' and _parse(row['run_at']) <= _now():
+        if state == 'pending' and not row['send_now'] and _parse(row['run_at']) <= _now():
             state = 'missed'
         c.execute('UPDATE scheduled SET state=?,edit_token=NULL,edit_prev=NULL,revision=revision+1 WHERE id=?',
                   (state, int(sid)))
@@ -173,7 +174,7 @@ def reschedule(sid: int, run_at: str) -> dict:
     if dt < _now() + timedelta(minutes=1):
         raise ValueError("Время уже прошло — выберите время в будущем")
     with db.tx() as c:   # перенесённый вручную пост конвейера дальше не двигаем
-        if c.execute("UPDATE scheduled SET run_at=?,state='pending',error=NULL WHERE id=? AND state NOT IN ('editing','running')",
+        if c.execute("UPDATE scheduled SET run_at=?,state='pending',error=NULL,send_now=0 WHERE id=? AND state IN ('queued','pending','missed')",
                      (dt.isoformat(timespec='seconds'), int(sid))).rowcount != 1:
             raise ValueError('Пост редактируется или уже отправляется')
         c.execute("UPDATE scheduled SET pinned=1, why='время задано вами' WHERE id=? AND queue=1", (int(sid),))
@@ -181,10 +182,12 @@ def reschedule(sid: int, run_at: str) -> dict:
 
 
 def publish_now(sid: int):
+    """Request a single immediate send without changing the pipeline configuration."""
     with db.tx() as c:
-        if c.execute("UPDATE scheduled SET run_at=?,state='pending',error=NULL WHERE id=? AND state NOT IN ('editing','running')",
+        if c.execute("""UPDATE scheduled SET run_at=?, state='pending', error=NULL, send_now=1
+                        WHERE id=? AND state IN ('queued','pending','missed') AND (send_now=0 OR state='missed')""",
                      (_now().isoformat(timespec='seconds'), int(sid))).rowcount != 1:
-            raise ValueError('Пост редактируется или уже отправляется')
+            raise ValueError('Этот пост уже отправляется, редактируется или недоступен для немедленной отправки')
 
 
 def best_times(n: int = 3) -> list[dict]:
@@ -247,17 +250,34 @@ def _loop(api, every):
 STUCK_AFTER = timedelta(hours=3)
 
 
-def tick(api):
+_manual_sender = threading.Lock()
+
+
+def dispatch_now(api):
+    """Отправить ручные задания из окна, если фоновой отправки нет."""
+    from app import backups, worker
+    with _manual_sender:
+        while not worker.status()["running"] and not backups.pending():
+            if not db.query("SELECT 1 FROM scheduled WHERE state='pending' AND send_now=1 LIMIT 1"):
+                return
+            tick(api, immediate_only=True)
+            # Задание может ждать завершения уже запущенной отправки.
+            if db.query("SELECT 1 FROM scheduled WHERE state='pending' AND send_now=1 LIMIT 1"):
+                time.sleep(1)
+
+
+def tick(api, *, immediate_only=False):
     """Один проход: опубликовать подошедшие посты (по одному, по порядку)."""
     from app.publish import pipeline, runner
     from app import backups
     if backups.pending():
         return
-    try:
-        pipeline.maintain()   # конвейер: расставить очередь по лучшим окнам, повторить сорвавшееся
-    except Exception:  # noqa: BLE001
-        from app.applog import log
-        log("конвейер: сбой при расстановке очереди")
+    if not immediate_only:
+        try:
+            pipeline.maintain()   # конвейер: расставить очередь по лучшим окнам, повторить сорвавшееся
+        except Exception:  # noqa: BLE001
+            from app.applog import log
+            log("конвейер: сбой при расстановке очереди")
     now = _now()
     j0 = api.jobs.get("publish")
     if not (j0 and j0["state"] == "running"):   # процесс оборвался посреди публикации — запись не должна висеть «в работе» вечно
@@ -265,14 +285,18 @@ def tick(api):
             if now - _parse(r["run_at"]) > STUCK_AFTER:
                 _set(r["id"], state="failed", done_at=now.isoformat(timespec="seconds"),
                      error="публикация прервалась (программу закрыли или она упала) — проверьте в «Истории», что вышло, и отправьте остальное вручную")
-    for r in db.query("SELECT * FROM scheduled WHERE state='pending' ORDER BY run_at"):
+    for r in db.query("""SELECT * FROM scheduled WHERE state='pending'
+                         AND (?=0 OR send_now=1) ORDER BY send_now DESC, run_at""", (int(immediate_only),)):
         at = _parse(r["run_at"])
         if at > now:
-            break
-        if r["queue"] and not pipeline.cfg()["enabled"]:
+            continue
+        if r["queue"] and not r["send_now"] and not pipeline.cfg()["enabled"]:
             continue   # также защищает закреплённые посты и другой процесс с редким maintain()
         if now - at > GRACE:
-            _set(r["id"], state="missed", error="приложение было закрыто в назначенное время")
+            with db.tx() as c:
+                c.execute("""UPDATE scheduled SET state='missed', send_now=0, error=?
+                             WHERE id=? AND state='pending' AND run_at=?""",
+                          ("приложение было закрыто в назначенное время", r["id"], r["run_at"]))
             continue
         j = api.jobs.get("publish")
         if j and j["state"] == "running":
@@ -281,7 +305,7 @@ def tick(api):
         draft["_scheduled_run"] = True   # если теги e6ai вдруг перестали проходить проверку — e6ai пропускаем, остальное публикуем
         draft["_schedule_id"] = r["id"]
         with db.tx() as c:   # забираем пост атомарно — второй процесс его уже не возьмёт
-            if c.execute("UPDATE scheduled SET state='running', retry_safe=0 WHERE id=? AND state='pending'", (r["id"],)).rowcount != 1:
+            if c.execute("UPDATE scheduled SET state='running', retry_safe=0, send_now=0 WHERE id=? AND state='pending' AND run_at=?", (r["id"], r["run_at"])).rowcount != 1:
                 continue
         try:
             p = runner.plan(draft)
@@ -290,15 +314,17 @@ def tick(api):
         except Exception as e:  # noqa: BLE001
             _set(r["id"], state="failed", error=str(e), retry_safe=1, done_at=_now().isoformat(timespec="seconds"))
             continue
-        if backups.pending():
-            return
-        api._tg_ctx()
+        try:
+            api._tg_ctx()
+        except Exception as e:
+            _set(r["id"], state="failed", error=str(e), retry_safe=1, done_at=_now().isoformat(timespec="seconds"))
+            continue
         from core.fsutil import file_lock
         from app.paths import data_dir
         with file_lock(data_dir() / 'publication-start'):
-            if backups.pending():
+            if backups.pending() or api.jobs.start("publish", lambda report, d=draft: runner.start(d, report)) is False:
+                _set(r["id"], state="pending", send_now=r["send_now"], retry_safe=r["retry_safe"])
                 return
-            api.jobs.start("publish", lambda report, d=draft: runner.start(d, report))
         while True:   # ждём конца публикации, чтобы записать итог
             time.sleep(1)
             j = api.jobs.get("publish")
@@ -310,7 +336,17 @@ def tick(api):
         dests = st.get("dests") or []
         ok = sum(1 for d in dests if d.get("state") == "done")
         bad = sum(1 for d in dests if d.get("state") == "error")
-        state = "failed" if (j and j["state"] == "error") or (dests and ok == 0) else ("partial" if bad else "done")
-        _set(r["id"], state=state, pub_id=st.get("pub_id"), done_at=_now().isoformat(timespec="seconds"),
-             error=(j or {}).get("error") or (((runner.NETFAIL_TEXT if runner.net_failed(dests) else f"ошибок: {bad}") if bad else None)))
+        error = (j or {}).get("error")
+        if not ok or not st.get("pub_id"):
+            state = "failed"
+        elif ok < len(dests) or (j and j["state"] in ("cancelled", "error")):
+            state = "partial"
+        else:
+            state = "done"
+        if state != "done" and not error:
+            if bad:
+                error = runner.NETFAIL_TEXT if runner.net_failed(dests) else f"ошибок: {bad}"
+            else:
+                error = "Результат отправки не подтверждён — проверьте площадки"
+        _set(r["id"], state=state, pub_id=st.get("pub_id"), done_at=_now().isoformat(timespec="seconds"), error=error)
         return   # следующий — на следующем проходе

@@ -74,7 +74,9 @@ class CriticalRegressions(unittest.TestCase):
             api = SimpleNamespace(jobs=jobs, _tg_ctx=Mock())
             with patch.object(schedule, '_now', return_value=now + timedelta(minutes=6)), \
                  patch.object(runner, 'plan', return_value={'errors': []}), \
-                 patch.object(runner, 'state', return_value={'dests': [{'state': 'done'}]}), \
+                 patch.object(runner, 'state', side_effect=lambda: {
+                     'pub_id': 42, 'draft': {'_schedule_id': self.db.query("SELECT id FROM scheduled WHERE state='running'")[0]['id']},
+                     'dests': [{'state': 'done'}]}), \
                  patch.object(schedule.time, 'sleep'):
                 schedule.tick(api)
                 # Only the independently scheduled manual post may reach the sender.

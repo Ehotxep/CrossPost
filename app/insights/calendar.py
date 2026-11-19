@@ -4,6 +4,7 @@
 Один арт, вышедший в двух каналах (SFW-канал и 18+), — одна работа в календаре: склеиваем по
 публикации из Crosspost или по похожести превью (перцептивный хэш), лучший индекс из копий.
 """
+import hashlib
 import json
 import math
 from datetime import date, datetime, timedelta
@@ -79,6 +80,31 @@ def rules_key():
     r = db.query("SELECT COUNT(*) AS n, MAX(rowid) AS m FROM cal_rules")[0]
     return (r["n"], r["m"])
 
+
+
+def hidden_atoms():
+    return {row["atom"] for row in db.query("SELECT atom FROM calendar_hidden")}
+
+
+def visibility_key(atoms):
+    return hashlib.sha256(json.dumps(sorted(atoms)).encode()).hexdigest()
+
+
+def set_visibility(atoms, *, hidden):
+    """Hide calendar sources without modifying publication history or imported data."""
+    if not isinstance(atoms, list) or not 1 <= len(atoms) <= 1000 or any(
+        not isinstance(atom, str) or not atom or len(atom) > 256 or "\x00" in atom
+        for atom in atoms
+    ):
+        raise ValueError("Выберите запись календаря")
+    changed = []
+    with db.tx() as conn:
+        for atom in dict.fromkeys(atoms):
+            sql = ("INSERT OR IGNORE INTO calendar_hidden (atom) VALUES (?)"
+                   if hidden else "DELETE FROM calendar_hidden WHERE atom=?")
+            if conn.execute(sql, (atom,)).rowcount:
+                changed.append(atom)
+    return changed
 
 def _rules():
     db.conn().execute("CREATE TABLE IF NOT EXISTS cal_rules (a TEXT NOT NULL, b TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (a, b))")
@@ -193,12 +219,21 @@ def _group(atoms: list):
                     return True
         return False
     out: list = []
+    by_publication = {}
     for g in glist:
-        twin = next((o for o in out[-12:] if not blocked(g, o) and same(g, o)), None)
+        ids = {x["pub_id"] for x in g if x["pub_id"]}
+        twin = next((o for pid in sorted(ids) for o in by_publication.get(pid, []) if not blocked(g, o)), None)
         if twin is None:
-            out.append(list(g))
+            twin = next((o for o in out[-12:] if not blocked(g, o) and same(g, o)), None)
+        if twin is None:
+            twin = list(g)
+            out.append(twin)
         else:
             twin.extend(g)
+        for pid in ids:
+            groups = by_publication.setdefault(pid, [])
+            if all(existing is not twin for existing in groups):
+                groups.append(twin)
     return out, splits
 
 
@@ -260,7 +295,8 @@ def _collapse(g: list, joined=None) -> dict:
 
 
 
-def month(ym: str, all_history: bool = False) -> dict:
+def month(ym: str, all_history: bool = False, *, hidden=None) -> dict:
+    hidden = set() if all_history else hidden_atoms() if hidden is None else hidden
     y, m = (int(x) for x in ym.split("-"))
     tz = datetime.now().astimezone().tzinfo
     first = date(y, m, 1)
@@ -328,6 +364,11 @@ def month(ym: str, all_history: bool = False) -> dict:
     for it in items:
         if "parts" not in it:
             _decorate(it, "crosspost")
+    if hidden:
+        items = [
+            it for it in items
+            if it["key"] not in hidden and f'u{it["pub_id"]}' not in hidden
+        ]
     # Give u<ID> a stable alias even when imported statistics later appear.
     # склеиваем копии одного арта: ручные объединения → по публикации Crosspost/похожему превью, кроме разъединённых
     for it in items:
@@ -368,6 +409,7 @@ def month(ym: str, all_history: bool = False) -> dict:
     leaders = sorted(scored, key=lambda x: -x["index"])[:4]
     geo = math.exp(sum(math.log(max(i["index"], 0.05)) for i in scored) / len(scored)) if scored else None
     return {
+        "visibility": visibility_key(hidden),
         "ym": ym, "start": grid_start.isoformat(), "end": grid_end.isoformat(),
         "today": datetime.now(tz).date().isoformat(),
         "days": days, "sched": sched, "leaders": leaders, "suggestions": suggestions,

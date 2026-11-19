@@ -148,18 +148,25 @@ def main() -> int:
         log(lg, "файлы установлены" if ok else f"ОШИБКА: {error}")
         if not a.no_restart:
             try:
-                child = popen_detached([a.pythonw, "-m", "app"], root, logfile=lg)
                 import re
                 init = (root / "app" / "__init__.py").read_text(encoding="utf-8")
                 match = re.search(r'__version__\s*=\s*["\']([^"\']+)', init)
                 restart_version = match.group(1) if match else a.version
+                child = popen_detached([a.pythonw, "-m", "app"], root, logfile=lg)
                 started, reason = wait_for_restart(child, data, restart_version)
                 if not started:
+                    if ok:
+                        if child.poll() is None:
+                            child.kill()
+                            child.wait(timeout=15)
+                        raise RuntimeError(reason)
                     log(lg, reason)
                     result.write_text(json.dumps({"ok": False, "version": a.version, "error": reason, "at": time.time()}, ensure_ascii=False), encoding="utf-8")
                     return 1
                 log(lg, "новый процесс и сервер готовы")
             except OSError as e:
+                if ok:
+                    raise
                 log(lg, f"не удалось запустить программу: {e}")
                 result.write_text(json.dumps({"ok": False, "version": a.version, "error": f"Не удалось перезапустить: {e}", "at": time.time()}, ensure_ascii=False), encoding="utf-8")
                 return 1

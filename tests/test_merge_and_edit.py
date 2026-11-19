@@ -95,6 +95,29 @@ class MergeAndEdit(unittest.TestCase):
         self.calendar.merge([f'u{a}', f'u{b}'], force=True)
         self.assertEqual(self.calendar.publication_groups()[a], [a,b])
 
+    def test_calendar_removal_hides_group_and_future_mirror_but_preserves_history(self):
+        from app.api import Api
+        from app.insights import ext_posts
+        first = self.pub('2026-09-11T12:00:00+00:00', 'First')
+        second = self.pub('2026-09-11T13:00:00+00:00', 'Second')
+        other = self.pub('2026-09-12T12:00:00+00:00', 'Other')
+        self.calendar.merge([f'u{first}', f'u{second}'])
+        mirrors = []
+        api = Api.__new__(Api)
+        with patch.object(ext_posts, 'mirror_vk'), patch.object(ext_posts, 'sync_async'), \
+                patch.object(ext_posts, 'items_between', side_effect=lambda *args: [dict(row) for row in mirrors]):
+            before = api.calendar_month('2026-09')
+            work = next(item for rows in before['days'].values() for item in rows if item['pub_id'] == second)
+            atoms = api.cal_hide(work['atoms'])
+            self.assertEqual(set(atoms), {f'u{first}', f'u{second}'})
+            self.assertEqual(api.calendar_month('2026-09')['summary']['posts'], 1)
+            mirrors.append(dict(work, key='vk:late', ext='vk', pub_id=second))
+            result = self.calendar.month('2026-09')
+            self.assertEqual([item['pub_id'] for rows in result['days'].values() for item in rows], [other])
+            self.assertEqual(self.runner.search_history(q='First')['total'], 1)
+            api.cal_restore(atoms)
+            self.assertEqual(api.calendar_month('2026-09')['summary']['posts'], 2)
+
     def test_merged_statistics_use_newer_post_instead_of_older_larger_values(self):
         from app.insights import post_stats
         old=self.pub('2026-01-01T12:00:00+00:00','Old')

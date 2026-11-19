@@ -325,6 +325,105 @@ main()
         finally:
             close_page(page, self.id())
 
+    def test_late_initial_tags_and_replaced_video_keep_site_data_separate(self):
+        page = self.new_page()
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.wait_for_function('window.CP?.S.pub && CP.S.draft')
+            page.evaluate("""() => {
+                const s = CP.S;
+                s.info.modules.tagger = true;
+                s.view = 'post'; s.booruTagSite = 'floofgens'; s.mediaSt = {ready:true};
+                for (const site of ['floofgens','e621']) {
+                    s.pub[site].enabled = true; s.pub.modules[site] = true;
+                }
+                s.draft = {files:[{id:'old', name:'test.gif', kind:'gif', size:12}],
+                    rating:'sfw', exclude:['e6ai'], marks:{old:'en'}, alts:{old:'Alt'},
+                    booru_posts:{floofgens:{tags:{},meta:{}}, e621:{tags:{},meta:{}}}};
+                CP.render();
+                const api = CP.api;
+                CP.api = async (name,args) => {
+                    if (name === 'tagger_status') return {ready:true};
+                    if (name === 'e6db_status') return {ready:true};
+                    if (name === 'post_tags') return {old:[['wolf',0.9]]};
+                    if (name === 'e6_initial') return new Promise(resolve => {window.finishInitial = resolve});
+                    if (name === 'post_remove_file') return true;
+                    if (name === 'post_plan') return s.plan;
+                    return api(name,args);
+                };
+                window.initialJob = Pub.loadTags(false, true);
+            }""")
+            page.wait_for_function("typeof window.finishInitial === 'function'")
+            page.evaluate("""async () => {
+                CP.S.booruTagSite = 'e621'; CP.render();
+                window.finishInitial({old:['wolf']}); await window.initialJob;
+            }""")
+            self.assertEqual(page.evaluate("CP.S.draft.booru_posts.e621.tags"), {})
+            page.evaluate("""() => {
+                for (const [name, slot] of Object.entries(CP.S.draft.booru_posts)) {
+                    slot.tags.old = [name]; slot.meta.old = {parent:name};
+                }
+                VidEditor.open = options => {window.finishEdit = options.onDone};
+            }""")
+            page.locator('[data-pa="ved-open"]').click()
+            page.evaluate("() => window.finishEdit({file:{id:'new',kind:'gif',size:8,name:'edited.gif'}},{src:'old'})")
+            draft = page.evaluate('CP.S.draft')
+            for site, slot in draft['booru_posts'].items():
+                self.assertEqual(slot, {'tags':{'new':[site]}, 'meta':{'new':{'parent':site}}})
+            self.assertEqual(draft['alts'], {'new':'Alt'})
+            self.assertEqual(draft['marks'], {'new':'en'})
+        finally:
+            close_page(page, self.id())
+
+    def test_required_booru_tags_update_while_validation_is_pending(self):
+        config_path = Path(self.tmp.name) / 'publish.json'
+        original_config = config_path.read_bytes()
+        page = self.new_page()
+        held = []
+        try:
+            self.api('modules_set', key='floofgens', on=True)
+            self.api('pub_e6ai', site='floofgens', username='flooffixture', api_key='fixture-key')
+            buffer = io.BytesIO()
+            Image.new('RGB', (32, 32), 'blue').save(buffer, format='PNG')
+            image = self.session.post(self.base+'/upload?name=required-tags.png', headers=self.headers,
+                                      data=buffer.getvalue()).json()['result']
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("""async image => {
+                CP.S.view = 'post'; CP.S.booruTagSite = 'floofgens';
+                CP.S.draft = {files:[image], title:'Required tags', text:'', rating:'sfw',
+                    exclude:['e6ai','e621'], booru_posts:{}};
+                await Pub.load('post'); CP.render();
+                const api = CP.api;
+                window.tagResponses = 0;
+                CP.api = (name, args) => name === 'e6_form'
+                    ? api(name, args).finally(() => window.tagResponses++) : api(name, args);
+            }""", image)
+            page.route('**/api/e6_form', lambda route: held.append(route))
+            solo = page.locator('#e6card button[data-tag="solo"]')
+            duo = page.locator('#e6card button[data-tag="duo"]')
+            solo.click()
+            page.locator('#e6card button[data-tag="solo"].on').wait_for(timeout=1000)
+            page.get_by_text('Проверяю теги…', exact=True).wait_for(timeout=1000)
+            self.assertEqual(page.locator('#e6card [data-pa="e6ok"]').count(), 0)
+            duo.click()
+            page.locator('#e6card button[data-tag="duo"].on').wait_for(timeout=1000)
+            self.assertNotIn('on', solo.get_attribute('class').split())
+            self.assertEqual(len(held), 2)
+            self.assertEqual(held[1].request.post_data_json['items'][0]['tags'], ['duo'])
+            latest = held.pop()
+            latest.fulfill(response=latest.fetch())
+            page.get_by_text('Проверяю теги…', exact=True).wait_for(state='detached')
+            first = held.pop()
+            first.fulfill(response=first.fetch())
+            page.wait_for_function('window.tagResponses === 2')
+            self.assertEqual(page.evaluate('id => CP.S.e6form[id].tags', image['id']), ['duo'])
+            self.assertIn('on', duo.get_attribute('class').split())
+        finally:
+            for route in held:
+                route.abort()
+            close_page(page, self.id())
+            config_path.write_bytes(original_config)
+
     def test_all_booru_switches_create_tag_panel_and_link_opens_correct_site(self):
         old=self.api('pub_settings')
         config_path=Path(self.tmp.name)/'publish.json'
@@ -584,6 +683,33 @@ main()
         finally:
             close_page(page, self.id())
 
+    def test_calendar_removal_persists_and_can_be_restored(self):
+        page = self.new_page()
+        page.on("dialog", lambda dialog: dialog.accept())
+        atoms = []
+        try:
+            page.goto(self.base, wait_until="networkidle")
+            page.evaluate("""async()=>{
+                CP.S.view='history'; CP.S.histMode='calendar'; CP.S.calYm='2026-01';
+                CP.store.set('view','history'); CP.store.set('histMode','calendar');
+                await Pub.load('history'); CP.render();
+            }""")
+            card = page.locator('.cw').first
+            key = card.get_attribute('data-cw')
+            atoms = page.evaluate("key=>Object.values(CP.S.cal['2026-01'].days).flat().find(item=>item.key===key).atoms", key)
+            card.click()
+            page.get_by_role("button", name="Удалить из календаря", exact=True).click()
+            page.locator(f'.cw[data-cw="{key}"]').wait_for(state='hidden')
+            page.get_by_role("button", name="Вернуть в календарь", exact=True).wait_for()
+            result = self.api("calendar_month", ym="2026-01")
+            self.assertFalse(any(set(item['atoms']) & set(atoms) for rows in result['days'].values() for item in rows))
+            page.get_by_role("button", name="Вернуть в календарь", exact=True).click()
+            page.locator(f'.cw[data-cw="{key}"]').wait_for()
+        finally:
+            if atoms:
+                self.api("cal_restore", atoms=atoms)
+            close_page(page, self.id())
+
     def test_list_merge_and_split_are_visible_and_persistent(self):
         page = self.new_page()
         page.on("dialog", lambda dialog: dialog.accept())
@@ -710,6 +836,65 @@ main()
             self.assertIn('95%',box.inner_text())
             self.assertIn('не доказательство причины',box.inner_text())
             self.assertGreater(box.bounding_box()['width'],200)
+        finally:
+            close_page(page, self.id())
+
+    def test_publish_controls_stay_visible_while_destinations_scroll(self):
+        page = self.new_page(viewport={'width':1200, 'height':660})
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.wait_for_function('window.CP?.S.pub')
+            page.evaluate("""() => {
+                const s = CP.S;
+                s.view = 'post'; s.postMode = 'edit'; s.draft = {...s.draft, rating:'sfw'};
+                s.plan = {...s.plan, errors:[], configured:['telegram'], not_configured:[],
+                    dests: Array.from({length:24}, (_,i)=>({key:'telegram:'+i,platform:'telegram',
+                        name:'Channel '+i,will:true,can_toggle:true,details:['Image and text']}))};
+                CP.render();
+            }""")
+            pane = page.locator('.postside-details')
+            publish = page.locator('#pubside [data-pa=publish]')
+            initial = publish.bounding_box()
+            self.assertLess(initial['y'] + initial['height'], 660)
+            self.assertTrue(pane.evaluate('element => element.scrollHeight > element.clientHeight'))
+            pane.evaluate('element => {element.scrollTop = element.scrollHeight;}')
+            self.assertGreater(pane.evaluate('element => element.scrollTop'), 0)
+            self.assertEqual(publish.bounding_box()['y'], initial['y'])
+            forecast = page.locator('.postside-forecast')
+            self.assertTrue(forecast.evaluate('element => element.open'))
+            forecast.locator('summary').first.click()
+            page.wait_for_function("CP.S.editorDetails?.['post-forecast'] === false")
+            page.evaluate('CP.render()')
+            self.assertFalse(forecast.evaluate('element => element.open'))
+        finally:
+            close_page(page, self.id())
+
+    def test_paused_pipeline_row_offers_publish_now(self):
+        page = self.new_page()
+        page.on('dialog', lambda dialog: dialog.accept())
+        row = {'id':901,'state':'queued','queue':1,'title':'Queued artwork','files':[],
+               'dests':1,'rating':'sfw','run_at':'2099-01-01T00:00:00+00:00'}
+        calls = []
+        def reply(route, result):
+            route.fulfill(status=200, json={'ok':True,'result':result})
+        page.route('**/api/pipeline_state', lambda route: reply(route, {
+            'cfg':{'enabled':False,'explore':0},'items':[row],'windows':{'solid':0}
+        }))
+        page.route('**/api/post_scheduled', lambda route: reply(route, [row] if not calls else []))
+        def send(route):
+            calls.append(route.request.post_data_json)
+            reply(route, [])
+        page.route('**/api/post_schedule_now', send)
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("""async()=>{
+                CP.S.view='history'; CP.S.queueOpen=true;
+                await Pub.load('history'); CP.render();
+            }""")
+            page.locator('.sitem').filter(has_text='Queued artwork').get_by_role(
+                'button', name='Опубликовать сейчас', exact=True).click()
+            page.wait_for_function('!CP.S.sendingNow?.has(901)')
+            self.assertEqual(calls, [{'sid':901}])
         finally:
             close_page(page, self.id())
 

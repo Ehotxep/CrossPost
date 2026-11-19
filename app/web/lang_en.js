@@ -1293,6 +1293,7 @@ window.EN_DICT = {
 "Проверяю запас:": "Checking the reserve:",
 "Проверяю контрольную сумму…": "Checking the checksum…",
 "Проверяю файлы…": "Checking files…",
+"Проверяю теги…": "Checking tags…",
 "Проверяю…": "Checking…",
 "Прогноз": "Forecast",
 "Прогноз ·": "Forecast ·",
@@ -2906,4 +2907,17 @@ Object.assign(window.EN_DICT, {
   "Подготовить в Sta.sh": "Prepare in Sta.sh",
   "Обычная публикация через OAuth API. Цена и отдельный браузерный вход не нужны.": "Regular publishing uses the OAuth API. No price or separate browser sign-in is required.",
   "Цена скачивания, USD (только для Premium Download)": "Download price, USD (Premium Download only)"
+});
+
+Object.assign(window.EN_DICT, {
+  "Удалить из календаря": "Remove from calendar",
+  "Запись удалена из календаря.": "Entry removed from the calendar.",
+  "Вернуть в календарь": "Restore to calendar"
+});
+
+Object.assign(window.EN_DICT, {
+  "Прогноз просмотров": "View forecast",
+  "Ожидает отправки": "Waiting to send",
+  "Отправка при первой возможности": "Will send as soon as possible",
+  "Опубликовать этот пост сейчас? Если уже идёт отправка, пост начнёт публиковаться после неё.": "Publish this post now? If another post is sending, this one will follow it."
 });

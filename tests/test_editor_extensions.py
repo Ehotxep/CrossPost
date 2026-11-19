@@ -267,6 +267,49 @@ class EditorExtensions(unittest.TestCase):
         self.assertIn('приостановлена', row['notice'])
         self.assertEqual(self.db.query('SELECT state FROM scheduled WHERE id=?', (row['id'],))[0]['state'], 'queued')
 
+    def test_queue_refuses_terminal_moves_and_unverified_completion(self):
+        api = SimpleNamespace(jobs=Mock(), _tg_ctx=Mock())
+        api.jobs.get.return_value = None
+        sid = self.pipeline.add(self.draft())['id']
+        self.schedule.publish_now(sid)
+        edit = self.schedule.open_edit(sid)
+        self.schedule.cancel_edit(sid, edit['token'], edit['revision'])
+        with patch('app.backups.pending', side_effect=[False, True]):
+            self.schedule.tick(api, immediate_only=True)
+        api.jobs.start.assert_not_called()
+        self.assertEqual(self.db.query('SELECT state,send_now FROM scheduled WHERE id=?', (sid,))[0],
+                         {'state':'pending','send_now':1})
+        with patch.object(self.runner, 'state', return_value={}), patch.object(self.schedule.time, 'sleep'):
+            self.schedule.tick(api, immediate_only=True)
+        self.assertEqual(self.db.query('SELECT state FROM scheduled WHERE id=?', (sid,))[0]['state'], 'failed')
+        when = (self.schedule._now() + timedelta(days=1)).isoformat()
+        for state in ('done', 'partial', 'cancelled', 'failed'):
+            self.schedule._set(sid, state=state)
+            with self.assertRaises(ValueError):
+                self.schedule.reschedule(sid, when)
+            with self.assertRaises(ValueError):
+                self.pipeline.pin(sid, when)
+
+    def test_explicit_send_from_paused_pipeline_claims_only_selected_post(self):
+        other = self.pipeline.add(self.draft())['id']
+        selected = self.pipeline.add(self.draft())['id']
+        self.schedule.publish_now(selected)
+        with self.assertRaises(ValueError):
+            self.schedule.publish_now(selected)
+        api = SimpleNamespace(jobs=Mock(), _tg_ctx=Mock())
+        api.jobs.get.return_value = None
+        api.jobs.start.side_effect = lambda name, fn: fn(lambda **kw: None)
+        with patch.object(self.runner.D, 'post', return_value=[]) as sender:
+            self.schedule.tick(api)
+        sender.assert_called_once()
+        rows = {row['id']: row for row in self.db.query('SELECT id, state, send_now FROM scheduled')}
+        self.assertEqual(rows[selected]['state'], 'done')
+        self.assertEqual(rows[selected]['send_now'], 0)
+        self.assertEqual(rows[other]['state'], 'queued')
+        self.assertFalse(self.pipeline.cfg()['enabled'])
+        with self.assertRaises(ValueError):
+            self.schedule.publish_now(selected)
+
     def test_scheduling_wakes_sender_without_waiting_for_interface_poll(self):
         from app.api import Api
         from app import worker

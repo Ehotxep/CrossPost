@@ -502,9 +502,14 @@
     const i = d.files.findIndex((x) => x.id === job.src);
     if (i < 0) { C().api("post_remove_file", { file_id: nf.id }).catch(() => {}); return; }   // файл из поста уже убрали
     d.files.splice(i, 1, nf);
-    if (d.e6tags && d.e6tags[job.src]) { d.e6tags[nf.id] = d.e6tags[job.src]; delete d.e6tags[job.src]; }
-    if (d.e6meta && d.e6meta[job.src]) { d.e6meta[nf.id] = d.e6meta[job.src]; delete d.e6meta[job.src]; }
-    if (d.marks && d.marks[job.src]) { d.marks[nf.id] = d.marks[job.src]; delete d.marks[job.src]; }
+    const perFile = [d.alts, d.marks];
+    for (const slot of Object.values(d.booru_posts || {})) perFile.push(slot.tags, slot.meta);
+    for (const values of perFile) {
+      if (values && Object.hasOwn(values, job.src)) {
+        values[nf.id] = values[job.src];
+        delete values[job.src];
+      }
+    }
     C().api("post_remove_file", { file_id: job.src }).catch(() => {});
     saveDraft(); await refreshPlan();
     C().toast(`${nf.kind === "gif" ? "GIF" : "Видео"} готов${nf.kind === "gif" ? "" : "о"}: ${mb(nf.size)}, ${nf.width}×${nf.height}` + (r.over ? ". Тяжелее заказанного лимита — возьмите отрезок короче" : ""), r.over ? "info" : "ok");
@@ -599,7 +604,11 @@
     const s = S(), d = draft(), F = (s.e6form || {})[f.id], m = e6meta(f.id);
     const isArtist = BN() !== "e6ai";   // на e621 строка «Директор» — это «Художник»
     if (!F) return `<p class="muted small">Готовлю форму…</p>`;
-    const R = F.rows, c = F.check, need = new Set(c.need);
+    const pending = s.e6Change?.draft === d && s.e6Change.site === BN();
+    const selected = pending ? new Set(d.e6tags[f.id] || []) : null;
+    const R = selected ? Object.fromEntries(Object.entries(F.rows).map(([name, options]) => [name,
+      options.map(o => o.lock || o.imp ? o : {...o, on: selected.has(o.t)})])) : F.rows;
+    const need = new Set(pending ? [] : F.check.need);
     const lim = (lst, n) => { const on = lst.filter((o) => o.on || o.imp || o.lock); const sug = lst.filter((o) => !(o.on || o.imp || o.lock)).slice(0, n); return [...on, ...sug]; };
     const row = ([k, label, nk, tip], body) => {
       if (k === "director" && isArtist) { label = "Художник"; nk = "художник"; }
@@ -624,7 +633,7 @@
     h += `<details class="frest" data-fid="${f.id}" ${open ? "open" : ""}><summary><span class="fl">Остальное</span><span class="small muted">${restOn.length} ${C().plural(restOn.length, "тег", "тега", "тегов")}${restSug.length ? ` · ${restSug.length} ${C().plural(restSug.length, "подсказка", "подсказки", "подсказок")}` : ""} — фон, поза, одежда, выражение</span></summary>
       <div class="chips">${restOn.map((o) => e6chip(f.id, "rest", o)).join("")}${e6input(f.id, "", "добавить: smile outside…")}</div>
       ${restSug.length ? `<div class="chips sug">${restSug.map((o) => e6chip(f.id, "rest", o)).join("")}</div>` : ""}</details>`;
-    return h + e6CheckHtml(f, F);
+    return h + (pending ? '<p class="muted small" role="status">Проверяю теги…</p>' : e6CheckHtml(f, F));
   }
   function e6CheckHtml(f, F) {
     const c = F.check, tags = (l) => l.length ? ` <span class="tl">${l.map((t) => esc(t.replace(/_/g, " "))).join(", ")}</span>` : "";
@@ -725,9 +734,13 @@
     const imgs = d.files, site = BN();
     if (!imgs.length || !e6on()) { s.e6form = {}; return; }
     d.e6tags = d.e6tags || {}; d.e6meta = d.e6meta || {};
+    const input = () => ({ items: d.files.map(f => ({ id: f.id, tags: d.e6tags[f.id] || [], meta: e6meta(f.id) })), rating: d.rating || "" });
+    const args = input();
+    const ticket = requests.begin("booru-form", JSON.stringify(args));
+    const current = () => s.draft === d && BN() === site && e6on() && requests.current(ticket, JSON.stringify(input()));
     try {
-      const res = await tagApi("e6_form", { items: imgs.map((f) => ({ id: f.id, tags: d.e6tags[f.id] || [], meta: e6meta(f.id) })), rating: d.rating || "" });
-      if (site !== BN()) return;
+      const res = await tagApi("e6_form", args);
+      if (!current()) return;
       s.e6form = res; s.e6cats = s.e6cats || {};
       let ch = false;
       for (const [id, F] of Object.entries(res)) {
@@ -735,26 +748,31 @@
         if ((Object.keys(F.check.renamed || {}).length || (F.check.trimmed || []).length) && JSON.stringify(F.tags) !== JSON.stringify(d.e6tags[id] || [])) { d.e6tags[id] = F.tags; ch = true; }
       }
       if (ch) saveDraft();
-    } catch (e) { s.e6form = {}; }
+    } catch (e) { if (current()) s.e6form = {}; }
   }
   async function loadTags(run, force) {
-    const s = S(), d = draft(), api = tagApi;
+    const s = S(), d = draft(), site = BN(), slot = d.booru_posts?.[site];
+    const ids = d.files.map(f => f.id);
+    const selected = () => s.draft === d && BN() === site && d.booru_posts?.[site] === slot
+      && d.files.length === ids.length && d.files.every((f,i) => f.id === ids[i]);
+    const api = (name, args = {}) => C().api(name, TAG_METHODS.has(name) ? {...args, booru_site:site} : args);
     const e6 = e6on();
     // теггер смотрит картинки, пока он включён (переключатель справа вверху); к посту теги привязываются, только если включён e6ai
     if (!mod("tagger") || !force && !(s.taggerOn !== false && s.pub && ((BOORUS.some(k => s.pub[k]?.enabled)) || (s.pub.hashtags && s.pub.hashtags.enabled)))) {
       if (e6) { await refreshE6(); if (s.view === "post" && s.postMode !== "progress") paintE6(); }   // теггер выключен — форма e6ai всё равно нужна
       return;
     }
-    const ids = d.files.map((f) => f.id);
     if (!ids.length) return;
     try { s.tagger = await api("tagger_status"); } catch (e) { return; }
-    if (e6 && !s.e6db) { try { s.e6db = await api("e6db_status"); } catch (e) { /* без базы тоже работаем */ } }
+    if (e6 && !s.e6db) { try { const status = await api("e6db_status"); if (!selected()) return; s.e6db = status; } catch (e) { /* без базы тоже работаем */ } }
     const res = await api("post_tags", { ids });
+    if (!selected()) return;
     s.e6preds = Object.assign({}, s.e6preds, res);
     d.e6tags = d.e6tags || {};
     const fresh = ids.filter((id) => res[id] && d.e6tags[id] === undefined && e6);
     if (fresh.length) {   // первый раз — отмечаем только уверенное, без мелких деталей
       const init = await api("e6_initial", { ids: fresh });
+      if (!selected()) return;
       fresh.forEach((id) => { if (init[id] && d.e6tags[id] === undefined) d.e6tags[id] = init[id]; });
       saveDraft();
     }
@@ -777,8 +795,20 @@
     }
     if (s.view === "post" && s.postMode !== "progress") paintE6();
   }
-  async function e6changed(force) {
-    saveDraft(); await refreshE6(); await refreshPlan(); paintE6(force);
+  async function e6changed(force, immediate = false) {
+    const s = S(), change = {draft: draft(), site: BN()};
+    s.e6Change = change;
+    saveDraft();
+    if (immediate) paintE6(force);
+    try {
+      await refreshE6();
+      if (s.e6Change === change && s.draft === change.draft) await refreshPlan();
+    } finally {
+      if (s.e6Change === change) {
+        s.e6Change = null;
+        if (s.draft === change.draft) paintE6(force);
+      }
+    }
   }
   function paintE6(force) {
     const el = document.getElementById("e6card");
@@ -888,7 +918,30 @@
     const e6wait = (e) => /^(e6ai|e621): теги не готовы/.test(e);   // это уже видно в строке e6ai выше
     const noPlat = Array.isArray(p.configured) && !p.configured.length;   // ни одной подключённой и включённой площадки
     const errs = (p.errors || []).filter((e) => (!soft(e) || s.tried) && !e6wait(e) && !(noPlat && /Ни одна площадка не настроена/.test(e)));
-    let h = `<div class="side-sec"><div class="head"><h2>Публикация</h2>${will.length ? `<span class="muted small">${will.length} ${C().plural(will.length, "место", "места", "мест")}</span>` : ""}</div>`;
+    let h = `<div class="postside-actions side-sec"><div class="head"><h2>Публикация</h2>${will.length ? `<span class="muted small">${will.length} ${C().plural(will.length, "место", "места", "мест")}</span>` : ""}</div>`;
+    const hard = (p.errors || []).filter((e) => !soft(e));
+    const can = !hard.length && (will.length || !d.rating) && !s.publishing && s.e6Change?.draft !== d;
+    if (d.editing_schedule) {
+      h += `<button class="btn primary big" data-pa="schedule-save" ${can && will.length ? "" : "disabled"}>Сохранить изменения в очереди</button>`;
+    } else if (d.extend) {
+      h += `<button class="btn primary big" style="width:100%" data-pa="publish" ${can && will.length ? "" : "disabled"}>${will.length ? `Дослать: ${will.length} ${C().plural(will.length, "место", "места", "мест")}` : "Выберите, куда дослать"}</button>`;
+    } else if (s.when === "later") {
+      const at = s.whenAt ? new Date(s.whenAt) : null;
+      const ok = can && at && at > new Date();
+      h += whenHtml() + `<div class="splitbtn"><button class="btn primary big" data-pa="schedule" ${ok ? "" : "disabled"}>${at ? `Запланировать на ${fmtWhen(at)}` : "Выберите время"}</button>
+        <button class="btn big" data-set="when" data-val="now" data-tip="Не планировать — опубликовать сейчас" aria-label="Не планировать">${C().ICON.close}</button></div>`;
+    } else {
+      h += `<div class="splitbtn"><button class="btn primary big" data-pa="publish" ${can ? "" : "disabled"}>${will.length && will.every(x=>x.stash_options) ? 'Подготовить в Sta.sh' : window.I18N.key('post.publish')}</button>
+        <button class="btn primary big" data-set="when" data-val="later" data-tip="Запланировать на время" aria-label="Запланировать" ${d.rating ? "" : "disabled"}>${C().ICON.clock}</button></div>`;
+    }
+    const queueButton = !d.editing_schedule && !d.extend && s.when !== "later"
+      ? `<button class="btn small" data-pa="pipe-add" ${can && will.length && d.rating ? "" : "disabled"} data-tip="Положить пост в очередь: Crosspost сам выберет лучшее свободное время по вашей статистике и опубликует">В конвейер</button>` : "";
+    h += `<div class="postside-check">${queueButton}<button class="btn small" data-pa="post-check" aria-expanded="${s.postPanel==='checks'}" aria-controls="post-tools" ${s.pubBusy==='features'?'disabled':''}>${s.pubBusy==='features'?'Проверяю…':window.I18N.key('post.check')}</button>
+      ${s.readiness && !s.readiness.ready || s.composition?.errors?.length?'<p class="err small" role="alert">Есть замечания — откройте проверку поста.</p>':''}
+      ${s.readiness?.ready?'<span class="ok small">Локальные проверки пройдены</span>':''}</div>`;
+    if (hard.some(e6wait) && hard.length === (p.errors || []).filter(e6wait).length) h += `<p class="small warnline">${BL()} ждёт теги: заполните форму «Теги ${BL()}» или выключите ${BL()} для этого поста.</p>`;
+    if (s.schedMsg) h += `<p class="ok small">${esc(s.schedMsg)}. <a href="#" data-view-link="history">Открыть публикации</a></p>`;
+    h += `</div><div class="postside-details side-sec">`;
     if (noPlat) h += `<div class="nohint" role="note"><b>Некуда публиковать</b><span>Ни одна площадка не подключена или не включена. Добавьте площадки в настройках — и здесь появится список мест.</span>
         <button class="btn primary small" data-view-link="settings" data-tab="telegram">Открыть настройки площадок</button></div>`;
     if (noPlat) { /* подсказка выше; список мест пока пуст */ }
@@ -901,31 +954,11 @@
     }
     if (p.not_configured.length && !noPlat) h += `<span class="muted small">Не подключены: ${esc(p.not_configured.join(", "))}. <a href="#" data-view-link="platforms" data-tab="telegram">Настроить</a></span>`;
     if (errs.length) h += `<ul class="errs">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`;
-    h += `</div>`;
-    if (d.rating && will.some((x) => x.key.startsWith("telegram:") && x.key !== "telegram:group")) h += `<div class="side-sec" id="fcbox">${fcHtml()}</div>`;
-    h += `<div class="side-sec"><button class="btn small" data-pa="post-check" aria-expanded="${s.postPanel==='checks'}" aria-controls="post-tools" ${s.pubBusy==='features'?'disabled':''}>${s.pubBusy==='features'?'Проверяю…':window.I18N.key('post.check')}</button>
-      ${s.readiness && !s.readiness.ready || s.composition?.errors?.length?'<p class="err small" role="alert">Есть замечания — откройте проверку поста.</p>':''}
-      ${s.readiness?.ready?'<span class="ok small">Локальные проверки пройдены</span>':''}</div>`;
-    const hard = (p.errors || []).filter((e) => !soft(e));
-    const can = !hard.length && (will.length || !d.rating) && !s.publishing;
-    h += `<div class="side-sec">`;
-    if (d.editing_schedule) {
-      h += `<button class="btn primary big" data-pa="schedule-save" ${can && will.length ? "" : "disabled"}>Сохранить изменения в очереди</button>`;
-    } else if (d.extend) {
-      h += `<button class="btn primary big" style="width:100%" data-pa="publish" ${can && will.length ? "" : "disabled"}>${will.length ? `Дослать: ${will.length} ${C().plural(will.length, "место", "места", "мест")}` : "Выберите, куда дослать"}</button>`;
-    } else if (s.when === "later") {
-      const at = s.whenAt ? new Date(s.whenAt) : null;
-      const ok = can && at && at > new Date();
-      h += whenHtml() + `<div class="splitbtn"><button class="btn primary big" data-pa="schedule" ${ok ? "" : "disabled"}>${at ? `Запланировать на ${fmtWhen(at)}` : "Выберите время"}</button>
-        <button class="btn big" data-set="when" data-val="now" data-tip="Не планировать — опубликовать сейчас" aria-label="Не планировать">${C().ICON.close}</button></div>`;
-    } else {
-      h += `<div class="splitbtn"><button class="btn primary big" data-pa="publish" ${can ? "" : "disabled"}>${will.length && will.every(x=>x.stash_options) ? 'Подготовить в Sta.sh' : window.I18N.key('post.publish')}</button>
-        <button class="btn primary big" data-set="when" data-val="later" data-tip="Запланировать на время" aria-label="Запланировать" ${d.rating ? "" : "disabled"}>${C().ICON.clock}</button></div>
-        <button class="btn big" style="width:100%;margin-top:8px" data-pa="pipe-add" ${can && will.length && d.rating ? "" : "disabled"} data-tip="Положить пост в очередь: Crosspost сам выберет лучшее свободное время по вашей статистике и опубликует">В конвейер</button>`;
+    if (d.rating && will.some(x => x.key.startsWith("telegram:") && x.key !== "telegram:group")) {
+      h += `<details class="more postside-forecast" data-detail-key="post-forecast"
+        ${s.editorDetails?.["post-forecast"] !== false ? "open" : ""}><summary>Прогноз просмотров</summary><div id="fcbox">${fcHtml()}</div></details>`;
     }
-    if (hard.some(e6wait) && hard.length === (p.errors || []).filter(e6wait).length) h += `<p class="small warnline">${BL()} ждёт теги: заполните форму «Теги ${BL()}» или выключите ${BL()} для этого поста.</p>`;
-    if (s.schedMsg) h += `<p class="ok small">${esc(s.schedMsg)}. <a href="#" data-view-link="history">Открыть публикации</a></p>`;
-    return h + `</div>`;
+    return h + "</div>";
   }
   // ----- когда публиковать -----
   const WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"], MON = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -1041,6 +1074,46 @@
       <button class="btn small" data-pa="wk-start">Включить</button></div>`;
   }
   const MONS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  function sendNowButton(row) {
+    if (!["pending", "queued", "missed"].includes(row.state)) return "";
+    const busy = (row.state === "pending" && row.send_now) || S().sendingNow?.has(row.id);
+    return `<button class="btn small primary" data-pa="sched-now" data-id="${row.id}" ${busy ? "disabled" : ""}>
+      ${C().ICON.play} ${busy ? "Ожидает отправки" : "Опубликовать сейчас"}</button>`;
+  }
+
+  async function watchQueuedSend(sid) {
+    const s = S();
+    if (s.view !== "history" || !s.queueOpen) {
+      s.sendingNow?.delete(sid);
+      return;
+    }
+    try {
+      const scheduled = await C().api("post_scheduled");
+      const item = scheduled.find(row => row.id === sid);
+      if (s.view !== "history" || !s.queueOpen) {
+        s.sendingNow?.delete(sid);
+        return;
+      }
+      s.sched = scheduled;
+      if ((item?.state === "pending" && item.send_now) || item?.state === "running") {
+        if (s.pipe?.items) {
+          s.pipe.items = s.pipe.items.map(row => row.id === sid ? {...row, ...item} : row);
+        }
+        quietHistory();
+        setTimeout(() => watchQueuedSend(sid), 2500);
+        return;
+      }
+      s.sendingNow?.delete(sid);
+      s.pipe = await C().api("pipeline_state");
+      await Promise.all([loadHistoryPage(s.historyOffset || 0), loadCalendar()]);
+      quietHistory();
+    } catch (error) {
+      s.sendingNow?.delete(sid);
+      C().toast(error.message, "error");
+      quietHistory();
+    }
+  }
+
   function pipelineHtml() {
     const s = S(), P = s.pipe;
     if (!P) return "";
@@ -1055,8 +1128,10 @@
       const when = r.state === "running" ? `<span class="small" style="color:var(--accent)">публикуется…</span>`
         : r.state === "editing" ? `<span class="warnline small">Редактируется — отправка приостановлена</span>` : r.state === "failed" ? `<span class="err small">не вышел: ${esc(r.error || "ошибка")}</span>`
         : r.state === "missed" ? `<span class="err small">пропущен — получит новое время</span>`
+        : r.send_now ? `<span class="muted small">Отправка при первой возможности</span>`
         : at ? `<span class="muted small">${esc(r.human)}</span>` : `<span class="muted small">${c.enabled ? "ищу свободное время…" : "ждёт включения конвейера"}</span>`;
-      const mv = s.pipeMove === r.id;
+      const canMove = ["queued", "pending", "missed"].includes(r.state);
+      const mv = canMove && s.pipeMove === r.id;
       const box = at ? `<div class="datebox"><b>${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}</b><span>${at.getDate()} ${MONS[at.getMonth()]}</span></div>` : `<div class="datebox"><b>—</b><span>очередь</span></div>`;
       return `<div class="sitem ${r.state === "missed" || r.state === "failed" ? "missed" : ""}">
         ${box}
@@ -1068,9 +1143,10 @@
           ${mv ? `<div class="row" style="align-items:center;gap:8px;margin-top:4px"><input type="datetime-local" id="pmv-${r.id}" min="${localInput(new Date())}" value="${at ? localInput(at) : ""}"><button class="btn small primary" data-pa="pipe-pin" data-id="${r.id}">Закрепить</button>${r.pinned ? `<button class="btn small" data-pa="pipe-unpin" data-id="${r.id}">Снять закрепление</button>` : ""}<button class="btn small ghost" data-pa="pipe-pin-cancel">Отмена</button></div>` : ""}
         </div>
         ${r.state !== "running" ? `<div class="acts">${["pending","queued","missed","editing"].includes(r.state)?`<button class="btn small" data-pa="schedule-edit" data-id="${r.id}">Редактировать</button>`:""}
+          ${sendNowButton(r)}
           <button class="icon-btn" data-pa="pipe-up" data-id="${r.id}" data-tip="Выше в очереди" aria-label="Выше">↑</button>
           <button class="icon-btn" data-pa="pipe-down" data-id="${r.id}" data-tip="Ниже в очереди" aria-label="Ниже">↓</button>
-          <button class="btn small" data-pa="pipe-move" data-id="${r.id}">${ICON.cal} Время</button>
+          ${canMove ? `<button class="btn small" data-pa="pipe-move" data-id="${r.id}">${ICON.cal} Время</button>` : ""}
           <button class="icon-btn danger" data-pa="pipe-remove" data-id="${r.id}" data-tip="Убрать из конвейера" aria-label="Убрать">${ICON.trash}</button></div>` : ""}
       </div>`;
     };
@@ -1104,7 +1180,7 @@
           ${s.moving === r.id ? `<div class="row" style="align-items:center;gap:8px;margin-top:4px"><input type="datetime-local" id="mv-${r.id}" min="${localInput(new Date())}" value="${localInput(at)}"><button class="btn small primary" data-pa="sched-move" data-id="${r.id}">Сохранить</button><button class="btn small ghost" data-pa="sched-move-cancel">Отмена</button></div>` : ""}
         </div>
         ${r.state !== "running" ? `<div class="acts">${["pending","queued","missed","editing"].includes(r.state)?`<button class="btn small" data-pa="schedule-edit" data-id="${r.id}">Редактировать</button>`:""}
-          <button class="btn small primary" data-pa="sched-now" data-id="${r.id}">${ICON.play} Опубликовать сейчас</button>
+          ${sendNowButton(r)}
           ${s.moving === r.id ? "" : `<button class="btn small" data-pa="sched-move" data-id="${r.id}">${ICON.cal} Перенести</button>`}
           <button class="icon-btn danger" data-pa="sched-cancel" data-id="${r.id}" data-tip="Отменить публикацию" aria-label="Отменить публикацию">${ICON.trash}</button></div>` : ""}
       </div>`;
@@ -1140,8 +1216,12 @@
   async function loadCalendar(quiet) {
     const s = S(), ym = s.calYm || (s.calYm = curYm());
     s.cal = s.cal || {};
+    const pending = s.calendarRequests ||= {};
+    const request = pending[ym] = {};
+    const current = () => s.calendarRequests === pending && pending[ym] === request;
     try {
       const r = await C().api("calendar_month", { ym });
+      if (!current()) return;
       const prev = s.cal[ym];
       s.cal[ym] = r;
       if (!r._cache || !r._cache.stale || !prev || !prev._cache || prev._cache.at !== r._cache.at) s.calTries = 0;
@@ -1150,7 +1230,7 @@
         s.calTries = (s.calTries || 0) + 1;
         if (s.calTries <= 5) s.calPoll = setTimeout(async () => { if (s.view === "history") { await loadCalendar(true); quietHistory(); } }, 2000 * s.calTries);
       }
-    } catch (e) { s.cal[ym] = { error: e.message }; }
+    } catch (e) { if (current()) s.cal[ym] = { error: e.message }; }
     if (!quiet) return;
   }
   function quietHistory() {
@@ -1208,6 +1288,10 @@
         ${c && c.summary ? `<span class="muted small">${c.summary.posts} ${C().plural(c.summary.posts, "работа", "работы", "работ")}${c.summary.hits ? `, хитов: ${c.summary.hits}` : ""}${c.summary.typical ? `, обычно ${mult(c.summary.typical)}` : ""}</span>` : ""}</div>`;
     if (!c) return h + `<p class="muted">Загрузка…</p></section>`;
     if (c.error) return h + `<p class="err">${esc(c.error)}</p></section>`;
+    if (s.calendarUndo?.length) {
+      h += `<div class="row" role="status"><span class="muted small">Запись удалена из календаря.</span>
+        <button class="btn small ghost" data-pa="cal-restore" ${s.calendarVisibilityBusy ? "disabled" : ""}>Вернуть в календарь</button></div>`;
+    }
     h += selBarHtml() + suggestHtml(c);
     const start = new Date(c.start + "T00:00:00"), end = new Date(c.end + "T00:00:00");
     const rankOf = {};   // медали лидерам месяца
@@ -1387,6 +1471,7 @@
         <div class="dh">${img || `<div class="noimg"></div>`}
           <div style="min-width:0;display:flex;flex-direction:column;gap:6px"><b style="font-size:15px" translate="no">${esc(title || "Без названия")}</b>
             <span class="muted small">${sub}</span>${badges}
+            ${s.calendarDrawerItem?.atoms?.length ? `<button class="btn small ghost" data-pa="cal-hide" ${s.calendarVisibilityBusy ? "disabled" : ""}>Удалить из календаря</button>` : ""}
             ${(() => { const d = (s.pstat || {})[key] || {}; if (kind === "pub" || kind === "cal") return ""; const t = d.text && d.text.length > (title || "").length ? esc(d.text.slice(0, 140)) : ""; const hint = !d.preview && d.media !== "text" ? "Превью нет: файла не было в выгрузке. Сделайте экспорт канала с включёнными фото и видео и импортируйте снова — превью добавятся." : ""; return t || hint ? `<span class="muted small"><span translate="no">${t}</span>${t && hint ? "<br>" : ""}${hint}</span>` : ""; })()}</div>
           <button class="icon-btn" data-pa="pstat-close" aria-label="Закрыть">${C().ICON.close}</button></div>
         <div class="db">${String(key).startsWith("cal:") ? calStatHtml(String(key).slice(4)) : pstatHtml(key)}${kind === "pub" ? journalHtml(id,'history') : ""}</div></aside>`;
@@ -1512,9 +1597,10 @@
       });
     }
   }
-  async function openDrawer(key) {
+  async function openDrawer(key, calendarItem = null) {
     const s = S(), api = tagApi, [kind, id] = String(key).split(":");
     hideHoverCard();
+    s.calendarDrawerItem = calendarItem;
     s.pstatOpen = key; s.journalOpen=null; s.pstatErr = ""; s.pstat = s.pstat || {}; C().render();
     if (kind === "cal") return;
     try { s.pstat[key] = kind === "pub" ? await api("pub_stats", { pub_id: +id }) : await api("post_detail", { post_id: +id }); }
@@ -2248,16 +2334,22 @@
     const cw = e.target.closest("[data-cw]");
     if (cw) {   // работа в календаре → шторка: публикация из Crosspost или пост из импорта
       e.preventDefault();
-      const it = calItems()[cw.dataset.cw];
       const s1 = S();
+      const fromCalendar = s1.view === "history" && s1.histMode === "calendar";
+      const month = s1.cal?.[s1.calYm];
+      const it = fromCalendar
+        ? Object.values(month?.days || {}).flat().find(work => work.key === cw.dataset.cw)
+        : calItems()[cw.dataset.cw];
       if (it && (s1.calSelMode || e.ctrlKey || e.metaKey || e.shiftKey)) {   // выбор работ для объединения
         const sel = s1.calSel || (s1.calSel = []), i = sel.indexOf(it.key);
         if (i >= 0) sel.splice(i, 1); else sel.push(it.key);
         (s1.mergeItems || (s1.mergeItems = {}))[it.key] = it;
         C().render(); return true;
       }
-      if (it && (it.pub_id || it.post_id)) await openDrawer(it.pub_id ? "pub:" + it.pub_id : "post:" + it.post_id);
-      else if (it) await openDrawer("cal:" + it.key);
+      if (it) {
+        const key = it.pub_id ? "pub:" + it.pub_id : it.post_id ? "post:" + it.post_id : "cal:" + it.key;
+        await openDrawer(key, fromCalendar ? it : null);
+      }
       return true;
     }
     const hs = e.target.closest('[data-set="hf"],[data-set="histMode"]');
@@ -2420,7 +2512,7 @@
       case "backup-restore":
         if (!confirm("Заменить историю, очередь и настройки этой копией после перезапуска? Текущие данные будут сохранены в отдельную резервную копию. Фоновая отправка должна быть выключена.")) return true;
         await guard("backup", async () => { await api("backup_restore", {bid:a.dataset.id}); s.backupState = await api("backup_status"); }); return true;
-      case "e6t": e6toggle(a.dataset.id, a.dataset.row, a.dataset.tag); await e6changed(true); return true;
+      case "e6t": e6toggle(a.dataset.id, a.dataset.row, a.dataset.tag); await e6changed(true, true); return true;
       case "e6ok": {
         const F = (s.e6form || {})[a.dataset.id];
         e6meta(a.dataset.id).ok = a.dataset.un ? "" : (F ? F.check.sig : "");
@@ -2584,6 +2676,32 @@
         finally{edit.busy=false;}
         C().render();return true;
       }
+      case "cal-hide": case "cal-restore": {
+        const hiding = act === "cal-hide";
+        const atoms = hiding ? s.calendarDrawerItem?.atoms : s.calendarUndo;
+        if (!atoms?.length || s.calendarVisibilityBusy) return true;
+        if (hiding && !confirm("Удалить эту карточку из календаря CrossPost? История отправки сохранится. У объединённой карточки будут скрыты все её записи.")) return true;
+        s.calendarVisibilityBusy = true;
+        try {
+          const changed = await api(hiding ? "cal_hide" : "cal_restore", {atoms});
+          s.calendarUndo = hiding ? changed : null;
+          s.calendarDrawerItem = null;
+          s.pstatOpen = null;
+          s.calSel = [];
+          s.mergeItems = {};
+          s.cal = {};
+          s.calendarRequests = {};
+          s.statsCalendar = null;
+          clearTimeout(s.calPoll);
+          await loadCalendar();
+        } catch (err) {
+          C().toast(err.message, "error");
+        } finally {
+          s.calendarVisibilityBusy = false;
+          C().render();
+        }
+        return true;
+      }
       case "cal-merge": case "cal-force-merge": case "cal-split": {
         const items = calItems(), atoms = [...new Set((s.calSel || []).flatMap((k) => (items[k] || {}).atoms || []))];
         try {
@@ -2650,7 +2768,23 @@
         C().render(); return true;
       }
       case "sched-cancel": if (!confirm("Отменить запланированный пост?")) return true; s.sched = await api("post_schedule_cancel", { sid: +a.dataset.id }); C().render(); return true;
-      case "sched-now": s.sched = await api("post_schedule_now", { sid: +a.dataset.id }); C().render(); setTimeout(async () => { s.sched = await api("post_scheduled"); s.hist = await api("post_history"); C().render(); }, 3000); return true;
+      case "sched-now": {
+        const sid = +a.dataset.id;
+        const sending = s.sendingNow ||= new Set();
+        if (sending.has(sid) || !confirm("Опубликовать этот пост сейчас? Если уже идёт отправка, пост начнёт публиковаться после неё.")) return true;
+        sending.add(sid);
+        C().render();
+        try {
+          s.sched = await api("post_schedule_now", {sid});
+          C().render();
+          await watchQueuedSend(sid);
+        } catch (error) {
+          sending.delete(sid);
+          C().toast(error.message, "error");
+          C().render();
+        }
+        return true;
+      }
       case "sched-move": {
         const el = document.getElementById("mv-" + a.dataset.id);
         if (!el || !el.value) { s.moving = +a.dataset.id; C().render(); return true; }

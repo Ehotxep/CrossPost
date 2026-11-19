@@ -6,6 +6,9 @@ from contextlib import contextmanager
 from app.paths import data_dir
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS calendar_hidden (
+    atom TEXT PRIMARY KEY
+);
 CREATE TABLE IF NOT EXISTS saved_drafts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'working',
     created TEXT NOT NULL, updated TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, draft TEXT NOT NULL

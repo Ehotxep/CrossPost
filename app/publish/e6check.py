@@ -202,10 +202,11 @@ def form(preds, tags, consts, meta, rating, show_min=0.2, preselect=0.35) -> dic
     sel = [_norm(t) for t in tags or []]
     c0 = check(sel, consts, meta, rating)
     sel = list(dict.fromkeys(c0["renamed"].get(t, t) for t in sel))
-    trimmed = [t for t in sel if t not in DB.drop_implied(sel)]   # лишние «родители» — e6ai добавит их сам
+    kept = set(DB.drop_implied(sel))   # лишние «родители» — e6ai добавит их сам
+    trimmed = [t for t in sel if t not in kept]
     if trimmed:
-        sel = [t for t in sel if t not in trimmed]
-    c = check(sel, consts, meta, rating)
+        sel = [t for t in sel if t in kept]
+    c = check(sel, consts, meta, rating) if trimmed or c0["renamed"] else c0
     c["renamed"] = c0["renamed"]
     c["trimmed"] = trimmed
     consts_n = [c["renamed"].get(_norm(t), _norm(t)) for t in consts or []]
