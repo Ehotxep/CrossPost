@@ -70,8 +70,8 @@ FIELD = [
     "#post_field",
     lambda p: p.get_by_role("textbox", name=re.compile(r"Напишите что-нибудь|Что у вас нового|Write something|What's new", re.I)),
     lambda p: p.get_by_text(re.compile(r"^\s*(Напишите что-нибудь|Что у вас нового\??|Write something|What's new\??)", re.I)),
-    lambda p: p.get_by_role("button", name=re.compile(r"(Создать|Новая|Написать) (запись|пост)|Create post|New post", re.I)),
-    lambda p: p.get_by_text(re.compile(r"^\s*(Создать запись|Создать пост|Новая запись|Написать пост)\s*$", re.I)),
+    lambda p: p.get_by_role("button", name=re.compile(r"^\s*((Создать|Новая|Новый|Написать) (запись|пост)|Create post|New post)\s*$", re.I)),
+    lambda p: p.get_by_text(re.compile(r"^\s*(Создать запись|Создать пост|Новая запись|Новый пост|Написать пост|Create post|New post)\s*$", re.I)),
     "[data-testid*='posting'] [contenteditable='true']",
     "[data-testid*='posting'], [data-testid*='create_post'], [data-testid*='post_create']",
     "[placeholder*='Напишите'], [placeholder*='нового']",
@@ -80,7 +80,7 @@ FIELD = [
 CREATE = [
     "[data-testid='group_publish_create_button']",
     lambda p: p.get_by_role("button", name=re.compile(r"^\s*[+＋]?\s*(Создать|Создать публикацию|Create|Create publication)\s*$", re.I)),
-    lambda p: p.get_by_role("link", name=re.compile(r"^\s*[+＋]?\s*(Создать пост|Создать запись|Create post)\s*$", re.I)),
+    lambda p: p.get_by_role("link", name=re.compile(r"^\s*[+＋]?\s*(Создать пост|Создать запись|Новый пост|Create post|New post)\s*$", re.I)),
 ] + FIELD
 
 EDITOR = ["#post_field[contenteditable='true']", "[data-testid*='posting'] [contenteditable='true']",
@@ -387,7 +387,7 @@ def _open_composer(page, timeout_ms: int = 30000, log=lambda message: None):
         raise PlatformError("Не найдена однозначная кнопка создания поста ВК. Проверьте вход и права администратора; возможно, ВК изменил форму.")
     if menu_seen and not choices:
         raise PlatformError('Меню «Создать» ВК открыто, но пункт «Пост» не найден однозначно; редактор не открыт')
-    raise PlatformError("Окно нового поста ВК не открылось" + (" после выбора «Пост»" if choices else ": меню «Создать» не появилось"))
+    raise PlatformError("Окно нового поста ВК не открылось" + (" после выбора «Пост»" if choices else " после нажатия кнопки создания"))
 
 
 def _attach(page, files):

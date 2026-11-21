@@ -198,6 +198,20 @@ class SocialBrowser(unittest.TestCase):
             self.assertEqual(page.evaluate('window.clicks'),1)
             self.assertEqual(page.evaluate('window.submits'),0)
 
+    def test_vk_channel_new_post_control_opens_direct_editor(self):
+        # New VK community pages can be rendered as a channel. They have a
+        # direct «Новый пост» control and no «Создать → Пост» popup.
+        markup='<div tabindex="0" id="create"><span>＋</span><span>Новый пост</span></div>'
+        with self.vk_fixture(markup,menu=False) as page:
+            editor,scope=V._open_composer(page,timeout_ms=3000)
+            editor.fill('Channel post')
+            V._attach(page,[self.image])
+            page.locator('#photos img').wait_for()
+            self.assertEqual(scope.get_attribute('id'),'composer')
+            self.assertEqual(page.evaluate('window.clicks'),1)
+            self.assertEqual(page.evaluate('window.submits+window.wrong'),0)
+            self.assertEqual(page.locator('#text').inner_text(),'Channel post')
+
     def test_vk_retries_create_before_page_becomes_interactive(self):
         with self.vk_fixture('<button data-testid="group_publish_create_button" id="create">Создать</button>',ignore_first=True) as page:
             V._open_composer(page,timeout_ms=6000)
