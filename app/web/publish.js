@@ -3136,7 +3136,13 @@
     if (['source','target','file','replace'].includes(t.dataset.booruCopyField)) {
       s.booruCopyPrefs ||= {};
       s.booruCopyPrefs[BN()] = {...s.booruCopyPrefs[BN()], ...(t.dataset.booruCopyField==='replace'?{mode:t.checked?'replace':'merge'}:{[t.dataset.booruCopyField]:t.value})};
-      if(t.dataset.booruCopyField==='target')C().render();
+      if(t.dataset.booruCopyField==='target'){
+        // The target changes the available source list and requires a render.
+        // Keep the compact panel open so the next control does not disappear.
+        s.editorDetails ||= {};
+        s.editorDetails['booru-copy']=true;
+        C().render();
+      }
       return true;
     }
     if(t.dataset.redditCustomFlair){
