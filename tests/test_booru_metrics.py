@@ -106,7 +106,11 @@ class BooruMeasurements(unittest.TestCase):
         with db.tx() as c:c.execute('INSERT INTO publications VALUES (?,?,?,?,?,?,?,?)',(1,published.isoformat(),'Art','','sfw','[]',json.dumps(dests),'{}'))
         PS.update('modules',{'e621':False,'e6ai':False})
         values={'created_at':published.isoformat(),'observed_at':self.now.isoformat(),'owner':'id:1','rating':'s','kind':'image','favs':5}
-        with patch.object(post_stats,'e6ai_stats',return_value=values) as fetch:
+        # Keep this worker test independent of the wall clock used by _pubs().
+        # The collection clock itself is already fixed through BM.tick(now=...).
+        publication={'id':1,'created':published.isoformat(),'dests':json.dumps(dests)}
+        with patch.object(post_stats,'_pubs',return_value=[publication]), \
+             patch.object(post_stats,'e6ai_stats',return_value=values) as fetch:
             result=BM.tick(now=self.now,min_gap=0)
             self.assertEqual(result['updated'],2)
             self.assertEqual({c.args[0] for c in fetch.call_args_list},{r['url'] for r in refs})
