@@ -337,6 +337,8 @@ def _apply_pending():
             if 'scheduled' in tables:
                 c.execute("UPDATE scheduled SET state='missed', error='восстановлено из копии — проверьте время и файлы' WHERE state IN ('pending','running','queued','editing')")
                 cols = {r[1] for r in c.execute('PRAGMA table_info(scheduled)')}
+                if 'send_now' in cols:
+                    c.execute('UPDATE scheduled SET send_now=0')
                 for col in ('edit_token', 'edit_prev'):
                     if col in cols:
                         c.execute(f'UPDATE scheduled SET {col}=NULL')

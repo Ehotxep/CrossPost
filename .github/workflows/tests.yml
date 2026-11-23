@@ -27,6 +27,12 @@ jobs:
             requirements-constraints.txt
       - run: python -m pip install -r requirements-app.txt
       - run: python tools/run_tests.py
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: regression-failure-${{ matrix.os }}-py${{ matrix.python }}
+          path: test-artifacts/
+          retention-days: 7
   interface:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -42,11 +48,14 @@ jobs:
       - run: node tests/web/post-state.test.js
       - run: node tests/web/setup-guide.test.js
       - run: node tests/web/settings-autosave.test.js
+      - run: node tests/web/diagnostics.test.js
       - run: python -m playwright install --with-deps chromium
       - run: python tests/browser/test_workflows.py
       - run: python tests/browser/test_social_web.py
+      - run: python tests/browser/test_da_paid.py
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: interface-failure
           path: test-artifacts/
+          retention-days: 7

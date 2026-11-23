@@ -7,6 +7,22 @@ from app.api import Api
 
 
 class RedditDryRun(unittest.TestCase):
+    def test_x_dry_run_uses_sample_and_requires_browser_login(self):
+        from app.publish import settings
+        with tempfile.TemporaryDirectory() as directory, patch.dict('os.environ', {'CROSSPOST_DATA': directory}):
+            api = Api.__new__(Api)
+            api.jobs = Mock()
+            api.jobs.start.side_effect = lambda key, fn: fn(lambda **kw: None)
+            with self.assertRaisesRegex(ValueError, 'войдите'):
+                api.pub_browser_dry('x')
+            settings.update('x', {'browser_ok': True})
+            def check(files, **kwargs):
+                self.assertEqual(len(files), 1)
+                self.assertTrue(Path(files[0]).is_file())
+                return {'shot': 'x-test.png'}
+            with patch('app.publish.social_web.x_dry', side_effect=check):
+                api.pub_browser_dry('x')
+
     def test_empty_draft_uses_sample_without_sending(self):
         from app.publish import settings
         with tempfile.TemporaryDirectory() as directory, patch.dict('os.environ', {'CROSSPOST_DATA': directory}):

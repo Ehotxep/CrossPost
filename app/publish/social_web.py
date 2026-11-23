@@ -1,4 +1,4 @@
-"""Experimental Reddit / JoyReactor UI adapters, using isolated site profiles.
+"""Experimental Reddit / JoyReactor / X UI adapters with separate site profiles.
 
 Selectors must be checked against the live sites before declaring support stable.
 No private HTTP API, CAPTCHA solving, automatic login or submission retries.
@@ -8,18 +8,33 @@ import time
 from urllib.parse import urlparse, urljoin
 
 from app.publish import browser as B
-from app.publish.browser_targets import SUBREDDITS
+from app.publish.browser_targets import valid_community
 from core.common import NotPublishedError, PublicationUnknown
 
-SITES = {'reddit': 'https://www.reddit.com', 'joyreactor': 'https://joyreactor.cc'}
+SITES = {'reddit': 'https://www.reddit.com', 'joyreactor': 'https://joyreactor.cc', 'x': 'https://x.com'}
+DRY_BROWSER_WAIT_SECONDS = 20
+DRY_UPLOAD_WAIT_SECONDS = 45
+UPLOAD_WAIT_SECONDS = 180
+
+
+def _site_host_ok(platform, url):
+    host = urlparse(url).hostname
+    return host in ({'reddit.com', 'www.reddit.com'} if platform == 'reddit' else {urlparse(SITES[platform]).hostname})
 
 
 def _url(platform, community='FurAI'):
     if platform not in SITES:
         raise NotPublishedError('Неизвестная браузерная площадка')
-    if platform == 'reddit' and community not in SUBREDDITS:
-        raise NotPublishedError('Поддерживаются только r/FurAI и r/aiyiff')
-    return SITES[platform] + (f'/r/{community}/submit' if platform == 'reddit' else '/post/add')
+    if platform == 'reddit' and not valid_community(community):
+        raise NotPublishedError('Некорректное имя сообщества Reddit')
+    return SITES[platform] + (f'/r/{community}/submit/' if platform == 'reddit' else '/compose/post' if platform == 'x' else '/post/add')
+
+
+
+def _open_form(page, target):
+    # Ads and third-party scripts can keep DOMContentLoaded pending even when
+    # the editor is usable. Wait for the document, then for concrete controls.
+    page.goto(target, wait_until='commit', timeout=20000)
 
 
 def _find(candidates, timeout=10):
@@ -37,24 +52,43 @@ def _find(candidates, timeout=10):
 
 def _title(page):
     return _find([page.locator('textarea[name="title"], input[name="title"]'),
-                  page.get_by_role('textbox', name=re.compile(r'^(Title|Заголовок)\*?$', re.I))], timeout=2)
+                  page.get_by_role('textbox', name=re.compile(r'^(Title|Заголовок)\*?$', re.I))], timeout=10)
 
 
 def _joy_form(page):
-    return _find([page.locator('form').filter(has=page.locator('input[name="tags"], textarea[name="tags"], #post_tags'))], timeout=2)
+    return _find([page.locator('form').filter(has=page.locator('input[name="tags"], textarea[name="tags"], #post_tags'))], timeout=10)
+
+
+def _x_editor(page):
+    return _find([page.locator('[data-testid="tweetTextarea_0"][contenteditable="true"]')], timeout=10)
+
+
+def _x_scope(page):
+    """Prefer the open composer dialog over the background timeline composer."""
+    selector = '[data-testid="tweetTextarea_0"][contenteditable="true"]'
+    _find([page.get_by_role('dialog').locator(selector), page.locator(selector)])
+    dialogs = page.get_by_role('dialog').filter(has=page.locator(selector)).filter(visible=True)
+    if dialogs.count() > 1:
+        raise NotPublishedError('Открыто несколько окон редактора X')
+    return dialogs if dialogs.count() == 1 else page
 
 
 def login(platform, report, timeout=600):
     with B.session(headless=False, platform=platform) as (ctx, page):
-        page.goto(_url(platform), wait_until='domcontentloaded')
+        _open_form(page, _url(platform))
         report(progress=.1, message='Войдите на сайт в окне браузера; откройте форму нового поста')
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                if urlparse(page.url).hostname != urlparse(SITES[platform]).hostname:
+                if not _site_host_ok(platform, page.url):
                     time.sleep(.5)
                     continue
-                _title(page) if platform == 'reddit' else _joy_form(page)
+                if platform == 'reddit':
+                    _title(page)
+                elif platform == 'x':
+                    _x_editor(_x_scope(page))
+                else:
+                    _joy_form(page)
                 B.save_cookies(ctx)
                 report(progress=1, message='Форма публикации доступна, вход сохранён')
                 return
@@ -66,6 +100,8 @@ def login(platform, report, timeout=600):
 
 
 def _fill_body(page, scope, text, required=False):
+    if not text and not required:
+        return
     fields = [scope.locator('textarea[name="body"], textarea[name="text"], #post_text'),
               scope.locator('[contenteditable="true"][role="textbox"], [contenteditable="true"].ProseMirror')]
     if scope.locator('iframe.tox-edit-area__iframe').count() == 1:
@@ -74,6 +110,7 @@ def _fill_body(page, scope, text, required=False):
         return
     editor = _find(fields)
     editor.fill(text)  # Playwright fills contenteditable without executing user HTML.
+
 
 
 def _assert_empty_composer(scope, platform):
@@ -97,19 +134,42 @@ def _assert_empty_composer(scope, platform):
 
 def _reddit_labels(page, flair, nsfw):
     # Both controls belong to the same dialog. A missing required control stops the post.
+    if not flair and not nsfw:
+        return
+    already_nsfw = page.get_by_text('NSFW', exact=True).filter(visible=True).count() == 1
     _find([page.get_by_role('button', name=re.compile(r'^(Add flair(?: and tags)?|Добавить фл[еэ]йр.*)\*?$', re.I))]).click()
     dialog = _find([page.get_by_role('dialog')])
     label = flair or 'No flair'
     _find([dialog.get_by_role('radio', name=label, exact=True),
            dialog.get_by_text(label, exact=True)]).click()
-    if nsfw:
+    if nsfw and not already_nsfw:
         checkbox = _find([dialog.get_by_role('checkbox', name=re.compile(r'NSFW|Mature|18\+', re.I))])
         checkbox.set_checked(True)
     _find([dialog.get_by_role('button', name=re.compile(r'^(Apply|Save|Применить|Сохранить)$', re.I))]).click()
     dialog.wait_for(state='hidden')
 
 
-def _attach(page, scope, files, platform):
+def _reddit_inline_attach(page, files, timeout=UPLOAD_WAIT_SECONDS, log=lambda message: None):
+    """Insert images through the text composer's image picker, one at a time."""
+    previews = page.locator('[contenteditable="true"][role="textbox"] img, [contenteditable="true"].ProseMirror img')
+    if previews.count():
+        raise NotPublishedError('В редакторе уже есть изображения — сохраните или очистите черновик')
+    button = _find([page.get_by_role('button', name=re.compile(r'^(?:add|insert|upload) (?:an? )?(?:image|photo)s?$|^(?:image|photo)$|^(?:добавить|вставить|загрузить) изображение$', re.I))])
+    for i, path in enumerate(files):
+        with page.expect_file_chooser(timeout=10000) as pending:
+            button.click()
+        pending.value.set_files(path)
+        log(f'ожидаю подтверждение загрузки изображения {i + 1} из {len(files)} (до {timeout} с)')
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if previews.count() == i + 1 and previews.evaluate_all('imgs=>imgs.every(i=>i.complete && i.naturalWidth>0)'):
+                break
+            page.wait_for_timeout(250)
+        else:
+            raise NotPublishedError(f'За {timeout} с не удалось подтвердить загрузку изображения в текст поста')
+
+
+def _attach(page, scope, files, platform, timeout=UPLOAD_WAIT_SECONDS, log=lambda message: None):
     preview = (scope.locator('[data-testid="media-preview"] img, [data-testid="image-preview"], shreddit-media-editor img')
                if platform == 'reddit' else scope.locator('.uploaded_image img, .post_content img, [contenteditable="true"] img'))
     if preview.count():
@@ -123,26 +183,125 @@ def _attach(page, scope, files, platform):
         preview = scope.locator('.uploaded_image img, .post_content img, [contenteditable="true"] img')
         if scope.locator('iframe.tox-edit-area__iframe').count() == 1:
             preview = scope.frame_locator('iframe.tox-edit-area__iframe').locator('body img')
-    deadline = time.monotonic() + 180
+    log(f'ожидаю подтверждение загрузки изображений (до {timeout} с)')
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if preview.count() == len(files) and preview.evaluate_all('imgs=>imgs.every(i=>i.complete && i.naturalWidth>0)'):
             return
         page.wait_for_timeout(250)
-    raise NotPublishedError('Не удалось подтвердить завершение загрузки изображений')
+    raise NotPublishedError(f'За {timeout} с не удалось подтвердить завершение загрузки изображений')
 
 
 def _post_link(url, platform, community):
     parsed = urlparse(url)
-    if parsed.hostname != urlparse(SITES[platform]).hostname:
+    if not _site_host_ok(platform, url):
         return ''
-    pattern = (rf'/r/{re.escape(community)}/comments/[a-z0-9]+(?:/|$)' if platform == 'reddit' else r'^/post/\d+/?$')
+    pattern = (rf'/r/{re.escape(community)}/comments/[a-z0-9]+(?:/|$)' if platform == 'reddit' else r'^/[A-Za-z0-9_]{1,15}/status/\d+/?$' if platform=='x' else r'^/post/\d+/?$')
     if re.search(pattern, parsed.path, re.I):
         return parsed._replace(query='', fragment='').geturl()
     return ''
 
 
+
+def _x_text(editor):
+    # innerText adds extra line breaks to Chromium's contenteditable div/br
+    # structure. Selection text reflects what copy/paste from the editor yields.
+    return editor.evaluate("""e=>{const selection=getSelection(),old=[];
+      for(let i=0;i<selection.rangeCount;i++)old.push(selection.getRangeAt(i).cloneRange());
+      const range=document.createRange();range.selectNodeContents(e);
+      try{selection.removeAllRanges();selection.addRange(range);return selection.toString();}
+      finally{selection.removeAllRanges();for(const item of old)selection.addRange(item);}}
+    """)
+
+def x_post(files, text, *, dry_run=False, nsfw=False, headless=False, progress=lambda n: None, log=lambda s: None):
+    """Submit once, confirming only a new status link from the success toast."""
+    from app.publish.browser_targets import x_length
+    if nsfw:raise NotPublishedError("X: пока поддерживаются только SFW-публикации")
+    if not text.strip() or x_length(text)>280:raise NotPublishedError("X: текст должен содержать от 1 до 280 взвешенных символов")
+    submitted=False
+    if not 1 <= len(files) <= 4:
+        raise NotPublishedError('X: от 1 до 4 изображений')
+    stage = 'открытие редактора X'
+    browser_wait=DRY_BROWSER_WAIT_SECONDS if dry_run else 600
+    upload_wait=DRY_UPLOAD_WAIT_SECONDS if dry_run else UPLOAD_WAIT_SECONDS
+    log(f'ожидаю свободный браузер (до {browser_wait} с)')
+    with B.session(headless=headless, wait=browser_wait, platform="x") as (ctx, page):
+        try:
+            log('открываю редактор X')
+            _open_form(page, _url('x'))
+            if urlparse(page.url).hostname != 'x.com':
+                raise NotPublishedError('X перенаправил на другой адрес — проверьте вход')
+            stage = 'ожидание редактора X'
+            log('страница открыта; ожидаю редактор X')
+            scope = _x_scope(page)
+            editor = _x_editor(scope)
+            existing = scope.locator('[data-testid="attachments"] img, [data-testid="tweetPhoto"] img')
+            if editor.inner_text().strip() or existing.count():
+                raise NotPublishedError('В редакторе уже есть черновик. Сохраните или очистите его перед проверкой')
+            editor.fill(text)
+            if _x_text(editor)!=text:raise NotPublishedError('X: текст редактора не совпадает с подготовленным')
+            progress(.25)
+            stage = 'загрузка изображения'
+            picker = scope.locator('input[data-testid="fileInput"][type="file"]')
+            if picker.count() != 1:
+                raise NotPublishedError('Не найдено единственное поле загрузки изображений')
+            picker.set_input_files(files)
+            log(f'ожидаю подтверждение загрузки изображения (до {upload_wait} с)')
+            deadline = time.monotonic() + upload_wait
+            while time.monotonic() < deadline:
+                if existing.count() == len(files) and existing.evaluate_all('imgs=>imgs.every(i=>i.complete && i.naturalWidth>0)'):
+                    break
+                page.wait_for_timeout(250)
+            else:
+                raise NotPublishedError(f'За {upload_wait} с не удалось подтвердить загрузку изображения')
+            progress(.8)
+            stage = 'проверка кнопки публикации'
+            button = _find([scope.locator('[data-testid="tweetButton"]'), scope.locator('[data-testid="tweetButtonInline"]')])
+            if not button.is_enabled():
+                raise NotPublishedError('X не разрешает отправку: проверьте форму')
+            if dry_run:
+                shot = B.dump(page, 'x-dry')
+                B.save_cookies(ctx)
+                progress(1)
+                return {'link':'','shot':shot,'note':'Пробный прогон: кнопка публикации не нажималась'}
+            if _x_text(editor)!=text or existing.count()!=len(files):
+                raise NotPublishedError('X: содержимое изменилось перед отправкой')
+            toast=page.locator('[data-testid="toast"]').filter(has_text=re.compile(r'(Your (post|Tweet) was sent|Пост отправлен|Твит отправлен|Ваш[а-я ]* (пост|твит).*отправлен)',re.I))
+            before=set(toast.locator('a[href]').evaluate_all('els=>els.map(e=>e.href)'))
+            submitted=True
+            button.click(timeout=10000)
+            deadline=time.monotonic()+60
+            while time.monotonic()<deadline:
+                # Never take a link from the timeline or an old notification.
+                links={_post_link(url,'x','') for url in toast.locator('a[href]').evaluate_all('els=>els.map(e=>e.href)') if url not in before}-{''}
+                direct=_post_link(page.url,'x','')
+                if direct:links.add(direct)
+                if len(links)==1:
+                    B.save_cookies(ctx);progress(1)
+                    return {'link':links.pop(),'note':''}
+                page.wait_for_timeout(250)
+            raise PublicationUnknown('X: отправка нажата, но ссылка не подтверждена')
+        except Exception as error:
+            try:
+                shot = B.dump(page, 'x-error')
+            except Exception:
+                shot = ''
+            if submitted:
+                raise PublicationUnknown('X: возможно, опубликовано; проверьте сайт перед повтором' + (f' (снимок: {shot})' if shot else '')) from error
+            detail = str(error) if isinstance(error, NotPublishedError) else type(error).__name__
+            raise NotPublishedError(f'{stage}: {detail}' + (f' (снимок: {shot})' if shot else '')) from error
+
+
+
+def x_dry(files, headless=False, progress=lambda n:None, log=lambda s:None):
+    if len(files)!=1:raise NotPublishedError('Для пробы X нужно одно тестовое изображение')
+    return x_post(files,'Crosspost test — not published',dry_run=True,headless=headless,progress=progress,log=log)
+
+
 def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=False,
          tags=None, dry_run=False, headless=False, progress=lambda n: None, log=lambda s: None):
+    if platform == 'x':
+        return x_post(files,'\n\n'.join(part for part in (title,text) if part),dry_run=dry_run,nsfw=nsfw,headless=headless,progress=progress,log=log)
     target = _url(platform, community)
     if not files or len(files) > (10 if platform == 'reddit' else 1):
         raise NotPublishedError('Reddit: 1–10 изображений; JoyReactor: пока одно изображение')
@@ -151,29 +310,53 @@ def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=Fals
     if platform == 'joyreactor' and not tags:
         raise NotPublishedError('Для JoyReactor нужны теги')
     submitted = False
-    with B.session(headless=headless, platform=platform) as (ctx, page):
+    stage = 'открытие формы'
+    if dry_run:
+        log(f'ожидаю свободный браузер (до {DRY_BROWSER_WAIT_SECONDS} с)')
+    with B.session(headless=headless, wait=DRY_BROWSER_WAIT_SECONDS if dry_run else 600, platform=platform) as (ctx, page):
         try:
             log('открываю форму публикации')
-            page.goto(target, wait_until='domcontentloaded')
-            if urlparse(page.url).hostname != urlparse(target).hostname:
+            _open_form(page, target)
+            if not _site_host_ok(platform, page.url):
                 raise NotPublishedError('Сайт перенаправил на другой адрес — проверьте вход')
+            log('страница открыта; ожидаю поля формы')
             if platform == 'reddit':
+                stage = 'проверка сообщества'
+                if not re.match(rf'^/r/{re.escape(community)}/submit/?$', urlparse(page.url).path, re.I):
+                    raise NotPublishedError(f'Не удалось подтвердить выбранное сообщество r/{community}')
+                stage = 'проверка существующего черновика'
                 _title(page)
                 _assert_empty_composer(page, platform)
-                _find([page.get_by_role('tab', name=re.compile(r'^(Images(?: & Video)?|Изображения.*)$', re.I))]).click()
+                stage = 'выбор режима изображений'
+                image_tab = re.compile(r'^(Images(?:\s*(?:&|and)\s*Video)?|Изображения(?:\s*и\s*видео)?)$', re.I)
+                try:
+                    _find([page.get_by_role('tab', name=image_tab), page.get_by_role('button', name=image_tab),
+                           page.get_by_role('link', name=image_tab)], timeout=10).click()
+                    inline = False
+                except NotPublishedError:
+                    inline = True
+                stage = 'заполнение заголовка'
                 _title(page).fill(title)
                 scope = page
+                stage = 'заполнение текста'
                 _fill_body(page, scope, text)
+                stage = 'выбор flair и отметки NSFW'
                 _reddit_labels(page, flair, nsfw)
             else:
+                stage = 'заполнение формы JoyReactor'
                 scope = _joy_form(page)
                 _assert_empty_composer(scope, platform)
                 _fill_body(page, scope, '\n\n'.join(part for part in (title, text) if part), required=True)
                 _find([scope.locator('input[name="tags"], textarea[name="tags"], #post_tags')]).fill(', '.join(tags))
             progress(.2)
             log('загружаю изображения')
-            _attach(page, scope, files, platform)
+            stage = 'загрузка изображений'
+            if platform == 'reddit' and inline:
+                _reddit_inline_attach(page, files, timeout=DRY_UPLOAD_WAIT_SECONDS if dry_run else UPLOAD_WAIT_SECONDS, log=log)
+            else:
+                _attach(page, scope, files, platform, timeout=DRY_UPLOAD_WAIT_SECONDS if dry_run else UPLOAD_WAIT_SECONDS, log=log)
             progress(.75)
+            stage = 'поиск кнопки публикации'
             button = _find([scope.get_by_role('button', name=re.compile(r'^(Post|Publish|Опубликовать|Отправить)$', re.I))])
             if not button.is_enabled():
                 raise NotPublishedError('Сайт не разрешает отправку: проверьте поля, flair и теги')
@@ -204,12 +387,15 @@ def post(platform, files, title, text, *, community='FurAI', flair='', nsfw=Fals
                 page.wait_for_timeout(500)
             raise PublicationUnknown('Кнопка нажата, но ссылка не подтверждена. Проверьте сайт перед повтором')
         except Exception as error:
+            shot = ''
             try:
-                B.dump(page, platform + '-error')
+                shot = B.dump(page, platform + '-error')
             except Exception:
                 pass
             if submitted:
                 raise PublicationUnknown('Возможно, опубликовано. Проверьте сайт перед повтором') from error
             if isinstance(error, NotPublishedError):
-                raise
-            raise NotPublishedError(f'Браузерная публикация не началась: {type(error).__name__}') from error
+                detail = str(error)
+            else:
+                detail = f'{type(error).__name__}'
+            raise NotPublishedError(f'{stage}: {detail}' + (f' (снимок: {shot})' if shot else '')) from error

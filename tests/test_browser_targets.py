@@ -93,8 +93,24 @@ class BrowserTargets(unittest.TestCase):
         self.assertEqual(BT.joy_tags(cfg, self.draft, [self.uid]), ['AI Art', 'furry', 'без обнажения', 'мужской персонаж'])
         self.assertNotIn('male/male', BT.joy_tags(cfg, self.draft, [self.uid]))
 
+    def test_additional_community_has_independent_destination_and_manual_flair(self):
+        from app.publish import drafts, templates
+        self.reddit()
+        changes = BT.validate_changes('reddit', {'communities': {'ArtCommunity': True}})
+        self.settings.update('reddit', changes)
+        self.draft['reddit_flairs'] = {'ArtCommunity': 'Original artwork'}
+        dest = next(d for d in self.runner.plan(self.draft)['dests'] if d['key'] == 'reddit:ArtCommunity')
+        self.assertTrue(dest['will'])
+        self.assertEqual(dest['flair'], 'Original artwork')
+        self.assertEqual(drafts.content(self.draft)['reddit_flairs']['ArtCommunity'], 'Original artwork')
+        self.assertIn('reddit:ArtCommunity', templates._targets(self.settings.load()))
+        self.assertEqual(BT.reddit_flair(self.settings.load(), {}, 'ArtCommunity', []), '')
+        for bad in ('../admin', 'reddit.com/evil', '__proto__', 'x' * 22):
+            with self.assertRaises(ValueError):
+                BT.validate_changes('reddit', {'communities': {bad: True}})
+
     def test_settings_cannot_forge_login_or_inject_unlisted_communities(self):
-        for changes in ({'browser_ok': True}, {'base': 'https://example.invalid'}, {'communities': {'unexpected': True}}, {'flair_rules': [{'all': ['male'], 'flair': 'invented'}]}):
+        for changes in ({'browser_ok': True}, {'base': 'https://example.invalid'}, {'communities': {'bad/name': True}}, {'flair_rules': [{'all': ['male'], 'flair': 'invented'}]}):
             with self.assertRaises(ValueError):
                 BT.validate_changes('reddit', changes)
         with self.assertRaises(ValueError):

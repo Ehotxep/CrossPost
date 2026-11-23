@@ -21,6 +21,7 @@ from app.jobs import Cancelled, mask_secrets
 from app.paths import data_dir
 from app.publish import settings as S
 from app.publish import e6ai as E6
+from app.publish import booru as B
 from app.publish import hashtags as HT
 from app.publish import prep, tg_bot, uploads
 from core.common import PlatformError, NotPublishedError
@@ -59,7 +60,7 @@ def done_keys(pub_id) -> set:
     row = _pub_row(pub_id)
     if not row:
         raise PlatformError("Публикация не найдена")
-    return {d["key"] for d in json.loads(row["dests"] or "[]") if d.get("state") == "done"}
+    return {d["key"] for d in B.destinations(row["dests"]) if d.get("state") == "done"}
 
 
 def extend_draft(pub_id) -> dict:
@@ -73,7 +74,7 @@ def extend_draft(pub_id) -> dict:
         d = None
     if not isinstance(d, dict):   # опубликовано до этой версии — восстанавливаем, что можем
         d = {"title": row["title"] or "", "text": row["text"] or "", "rating": row["rating"], "signature": True,
-             "exclude": ["e6ai"], "hashtags": None, "e6ai_tags": {}, "e6ai_meta": {},
+             "exclude": list(B.PLATFORMS), "hashtags": None, "e6ai_tags": {}, "e6ai_meta": {},
              "files": [f["id"] if isinstance(f, dict) else f for f in json.loads(row["files"] or "[]")]}
     files, missing = [], []
     names = {f["id"]: f.get("name", "") for f in json.loads(row["files"] or "[]") if isinstance(f, dict)}
@@ -85,7 +86,7 @@ def extend_draft(pub_id) -> dict:
                           "size": info["size"], "duration": info.get("duration"), "format": info.get("format", "")})
         except Exception:  # noqa: BLE001 — оригинал уже удалён (хранится неделю после публикации)
             missing.append(names.get(uid) or uid)
-    dests = json.loads(row["dests"] or "[]")
+    dests = B.destinations(row["dests"])
     return {"pub_id": int(pub_id), "title": row["title"] or "", "files": files, "missing": missing,
             "done": [x["name"] for x in dests if x.get("state") == "done"],
             "failed": [x["name"] for x in dests if x.get("state") == "error"],
@@ -144,15 +145,17 @@ def _kind(files) -> str:
     return "mixed"
 
 
-def e6_tags(cfg, draft, file_id: str) -> list[str]:
-    """Итоговые теги картинки для e6ai: постоянные из настроек + выбранные в посте."""
-    chosen = ((draft.get("e6ai_tags") or {}).get(file_id)) or []
+def e6_tags(cfg, draft, file_id: str, platform="e6ai") -> list[str]:
+    """Tags and aliases belong to the destination, never to a global site selector."""
+    chosen = (B.fields(cfg, draft, platform).get("tags") or {}).get(file_id) or []
     from app import e6tags
-    tags = E6.clean_tags(list(cfg["e6ai"].get("constant_tags") or []) + list(chosen))
-    if e6tags.ready():   # старые названия → действующие (loona → loona_(helluva_boss)), без «родителей»
-        tags = E6.clean_tags([i["name"] for i in e6tags.info(tags).values()])
-        tags = e6tags.drop_implied(tags, keep=E6.clean_tags(cfg["e6ai"].get("constant_tags") or []))
-    try:   # анимации e6ai требует помечать тегом animated
+    consts = E6.clean_tags(cfg[platform].get("constant_tags") or [])
+    tags = E6.clean_tags(consts + list(chosen))
+    with B.tag_context(platform):
+        if e6tags.ready():
+            tags = E6.clean_tags([i["name"] for i in e6tags.info(tags).values()])
+            tags = e6tags.drop_implied(tags, keep=consts)
+    try:
         if uploads.describe(uploads.path_of(file_id))["kind"] in ("gif", "video") and "animated" not in tags:
             tags.append("animated")
     except (ValueError, OSError):
@@ -173,18 +176,26 @@ def signature(cfg, platform: str, rating: str | None, lang: str = "main") -> str
     return (sg.get("nsfw" if rating and rating != "sfw" else "sfw") or "").strip()
 
 
-LANGS = ("main", "en")
+LANGS = ("main", "en", "both")
 
 
 def variant(cfg, draft, platform: str) -> tuple[str, str, str]:
     """(заголовок, текст, язык) для площадки: английский вариант, если площадка на него настроена и он заполнен, иначе основной."""
     lang = (cfg.get("text_lang") or {}).get(platform, "main") if (cfg.get("modules") or {}).get("translation") else "main"
     title, text, used = (draft.get("title") or "").strip(), (draft.get("text") or "").strip(), "main"
-    if lang in LANGS and lang != "main":
+    if lang == "both":
+        english = (draft.get("variants") or {}).get("en") or {}
+        en_title, en_text = (english.get("title") or "").strip(), (english.get("text") or "").strip()
+        title = " / ".join(dict.fromkeys(part for part in (title, en_title) if part))
+        text = "\n\n".join(dict.fromkeys(part for part in (text, en_text) if part))
+        if en_title or en_text:
+            used = "both"
+    elif lang == "en":
         v = (draft.get("variants") or {}).get(lang) or {}
         if (v.get("text") or "").strip() or (v.get("title") or "").strip():
             title, text, used = (v.get("title") or "").strip(), (v.get("text") or "").strip(), lang
-    custom = (draft.get('platform_texts') or {}).get(platform) or {}
+    key = 'e6ai' if not isinstance(draft.get('booru_posts'), dict) and platform == cfg.get('legacy_booru_site', 'e6ai') else platform
+    custom = (draft.get('platform_texts') or {}).get(key) or {}
     if (cfg.get('platform_texts_enabled') or {}).get(platform) is True and custom.get('enabled'):
         title, text = custom.get('title', title).strip(), custom.get('text', text).strip()
     return title, text, used
@@ -264,13 +275,13 @@ def plan(draft: dict) -> dict:
         return True, why or ""
     what_anim = ("GIF" if kind == "gif" else "видео") + (f" {round(ainfo['duration'])} с" if ainfo.get("duration") else "")
     mature = rating in ("erotic", "explicit")
-    off = set(draft.get("exclude") or [])
+    off = B.excludes(cfg, draft)
     done = set()
     uncertain = set()
     if draft.get("extend"):   # досылка к уже опубликованному посту: где он уже вышел — не трогаем
         done = done_keys(draft["extend"])
         row = _pub_row(int(draft["extend"]))
-        uncertain = {d["key"] for d in json.loads(row["dests"] or "[]") if needs_verification(d)} if row else set()
+        uncertain = {d["key"] for d in B.destinations(row["dests"]) if needs_verification(d)} if row else set()
         off |= done
         off |= uncertain
     dests = []
@@ -285,8 +296,8 @@ def plan(draft: dict) -> dict:
             details = list(details or []) + [f"{len(files)} из {len(all_files)} файлов" + (f" · версии: {', '.join(vs)}" if vs else "")]
         if will and want != "main":   # площадка настроена на английский текст
             _, _, got = variant(cfg, draft, platform)
-            details = list(details or []) + (["текст: English"] if got != "main" else ["⚠ английский текст не заполнен — уйдёт основной"])
-            if (got != "main" and draft.get("signature", True) and cfg["signatures"]["use"].get(platform, True)
+            details = list(details or []) + (["текст: RU + EN" if got == "both" else "текст: English"] if got != "main" else ["⚠ английский текст не заполнен — уйдёт основной"])
+            if (got == "en" and draft.get("signature", True) and cfg["signatures"]["use"].get(platform, True)
                     and signature(cfg, platform, rating) and not has_en_signature(cfg, platform)):
                 details.append("подпись: основная (английской нет)")
         dests.append({"key": key, "platform": platform, "name": name, "will": will and not user_off,
@@ -390,24 +401,24 @@ def plan(draft: dict) -> dict:
 
     # Experimental browser destinations: each subreddit has its own result/retry key.
     from app.publish import browser_targets as BT
-    for platform in ('reddit', 'joyreactor'):
+    for platform in ('reddit', 'joyreactor', 'x'):
         use(platform)
         options = cfg[platform]
         if not options['enabled']:
             continue
         configured.append(platform)
-        communities = [n for n in BT.SUBREDDITS if options['communities'].get(n)] if platform == 'reddit' else ['']
+        communities = [n for n, enabled in options['communities'].items() if enabled and BT.valid_community(n)] if platform == 'reddit' else ['']
         for community in communities:
             key = f'reddit:{community}' if community else platform
-            name = f'Reddit · r/{community}' if community else 'JoyReactor'
+            name = f'Reddit · r/{community}' if community else ('X' if platform=='x' else 'JoyReactor')
             details, reason, flair, tags = [], '', '', []
             try:
                 if not options.get('browser_ok'):
                     raise ValueError('не выполнен вход через браузер — откройте настройки площадки')
                 if kind != 'images':
                     raise ValueError('пока поддерживаются только изображения')
-                if n_img > (10 if platform == 'reddit' else 1):
-                    raise ValueError('Reddit: до 10 изображений; JoyReactor: пока одно изображение')
+                if n_img > (10 if platform == 'reddit' else 4 if platform=='x' else 1):
+                    raise ValueError('Reddit: до 10 изображений; X: до 4; JoyReactor: пока одно изображение')
                 ids = [f['id'] for f in files]
                 if platform == 'reddit':
                     title = title_for(cfg, draft, platform)
@@ -415,6 +426,12 @@ def plan(draft: dict) -> dict:
                         raise ValueError('заголовок Reddit должен содержать от 1 до 300 символов')
                     flair = BT.reddit_flair(cfg, draft, community, ids)
                     details = [f'flair: {flair or "без flair"}', 'NSFW' if mature else 'SFW']
+                elif platform=='x':
+                    if mature:raise ValueError('X: пока поддерживаются только SFW-публикации')
+                    content='\n\n'.join(part for part in (title_for(cfg,draft,'x') if options.get('include_title',True) else '',signed_text(cfg,draft,'x')) if part)
+                    length=BT.x_length(content)
+                    if not content.strip() or length>280:raise ValueError(f'X: текст {length}/280 символов; сократите текст')
+                    details=[f'{n_img} JPEG-превью',f'текст {length}/280', 'SFW']
                 else:
                     tags = BT.joy_tags(cfg, draft, ids)
                     details = ['теги: ' + ', '.join(tags)]
@@ -454,10 +471,11 @@ def plan(draft: dict) -> dict:
     # DeviantArt
     use("deviantart")
     da = cfg["deviantart"]
+    from app.publish.da_access import requested
     da_tok = core_common.load_token("deviantart") or {}
     if da.get("enabled") and da_tok.get("access_token"):
         configured.append("deviantart")
-        name = f"DeviantArt · {da_tok.get('username') or 'аккаунт'}"
+        name = "DeviantArt · черновики Sta.sh" if requested(da) else f"DeviantArt · {da_tok.get('username') or 'аккаунт'}"
         if rating == "explicit":
             add("deviantart", "deviantart", name, False, "откровенное запрещено правилами DeviantArt", toggle=False)
         elif not _allowed(da.get("rating"), mature):
@@ -469,50 +487,64 @@ def plan(draft: dict) -> dict:
         else:
             n = len(files)
             what = "GIF" if kind == "gif" else (f"{n} работ{'а' if n == 1 else 'ы' if n < 5 else ''}" + (" PNG-оригиналами" if da.get("originals", True) else " JPEG-превью"))
-            add("deviantart", "deviantart", name, True, details=[what + (" · Mature" if mature else "") + (" · отмечено как ИИ" if da.get("is_ai_generated", True) else "")])
+            if requested(da):
+                media = "JPEG-превью" if kind == "images" and da.get("premium_download") else "файлы работ"
+                what = f"{n} · {media} в Sta.sh, публикация вручную"
+            access = ""
+            if da.get("premium_download") and da.get("premium_price_usd"):
+                access += f" · цена вручную: {da['premium_price_usd']} USD"
+            if da.get("subscriber_only") and da.get("subscriber_tiers"):
+                access += " · тиры вручную: " + ", ".join(da["subscriber_tiers"])
+            add("deviantart", "deviantart", name, True, details=[what + (" · Mature" if mature else "") + (" · отмечено как ИИ" if da.get("is_ai_generated", True) else "") + access])
+            if requested(da):
+                dests[-1]["stash_options"] = {field: da.get(field) for field in
+                    ("premium_download", "subscriber_only", "premium_price_usd", "subscriber_tiers")}
 
-    # e6ai — последним: в источники пойдут ссылки на уже вышедшие посты
-    use("e6ai")
-    e6 = cfg["e6ai"]
-    if e6.get("enabled") and e6.get("username") and e6.get("api_key"):
-        configured.append("e6ai")
-        name = f"{E6.name(e6)} · {e6['username']}"
-        ok6, why6 = media_need("e6ai") if anim else (True, "")
-        if not ok6:
-            add("e6ai", "e6ai", name, False, why6, toggle=False)
-        elif files:
-            from app.publish import e6check
-            per = [e6_tags(cfg, draft, f["id"]) for f in files]
-            metas = draft.get("e6ai_meta") or {}
-            checks = [e6check.check((draft.get("e6ai_tags") or {}).get(f["id"]) or [],
-                                    list(cfg["e6ai"].get("constant_tags") or []) + (["animated"] if f["kind"] in ("gif", "video") else []),
-                                    metas.get(f["id"]), rating) for f in files]
-            few = [f["name"] for f, t in zip(files, per) if len(t) < E6.MIN_TAGS]
-            need = []
-            legacy = "e6ai_meta" not in draft   # запланировано до появления проверки — как раньше
-            for f, c in zip(files, checks):
-                for b in ([] if legacy else e6check.blockers(c)):
-                    label = b + (f" ({f['name']})" if len(files) > 1 else "")
-                    if label not in need:
-                        need.append(label)
-            if few and not need:
-                need.append(f"хотя бы {E6.MIN_TAGS} тега")
-            if need:
-                short = need if len(need) <= 4 else need[:4] + [f"ещё {len(need) - 4}"]
-                add("e6ai", "e6ai", name, False, "нужно: " + ", ".join(short), need=need)
-                if "e6ai" not in off and not draft.get("_scheduled_run"):   # в запланированном — просто пропустим e6ai
-                    errors.append(f"{E6.name(e6)}: теги не готовы — нужно: " + ", ".join(short) + f". Заполните форму тегов или выключите {E6.name(e6)} для этого поста")
-            else:
-                n = len(files)
-                add("e6ai", "e6ai", name, True, details=[
-                    (what_anim + (f" · {why6}" if why6 else " как есть") if anim else
-                     f"{n} оригинал{'' if n == 1 else 'а' if n < 5 else 'ов'} без сжатия" + (", связаны как родитель/дети" if n > 1 else "")),
-                    f"рейтинг {E6.RATING.get(rating, '?')}", f"тегов: {min(c['total'] for c in checks)}" + (f"–{max(c['total'] for c in checks)}" if n > 1 else "")])
-        else:
-            add("e6ai", "e6ai", name, True)
+
+    # Each booru is an independent target. Its tags are validated against its own database.
+    for platform in B.PLATFORMS:
+        with B.tag_context(platform):
+            use(platform)
+            e6 = cfg[platform]
+            if e6.get("enabled") and e6.get("username") and e6.get("api_key"):
+                configured.append(platform)
+                name = f"{E6.name(e6)} · {e6['username']}"
+                ok6, why6 = media_need(platform) if anim else (True, "")
+                if not ok6:
+                    add(platform, platform, name, False, why6, toggle=False)
+                elif files:
+                    from app.publish import e6check
+                    per = [e6_tags(cfg, draft, f["id"], platform) for f in files]
+                    metas = B.fields(cfg, draft, platform).get("meta") or {}
+                    checks = [e6check.check((B.fields(cfg, draft, platform).get("tags") or {}).get(f["id"]) or [],
+                                            list(cfg[platform].get("constant_tags") or []) + (["animated"] if f["kind"] in ("gif", "video") else []),
+                                            metas.get(f["id"]), rating) for f in files]
+                    few = [f["name"] for f, t in zip(files, per) if len(t) < E6.MIN_TAGS]
+                    need = []
+                    legacy = "e6ai_meta" not in draft and "booru_posts" not in draft   # запланировано до появления проверки — как раньше
+                    for f, c in zip(files, checks):
+                        for b in ([] if legacy else e6check.blockers(c)):
+                            label = b + (f" ({f['name']})" if len(files) > 1 else "")
+                            if label not in need:
+                                need.append(label)
+                    if few and not need:
+                        need.append(f"хотя бы {E6.MIN_TAGS} тега")
+                    if need:
+                        short = need if len(need) <= 4 else need[:4] + [f"ещё {len(need) - 4}"]
+                        add(platform, platform, name, False, "нужно: " + ", ".join(short), need=need)
+                        if platform not in off and not draft.get("_scheduled_run"):   # в запланированном — просто пропустим e6ai
+                            errors.append(f"{E6.name(e6)}: теги не готовы — нужно: " + ", ".join(short) + f". Заполните форму тегов или выключите {E6.name(e6)} для этого поста")
+                    else:
+                        n = len(files)
+                        add(platform, platform, name, True, details=[
+                            (what_anim + (f" · {why6}" if why6 else " как есть") if anim else
+                             f"{n} оригинал{'' if n == 1 else 'а' if n < 5 else 'ов'} без сжатия" + (", связаны как родитель/дети" if n > 1 else "")),
+                            f"рейтинг {E6.RATING.get(rating, '?')}", f"тегов: {min(c['total'] for c in checks)}" + (f"–{max(c['total'] for c in checks)}" if n > 1 else "")])
+                else:
+                    add(platform, platform, name, True)
 
     missing = [n for k, n in (("telegram", "Telegram"), ("discord", "Discord"), ("vk", "ВКонтакте"), ("bluesky", "Bluesky"),
-                              ("deviantart", "DeviantArt"), ("e6ai", ("e621" if cfg["e6ai"].get("site_name") == "e621" else "blep")), ("reddit", "Reddit"), ("joyreactor", "JoyReactor"))
+                              ("deviantart", "DeviantArt"), ("e6ai", "blep.art"), ("e621", "e621"), ("floofgens", "floofgens.net"), ("reddit", "Reddit"), ("joyreactor", "JoyReactor"), ("x", "X"))
                if k not in configured and cfg["modules"].get(k, True)]
     if not configured:
         errors.append("Ни одна площадка не настроена — откройте «Настройки» → «Публикация»")
@@ -525,7 +557,7 @@ def plan(draft: dict) -> dict:
         if d["key"] in uncertain:
             d.update(will=False, can_toggle=False, reason="возможно, опубликовано — проверьте площадку; повтор доступен на экране публикации после подтверждения")
         if d["key"] in done:
-            d.update(will=False, off=False, can_toggle=False, need=[], done=True, reason="уже опубликовано")
+            d.update(will=False, off=False, can_toggle=False, need=[], done=True, reason="черновики уже подготовлены" if d.get("stash_options") else "уже опубликовано")
     will = [d for d in dests if d["will"]]
     if done and files and not will:
         errors.append("Новых мест нет — включите площадку, куда дослать пост")
@@ -533,7 +565,7 @@ def plan(draft: dict) -> dict:
         errors.append("С этим рейтингом пост никуда не уйдёт")
     return {"kind": _kind(all_files) if all_files else "images", "mature": mature, "rating": rating, "dests": dests, "errors": errors,
             "not_configured": missing, "configured": configured, "notes": notes,
-            "texts": {p: signed_text(cfg, draft, p) for p in tuple(p for p in S.PLATFORM_MODULES if p != "e6ai")},
+            "texts": {p: signed_text(cfg, draft, p) for p in tuple(p for p in S.PLATFORM_MODULES if p not in B.PLATFORMS)},
             # заголовок и язык текста каждой площадки: предпросмотр показывает ровно то, что уйдёт
             "titles": {p: title_for(cfg, draft, p) for p in S.PLATFORM_MODULES},
             "base_texts": {p: variant(cfg, draft, p)[1] for p in S.PLATFORM_MODULES},
@@ -596,6 +628,13 @@ def _save_pub():
                 # Связь фиксируется до первой отправки: после падения процесса отсутствие
                 # результата нельзя принять за гарантированный отказ и повторить пост.
                 c.execute("UPDATE scheduled SET pub_id=? WHERE id=?", (cur.lastrowid, sid))
+
+
+def _da_paid_checkpoint(key, items):
+    # Persist each confirmed work before starting another file in the batch.
+    _set(key, paid_confirmed=items,
+         link=next((r['url'] for r in items.values() if r.get('url')), ''))
+    _save_pub()
 
 
 UNATTENDED_WAIT = 45 * 60   # публикация по расписанию без человека: повторы загрузки PNG не дольше 45 минут
@@ -669,7 +708,7 @@ def extend(draft: dict, report) -> None:
         raise PlatformError(p["errors"][0])
     new = [dict(d, state="queued", message="", link="", note="") for d in p["dests"] if d["will"]]
     keys = {d["key"] for d in new}
-    old = [d for d in json.loads(row["dests"] or "[]") if d["key"] not in keys]   # прежние ошибки на этих местах заменятся
+    old = [d for d in B.destinations(row["dests"]) if d["key"] not in keys]   # прежние ошибки на этих местах заменятся
     clean = {k: v for k, v in draft.items() if k != "extend"}
     with _state_lock:
         _state.clear()
@@ -742,7 +781,7 @@ def _load_pub(pub_id: int) -> None:
         _state.clear()
         _state.update({"pub_id": int(pub_id), "created": row["created"], "title": row["title"] or "", "text": row["text"] or "",
                        "rating": row["rating"], "files": json.loads(row["files"] or "[]"), "draft": draft or {},
-                       "dests": json.loads(row["dests"] or "[]"), "skipped": [], "running": False, "kind": ""})
+                       "dests": B.destinations(row["dests"]), "skipped": [], "running": False, "kind": ""})
 
 
 def resend_originals(pub_id: int, report) -> None:
@@ -802,7 +841,7 @@ def retry(report, confirm_unknown: bool = False, pub_id: int | None = None) -> N
         draft = json.loads(row.get("draft") or "null")
         if not isinstance(draft, dict):
             raise PlatformError("Черновик публикации не сохранён — автоматический повтор недоступен")
-        dests = json.loads(row["dests"] or "[]")
+        dests = B.destinations(row["dests"])
         with _state_lock:
             _state.clear()
             _state.update(dict(row, pub_id=row["id"], draft=draft, dests=dests,
@@ -854,7 +893,7 @@ def _run(draft, report, only):
         info = uploads.probe_cached(f["path"]) if f["kind"] == "video" else {}
         if not M.need_for(platform, f, info, limit):
             return f["path"], f["kind"], info
-        if platform == "e6ai":
+        if platform in B.PLATFORMS:
             return M.to_webm(f["id"], f["path"], log), "video", info
         big = limit and f["size"] > limit
         out = M.to_mp4(f["id"], f["path"], limit if big else None, log)
@@ -876,6 +915,8 @@ def _run(draft, report, only):
         elif platform == "bluesky":
             from platforms import bluesky as BS
             m = [prep.get_light(f["id"], f["path"], light, max_bytes=BS.IMAGE_MAX_BYTES) for f in files[:BS.MAX_IMAGES]]
+        elif platform == "x":
+            m = [prep.get_light(f["id"], f["path"], light, max_bytes=5*1024*1024) for f in files]
         elif platform == "telegram":
             if kind == "images":
                 m = {"kind": "images",
@@ -925,6 +966,7 @@ def _run(draft, report, only):
                     ch = tg["channels"][int(key.split(":")[1])]
                     def on_posted(out, _key=key):   # пост вышел — ссылка сразу, оригиналы догружаются следом
                         _set(_key, link=out["link"], chat_id=out["chat_id"], message_ids=out["message_ids"],
+                             **{k: v for k, v in out.items() if k.startswith("edit_")},
                              message="пост вышел, догружаю PNG-оригиналы…")
                         posted[_key].set()
                     try:
@@ -943,6 +985,7 @@ def _run(draft, report, only):
                                                max_wait=UNATTENDED_WAIT if draft.get("_scheduled_run") else None)
                     _set(key, state="done", message="", link=res["link"], note=res["note"],
                          chat_id=res["chat_id"], message_ids=res["message_ids"],
+                         **{k: v for k, v in res.items() if k.startswith("edit_")},
                          originals_pending=bool(res.get("originals_failed")))
                 elif key == "telegram:group":
                     if d.get("src") in posted:   # ждём только сам пост в канале, не оригиналы
@@ -965,23 +1008,23 @@ def _run(draft, report, only):
                     _set(key, message="отправляю…"); prog(0.3)
                     D.post(dict(dc, webhook_urls=[w["url"]]), media, post)
                     _set(key, state="done", message="", note="отправлено в канал")
-                elif key == "e6ai":
-                    e6 = cfg["e6ai"]
+                elif key in B.PLATFORMS:
+                    e6 = cfg[key]
+                    if not e6.get("enabled") or not e6.get("username") or not e6.get("api_key"):
+                        raise NotPublishedError(f"{E6.name(e6)}: площадка выключена или не подключена")
                     cur = state()
-                    sources = []
-                    if e6.get("with_sources", True):   # публичные ссылки на этот пост в других местах
-                        sources = [x["link"] for x in cur["dests"] if x["state"] == "done" and str(x.get("link", "")).startswith("http")
-                                   and "/c/" not in x["link"] and x["key"] != "e6ai"]
+                    sources = B.sources_for(cfg, key, cur["dests"])
                     desc = ""
                     if e6.get("with_description", True):
-                        e_title, t, _ = variant(cfg, draft, "e6ai")
+                        e_title, t, _ = variant(cfg, draft, key)
                         desc = ((f"[b]{e_title}[/b]\n" if e_title else "") + t).strip()
-                    parent, first, dup = None, None, 0
+                    parent, first, dup, recovered = None, None, 0, 0
+                    post_refs = []
                     for i, f in enumerate(files):
                         _set(key, message=f"загружаю оригинал {i + 1} из {len(files)}…")
-                        tags6 = e6_tags(cfg, draft, f["id"])
+                        tags6 = e6_tags(cfg, draft, f["id"], key)
                         if kind in ("gif", "video"):
-                            path, _, _ = anim_file("e6ai", log=lambda m: _set(key, message=m + "…"))
+                            path, _, _ = anim_file(key, log=lambda m: _set(key, message=m + "…"))
                             _set(key, message=f"загружаю на {E6.name(e6)}…")
                             try:
                                 res = E6.upload(e6, str(path), tags6, draft["rating"], sources, desc, parent, Path(f["name"]).stem + path.suffix)
@@ -997,16 +1040,22 @@ def _run(draft, report, only):
                         if not res.get("duplicate"):   # через сутки сверим с правками модераторов
                             try:
                                 from app.insights import e6learn
-                                e6learn.record(state()["pub_id"], res["post_id"], tags6 if kind in ("gif", "video") else e6_tags(cfg, draft, f["id"]), "e621" if cfg["e6ai"].get("site_name") == "e621" else "blep")
+                                e6learn.record(state()["pub_id"], res["post_id"], tags6 if kind in ("gif", "video") else e6_tags(cfg, draft, f["id"], key),
+                                               E6.history_site(e6))
                             except Exception:
                                 from app.applog import log
                                 log("e6ai: не удалось запомнить загрузку для сверки правок")
+                        post_refs.append({'post_id':res['post_id'], 'url':res['url'], 'sent_at':datetime.now(timezone.utc).isoformat(), 'duplicate':bool(res.get('duplicate'))})
+                        _set(key, post_refs=list(post_refs))
+                        _save_pub()   # Keep confirmed remote IDs even if a later image fails.
                         parent = parent or res["post_id"]
                         first = first or res["url"]
                         dup += res["duplicate"]
+                        recovered += bool(res.get("recovered"))
                         prog((i + 1) / len(files))
                     _set(key, state="done", message="", link=first or "",
-                         note=(f"{len(files)} {'поста' if len(files) < 5 else 'постов'}, связаны как родитель/дети" if len(files) > 1 else "") + (f"; уже были на {E6.name(e6)}: {dup}" if dup else ""))
+                         note=(f"{len(files)} {'поста' if len(files) < 5 else 'постов'}, связаны как родитель/дети" if len(files) > 1 else "") + (f"; уже присутствуют на {E6.name(e6)}: {dup}" if dup else "") +
+                              (f"; после обрыва найдены по хешу файла: {recovered}; проверьте теги, описание и родительский пост" if recovered else ""))
                 elif key == "bluesky":
                     from platforms import bluesky as BS
                     bs = cfg["bluesky"]
@@ -1029,9 +1078,22 @@ def _run(draft, report, only):
                 elif key == "deviantart":
                     from platforms import deviantart as DA
                     da = cfg["deviantart"]
+                    from app.publish.da_access import requested
+                    current = next(x for x in state()["dests"] if x["key"] == key)
+                    if current.get("stash_options"):
+                        da = dict(da, **current["stash_options"])
+                    paid = requested(da)
+                    if current.get("paid_confirmed"):
+                        raise NotPublishedError("Часть работ уже опубликована старым способом. Проверьте DeviantArt перед новой отправкой")
+                    if paid:
+                        _set(key, stash_options={field: da.get(field) for field in
+                             ("premium_download", "subscriber_only", "premium_price_usd", "subscriber_tiers")})
+                        _save_pub()
                     up = []
                     for f in files:
-                        if kind == "images" and not (da.get("originals", True) and f["size"] <= DA.FILE_MAX_BYTES):
+                        if kind == "images" and (
+                                (paid and da.get("premium_download")) or f["size"] > DA.FILE_MAX_BYTES
+                                or (not paid and not da.get("originals", True))):
                             im = prep.get_light(f["id"], f["path"], cfg["light"], max_bytes=DA.FILE_MAX_BYTES)
                             up.append((Path(f["name"]).stem + ".jpg", im.data, im.mime))
                         else:
@@ -1041,11 +1103,22 @@ def _run(draft, report, only):
                     tags = HT.final(cfg, draft) if da.get("tags_from", "hashtags") == "hashtags" else []
                     tags = [t for t in tags if t.lower() not in ("sfw", "nsfw")]
                     _set(key, message="загружаю на DeviantArt…"); prog(0.1)
+                    def checkpoint(items):
+                        _set(key, stash_drafts=items)
+                        _save_pub()
+
+                    kwargs = {"already": current.get("stash_drafts", {}), "confirmed": checkpoint} if paid else {}
                     urls = DA.publish(da, up, title_for(cfg, draft, "deviantart"), signed_text(cfg, draft, "deviantart"), tags,
-                                      draft["rating"], progress=prog)
-                    _set(key, state="done", message="", link=next((u["url"] for u in urls if u["url"]), ""),
-                         deviation_ids=[u["id"] for u in urls if u["id"]], note=f"{len(urls)} работ{'ы' if 1 < len(urls) < 5 else ''}" if len(urls) > 1 else "")
-                elif key.startswith('reddit:') or key == 'joyreactor':
+                                      draft["rating"], progress=prog, **kwargs)
+                    if paid:
+                        _set(key, state="done", outcome="prepared", message="", link="",
+                             note="Черновики в Sta.sh. Проверьте рейтинг и настройки работы, задайте цену или тиры и опубликуйте вручную.")
+                    else:
+                        _set(key, state="done", message="", link=next((u["url"] for u in urls if u["url"]), ""),
+                             deviation_ids=[u["id"] for u in urls if u["id"]],
+                             note=f"Работ опубликовано: {len(urls)}" if len(urls) > 1 else "")
+
+                elif key.startswith('reddit:') or key in ('joyreactor','x'):
                     from app.publish import social_web
                     from app.paths import sub
                     import tempfile
@@ -1056,7 +1129,7 @@ def _run(draft, report, only):
                             path = Path(folder) / f'{i}.jpg'
                             path.write_bytes(image.data)
                             paths.append(str(path))
-                        result = social_web.post(platform, paths, title_for(cfg, draft, platform), signed_text(cfg, draft, platform),
+                        result = social_web.post(platform, paths, (title_for(cfg, draft, platform) if platform!='x' or cfg['x'].get('include_title',True) else ''), signed_text(cfg, draft, platform),
                                                  community=key.split(':', 1)[1] if platform == 'reddit' else 'FurAI',
                                                  flair=d.get('flair', ''), nsfw=draft['rating'] != 'sfw', tags=d.get('tags', []),
                                                  headless=not cfg[platform].get('show_window', True), progress=prog, log=log)
@@ -1111,7 +1184,7 @@ def _run(draft, report, only):
                 if not _posted_but_failed(key, e):
                     # Эти адаптеры создают одну запись на место. Для многошаговых
                     # площадок отказ последнего шага не исключает частичный успех.
-                    safe = key.startswith(("telegram:", "discord:", "reddit:")) or key in ("bluesky", "joyreactor")
+                    safe = key.startswith(("telegram:", "discord:", "reddit:")) or key in ("bluesky", "joyreactor", "x") or (key=='deviantart' and bool(cfg['deviantart'].get('premium_download') or cfg['deviantart'].get('subscriber_only')))
                     _set(key, state="error", outcome="not_sent" if safe else "unknown", message=mask_secrets(str(e)))
             except (Cancelled, _Stop):   # «Отмена»: если пост уже вышел — остаётся «дослать PNG», иначе место просто не отправлено
                 if not _posted_but_failed(key, "отменено"):
@@ -1164,8 +1237,8 @@ def _run(draft, report, only):
     from concurrent.futures import ThreadPoolExecutor
     keys = {d["key"] for d in todo}
     posted = {d["key"]: threading.Event() for d in todo if d["key"].startswith("telegram:") and d["key"] != "telegram:group"}
-    first_wave = [(n, d) for n, d in enumerate(todo) if d["key"] != "e6ai"]
-    last = [(n, d) for n, d in enumerate(todo) if d["key"] == "e6ai"]
+    first_wave = [(n, d) for n, d in enumerate(todo) if d["key"] not in B.PLATFORMS]
+    last = [(n, d) for n, d in enumerate(todo) if d["key"] in B.PLATFORMS]
     if first_wave:
         with ThreadPoolExecutor(max_workers=len(first_wave), thread_name_prefix="publish") as ex:
             list(ex.map(lambda nd: one(*nd), first_wave))
@@ -1174,10 +1247,11 @@ def _run(draft, report, only):
     _set(running=False)
     _save_pub()
     st = state()
-    ok = sum(1 for d in st["dests"] if d["state"] == "done")
+    prepared = sum(d.get("outcome") == "prepared" for d in st["dests"])
+    ok = sum(d["state"] == "done" and d.get("outcome") != "prepared" for d in st["dests"])
     bad = sum(1 for d in st["dests"] if d["state"] == "error")
     _notify_netfail()
-    report(progress=1.0, message=f"опубликовано: {ok}" + (f", ошибок: {bad}" if bad else "") + (" — нет связи с api.telegram.org" if net_failed(st["dests"]) else ""))
+    report(progress=1.0, message=f"опубликовано: {ok}" + (f", подготовлено: {prepared}" if prepared else "") + (f", ошибок: {bad}" if bad else "") + (" — нет связи с api.telegram.org" if net_failed(st["dests"]) else ""))
 
 
 class _Stop(Exception):
@@ -1213,7 +1287,7 @@ def history(limit: int = 50) -> list[dict]:
     rows = db.query("SELECT * FROM publications ORDER BY id DESC LIMIT ?", (limit,))
     for r in rows:
         r["files"] = json.loads(r["files"] or "[]")
-        r["dests"] = json.loads(r["dests"] or "[]")
+        r["dests"] = B.destinations(r["dests"])
         r.pop("draft", None)
     return rows
 
@@ -1258,11 +1332,40 @@ def search_history(q='', platform='', state='', date_from='', date_to='', offset
             where.append('created ' + op + ' ?')
             args.append(value)
     clause = ' WHERE ' + ' AND '.join(where) if where else ''
-    total = db.query('SELECT COUNT(*) AS n FROM publications' + clause, args)[0]['n']
-    rows = db.query('SELECT * FROM publications' + clause + ' ORDER BY id DESC LIMIT ? OFFSET ?', (*args, limit, offset))
-    for row in rows:
-        row['files'] = json.loads(row['files'] or '[]')
-        row['dests'] = json.loads(row['dests'] or '[]')
-        row.pop('draft', None)
+    from app.insights import calendar
+    matched = db.query('SELECT * FROM publications' + clause + ' ORDER BY id DESC', args)
+    matching_ids = {r["id"] for r in matched}
+    raw = {r["id"]: r for r in history(limit=1000000)}
+    works = calendar.month(datetime.now().strftime("%Y-%m"), all_history=True)
+    grouped = []
+    for work in sorted((it for day in works["days"].values() for it in day), key=lambda it: -it["ts"]):
+        ids = work.get("pub_ids") or []
+        imported_matches = any(
+            not member.get("pub_id")
+            and (not q.strip() or q.strip().casefold() in member["text"].casefold())
+            and (not platform or member["platform"] in (platform, {"bluesky":"bsky", "deviantart":"da"}.get(platform)))
+            and (not state or state == "done")
+            and (not date_from or member["day"] >= date_from[:10])
+            and (not date_to or member["day"] <= date_to[:10])
+            for member in work.get("search_members", [])
+        )
+        if ids:
+            if not matching_ids.intersection(ids) and not imported_matches:
+                continue
+            latest_id = max(ids, key=lambda pid: (raw.get(pid, {}).get("created", ""), pid))
+            source = raw.get(latest_id, {})
+            row = dict(source, id=latest_id, merge_ids=ids, atoms=work["atoms"])
+            row["dests"] = [dict(d, source_pub_id=pid) for pid in ids for d in raw.get(pid, {}).get("dests", [])]
+            row["files"] = [f for pid in ids for f in raw.get(pid, {}).get("files", [])]
+        else:
+            if not imported_matches:
+                continue
+            row = dict(id=work["key"], title=work["text"], text=work["text"], rating=work.get("rating"),
+                       created=datetime.fromtimestamp(work["ts"], timezone.utc).isoformat(), files=[], dests=[], atoms=work["atoms"])
+        row["work"] = work
+        row["preview"] = work.get("preview")
+        grouped.append(row)
+    total = len(grouped)
+    rows = grouped[offset:offset + limit]
     return dict(items=rows, total=total, offset=offset, limit=limit,
                 next_offset=offset + len(rows) if offset + len(rows) < total else None)

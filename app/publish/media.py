@@ -509,7 +509,7 @@ def need_for(platform: str, f: dict, info: dict, limit: int | None = None) -> st
         if ext != ".mp4" or (vcodec and vcodec not in TG_PLAYS):
             return "перекодирую в H.264 MP4"
         return None
-    if platform == "e6ai":
+    if platform in ("e6ai", "e621", "floofgens"):
         if ext not in (".mp4", ".webm") or (vcodec and vcodec not in DISCORD_PLAYS | {"av1"}):
             return "перекодирую в WebM"
         return None

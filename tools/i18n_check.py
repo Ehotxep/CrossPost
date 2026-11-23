@@ -7,6 +7,7 @@
 import ast
 import html
 import json
+import subprocess
 import os
 import re
 import sys
@@ -22,9 +23,8 @@ def norm(s):
 
 
 def main():
-    dic = open(os.path.join(ROOT, "app/web/lang_en.js"), encoding="utf-8").read()
-    dic = json.loads(dic[dic.index("{"):dic.rindex("}") + 1])
-    keys = set(dic)
+    script = "global.window={};require('./app/web/lang_en.js');process.stdout.write(JSON.stringify(Object.keys(window.EN_DICT)))"
+    keys = set(json.loads(subprocess.check_output(["node", "-e", script], cwd=ROOT)))
     words = set(w.lower() for k in keys for w in re.findall(r"[А-Яа-яЁё]+", k))
     found = {}
     for f in ("app/web/app.js", "app/web/publish.js", "app/web/charts.js", "app/web/videditor.js", "app/web/index.html"):

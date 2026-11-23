@@ -12,10 +12,12 @@ PROFILE = ('light', 'signatures', 'hashtags', 'versions', 'text_lang', 'platform
 OPTIONS = {
     'telegram': ('include_title', 'spoiler_nsfw'),
     'discord': ('include_title', 'no_previews', 'blur_nsfw', 'max_file_mb', 'short_links'),
-    'reddit': (), 'joyreactor': (),
+    'reddit': (), 'joyreactor': (), 'x': ('include_title',),
     'vk': ('include_title',), 'bluesky': ('include_title', 'alt_from_title', 'langs'),
-    'deviantart': ('is_ai_generated', 'noai', 'originals', 'tags_from'),
-    'e6ai': ('constant_tags', 'with_description', 'with_sources'),
+    'deviantart': ('is_ai_generated', 'noai', 'originals', 'tags_from', 'premium_download', 'premium_price_usd', 'subscriber_only', 'subscriber_tiers'),
+    'e6ai': ('constant_tags', 'with_description', 'with_sources', 'source_platforms', 'source_link_mode'),
+    'e621': ('constant_tags', 'with_description', 'with_sources', 'source_platforms', 'source_link_mode'),
+    'floofgens': ('constant_tags', 'with_description', 'with_sources', 'source_platforms', 'source_link_mode'),
 }
 
 
@@ -28,12 +30,20 @@ def clean_profile(profile):
     for platform, fields in OPTIONS.items():
         if isinstance(profile.get(platform), dict):
             out[platform] = {k: copy.deepcopy(profile[platform][k]) for k in fields if k in profile[platform]}
+            if 'source_platforms' in fields and isinstance(out[platform].get('source_platforms'), dict):
+                from app.publish.settings import PLATFORM_MODULES
+                selected = out[platform]['source_platforms']
+                # Templates freeze checked defaults too, not just explicit exclusions.
+                out[platform]['source_platforms'] = {k: selected.get(k, True) is True for k in PLATFORM_MODULES}
     return out
 
 
 def effective(cfg, draft):
     from app.publish.settings import _merge
     profile = clean_profile(draft.get('profile'))
+    if not isinstance(draft.get('booru_posts'), dict):
+        from app.publish.booru import legacy_profile
+        profile = legacy_profile(cfg, profile)
     selected = profile.pop('platforms', None)
     result = _merge(cfg, profile)
     if selected is not None:
@@ -48,13 +58,13 @@ def _path():
 
 
 def _targets(cfg):
-    out = {k: k for k in ('vk', 'bluesky', 'deviantart', 'e6ai', 'joyreactor')}
+    out = {k: k for k in ('vk', 'bluesky', 'deviantart', 'e6ai', 'e621', 'floofgens', 'joyreactor')}
     for i, ch in enumerate(cfg['telegram']['channels']):
         out[f'telegram:{i}'] = 'telegram:' + str(ch['id'])
     out['telegram:group'] = 'telegram:group:' + str(cfg['telegram']['group'].get('id', ''))
     for i, hook in enumerate(cfg['discord']['webhooks']):
         out[f'discord:{i}'] = 'discord:' + hashlib.sha256(hook['url'].encode()).hexdigest()
-    out.update({f'reddit:{name}': f'reddit:{name}' for name in ('FurAI', 'aiyiff')})
+    out.update({f'reddit:{name}': f'reddit:{name}' for name in cfg['reddit'].get('communities', {})})
     return out
 
 

@@ -5,6 +5,7 @@
 """
 import json
 import mimetypes
+import time
 
 mimetypes.add_type("font/woff", ".woff")
 import secrets
@@ -256,9 +257,21 @@ def make_server(api, port: int = 0):
                 if length < 0 or length > MAX_JSON:
                     raise ValueError("слишком большой запрос")
                 args = json.loads(self.rfile.read(length) or b"{}") if length else {}
-                result = api.call(name, args)
+                from app import diagnostics
+                started = time.perf_counter()
+                succeeded = False
+                try:
+                    result = api.call(name, args)
+                    succeeded = True
+                finally:
+                    if not name.startswith('_') and name != 'call' and callable(getattr(api, name, None)):
+                        diagnostics.record('server_api', name, (time.perf_counter()-started)*1000,
+                                           succeeded, self.headers.get('X-Perf-ID'))
                 from app.cache import clean
+                started = time.perf_counter()
                 body = json.dumps({"ok": True, "result": clean(result)}, ensure_ascii=False, default=str)
+                diagnostics.record('serialize', name, (time.perf_counter()-started)*1000,
+                                   request_id=self.headers.get('X-Perf-ID'))
                 self._send(200, body.encode("utf-8"))
             except Exception as e:
                 from app.jobs import mask_secrets

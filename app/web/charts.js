@@ -216,5 +216,25 @@
     });
   }
 
-  window.Charts = { sparkline, forecastChart, nicheChart, lineChart, showTip, hideTip, esc };
+  function forecastQuality(q, compact = false) {
+    if (!q) return "";
+    const v = q.validation;
+    if (!v) return `<p class="muted small">Сохранённый прогноз рассчитан по прежней методике.</p>`;
+    const factor = value => Number.isFinite(value) ? "×" + value.toFixed(2) : "—";
+    const comparison = v.skill == null ? "Преимущество не оценено" : v.skill > 0
+      ? `Ошибка модели ниже на ${Math.round(v.skill * 100)}%` : "Модель не точнее обычного результата";
+    const details = `<div class="kvlist">
+      <div><span>Проверено более поздних постов</span><b>${v.n} / минимум ${v.minimum}</b></div>
+      <div><span>Периоды проверки</span><b>${v.windows.length}${v.start ? ` · ${esc(v.start.slice(0,10))} — ${esc(v.end.slice(0,10))}` : ""}</b></div>
+      <div><span>Медианная ошибка модели / обычного результата</span><b>${factor(v.typical_err)} / ${factor(v.baseline_typical_err)}</b></div>
+      <div><span>Сравнение средней абсолютной ошибки лог-индекса</span><b>${esc(comparison)}</b></div>
+      <div><span>Постов с тегами картинки</span><b>${q.n_tagged} / ${q.n}</b></div></div>
+      <p class="muted small">Обучение на прошлом, проверка на более поздних периодах; между ними — 7 дней для созревания постов. Обычный результат — предшествующая норма каждого канала.</p>
+      <p class="muted small">Проверка общая для подключённых к обучению каналов. Точность для отдельного канала может отличаться.</p>
+      <p class="muted small">Ретроспективная проверка по текущим итогам истории. Это не архив прогнозов, сохранённых перед отправкой. Похожие работы могут повторяться в разных периодах.</p>`;
+    return `<div class="forecast-quality" data-quality="${esc(q.level)}"><p class="${q.level === 'low' ? 'muted' : ''}">${esc(q.text)}</p>
+      ${compact ? `<details><summary>На чём основан прогноз</summary>${details}</details>` : details}</div>`;
+  }
+
+  window.Charts = { forecastQuality, sparkline, forecastChart, nicheChart, lineChart, showTip, hideTip, esc };
 })();

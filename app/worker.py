@@ -310,7 +310,7 @@ class Worker:
             else:
                 idle_since = idle_since or time.time()
                 busy = getattr(self, "_vk_busy", False) or _e6_lock.locked() or any(
-                    t.is_alive() for t in threading.enumerate() if t.name in ("track", "e6learn", "vkstats", "proxypool"))
+                    t.is_alive() for t in threading.enumerate() if t.name in ("track", "booru-track", "e6learn", "vkstats", "proxypool"))
                 if time.time() - idle_since > IDLE_EXIT and not busy and not has_work():
                     _log("работы нет — фоновая отправка завершается, запустится сама, когда понадобится")
                     break
@@ -332,6 +332,15 @@ class Worker:
                         with perf.track("замеры просмотров"):
                             post_stats.track_tick(self.api.tg)
                     threading.Thread(target=_track, daemon=True, name="track").start()
+                    def _booru_track():
+                        try:
+                            from app.insights import booru_metrics
+                            with perf.track('контрольные замеры booru'):
+                                booru_metrics.tick()
+                        except Exception as e:
+                            _log(f'контрольные замеры booru: {type(e).__name__}')
+                    threading.Thread(target=_booru_track,daemon=True,name='booru-track').start()
+
                 threading.Thread(target=_e6_check, daemon=True, name="e6learn").start()
                 if mods.get("collect", True) and mods.get("vk", True) and not getattr(self, "_vk_busy", False):
                     from app.publish import vk_stats

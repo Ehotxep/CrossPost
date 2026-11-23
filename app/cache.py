@@ -7,6 +7,8 @@
 Результаты лежат в папке данных (cache/*.json): их готовит и окно приложения, и фоновая отправка,
 поэтому к моменту открытия Crosspost всё обычно уже посчитано.
 """
+from core.fsutil import file_lock
+
 import json
 import re
 import threading
@@ -72,7 +74,7 @@ def _norm(key):
     return json.loads(json.dumps(key, default=str))
 
 
-def refresh(name: str, compute, key) -> bool:
+def refresh(name: str, compute, key, max_age=0) -> bool:
     """Пересчитать в фоновом потоке (если такой пересчёт уже не идёт)."""
     with _lock:
         if name in _running:
@@ -81,7 +83,7 @@ def refresh(name: str, compute, key) -> bool:
 
     def run():
         try:
-            write(name, compute(), key)
+            warm(name, compute, key, max_age=max_age)
         except Exception:
             traceback.print_exc()
         finally:
@@ -96,22 +98,26 @@ def busy(name: str) -> bool:
         return name in _running
 
 
-def get(name: str, compute, key, max_age: float = 6 * 3600) -> dict:
+def get(name: str, compute, key, max_age: float = 6 * 3600, *, accept_cached=None) -> dict:
     """{"data", "at", "stale", "refreshing"} — сразу, без ожидания пересчёта (кроме самого первого раза)."""
     obj = read(name)
-    if obj is None:
-        obj = write(name, compute(), key)
+    if obj is None or (accept_cached is not None and not accept_cached(obj["data"])):
+        with file_lock(_path(name)):
+            obj = read(name)
+            if obj is None or obj.get("key") != _norm(key) or (accept_cached and not accept_cached(obj["data"])):
+                obj = write(name, compute(), key)
         return {"data": obj["data"], "at": obj["at"], "stale": False, "refreshing": False}
     stale = obj.get("key") != _norm(key) or time.time() - obj.get("at", 0) > max_age
     if stale:
-        refresh(name, compute, key)
+        refresh(name, compute, key, max_age)
     return {"data": obj["data"], "at": obj["at"], "stale": stale, "refreshing": busy(name)}
 
 
 def warm(name: str, compute, key, max_age: float = 6 * 3600) -> bool:
     """Для фоновой отправки: посчитать заранее, если сохранённое устарело. Возвращает True, если пересчитал."""
-    obj = read(name)
-    if obj is not None and obj.get("key") == _norm(key) and time.time() - obj.get("at", 0) <= max_age:
-        return False
-    write(name, compute(), key)
-    return True
+    with file_lock(_path(name)):
+        obj = read(name)
+        if obj is not None and obj.get("key") == _norm(key) and time.time() - obj.get("at", 0) <= max_age:
+            return False
+        write(name, compute(), key)
+        return True

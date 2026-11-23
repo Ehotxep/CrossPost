@@ -87,7 +87,7 @@
     const text=humanize(String(message||''));
     return `<div class="problem" role="alert"><p class="err">${esc(text)}</p>${text!==message?`<details class="more"><summary>Технические подробности</summary><pre translate="no">${esc(message)}</pre></details>`:''}<button class="btn small" data-view-link="settings" data-tab="diag">Открыть диагностику</button></div>`;
   }
-  function toast(text, kind = "ok") {
+  function toast(text, kind = "ok", action = null) {
     text = String(text || "").trim();
     if (kind === "error") text = humanize(text);
     if (!text) return;
@@ -100,12 +100,17 @@
     const t = document.createElement("div");
     t.className = "toast " + kind;
     t.setAttribute("role", kind === "error" ? "alert" : "status");
-    t.innerHTML = `<span class="ti">${kind === "error" ? "!" : kind === "info" ? "i" : "✓"}</span><span class="tt"></span><button class="tx" aria-label="Закрыть">×</button>`;
+    t.innerHTML = `<span class="ti">${kind === "error" ? "!" : kind === "info" ? "i" : "✓"}</span><span class="tt"></span>${action ? '<button class="ta"></button>' : ''}<button class="tx" aria-label="Закрыть">×</button>`;
     t.querySelector(".tt").textContent = text;
     t.querySelector(".tx").onclick = () => t.remove();
+    if (action) {
+      const button = t.querySelector(".ta");
+      button.textContent = action.label || "Отменить действие";
+      button.onclick = async () => { button.disabled = true; try { await action.run(); } finally { t.remove(); } };
+    }
     box.appendChild(t);
     while (box.children.length > 5) box.firstChild.remove();
-    setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, kind === "error" ? 12000 : kind === "info" ? 7000 : 2600);
+    setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, action ? 9000 : kind === "error" ? 12000 : kind === "info" ? 7000 : 2600);
   }
   // Необработанные ошибки (в обработчике кнопки, в запросе): раньше они пропадали молча — теперь видны в окне и в консоли
   const jsErr = (m) => { m = String(m || "").trim(); if (m && !/ResizeObserver|Script error/i.test(m)) toast("Ошибка: " + m, "error"); };
@@ -120,6 +125,8 @@
   }
 
   async function api(name, args = {}, options = {}) {
+    const timing = window.PerfUI?.request(name);
+    let timingOk = false;
     // вызов от действия человека: в течение полсекунды после клика или пока идут вызовы этого же действия
     const user = !options.silent && name !== "activity" && FB.el && (performance.now() - FB.at < 600 || FB.pending > 0);
     const el = user ? FB.el : null;
@@ -130,7 +137,7 @@
     try {
       const r = await fetch("/api/" + name, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Token": window.API_TOKEN },
+        headers: { "Content-Type": "application/json", "X-Token": window.API_TOKEN, ...(timing ? {"X-Perf-ID": timing.id} : {}) },
         body: JSON.stringify(args),
       });
       let j;
@@ -143,11 +150,13 @@
         FB.toasted = kind === "ok";   // одно «✓» на одно действие, пояснения — всегда
         toast(text, kind);
       }
+      timingOk = true;
       return j.result;
     } catch (e) {
       if (user) toast(e.message === "Failed to fetch" ? "Нет связи с приложением — оно запущено?" : e.message, "error");
       throw e;
     } finally {
+      timing?.finish(timingOk);
       if (user) {
         FB.pending = Math.max(0, FB.pending - 1);
         if (!FB.pending) { busy(false); FB.el = null; }
@@ -162,11 +171,12 @@
   function uiFlush(keepalive) {
     const ch = uiPend; uiPend = {}; clearTimeout(uiT); uiT = null;
     if (!Object.keys(ch).length) return;
-    fetch("/api/ui_set", { method: "POST", keepalive: !!keepalive, headers: { "Content-Type": "application/json", "X-Token": window.API_TOKEN },
-      body: JSON.stringify({ changes: ch }) }).catch(() => { Object.assign(uiPend, ch); });
+    return fetch("/api/ui_set", { method: "POST", keepalive: !!keepalive, headers: { "Content-Type": "application/json", "X-Token": window.API_TOKEN },
+      body: JSON.stringify({ changes: ch }) }).catch(() => { uiPend = {...ch, ...uiPend}; });
   }
   window.addEventListener("beforeunload", () => uiFlush(true));
   const store = {
+    flush: uiFlush,
     get(k, d) {
       if (Object.prototype.hasOwnProperty.call(UI, k)) return UI[k] === null ? d : UI[k];
       try { const v = localStorage.getItem("cp:" + k); if (v !== null) { const x = JSON.parse(v); store.set(k, x); return x; } } catch (e) { /* нет — ну и ладно */ }
@@ -178,8 +188,8 @@
   const S = {
     view: "post",   // при запуске всегда «Новый пост»; выбранный раздел помним только до закрытия
     src: store.get("src", "e6ai"),
-    rating: store.get("rating", "all"), cat: store.get("cat", "all"), mine: store.get("mine", false),
-    sel: null, info: null, data: null, fc: null, loading: false, error: null, flash: "",
+    rating: store.get("rating", "all"), cat: store.get("cat", "all"), mine: store.get("mine", false), trendCommon:store.get("trendCommon",false), trendPeriod:store.get("trendPeriod","quarter"),
+    sel: null, info: null, data: null, fc: null, trendForecast: null, loading: false, error: null, flash: "",
     manual: false,
     tg: null, tgCh: [], tgErr: "", tgBusy: false, tgJson: "", netDraft: null, netRes: null, netOpen: false,
     platSec: store.get("platSec", "telegram"),
@@ -192,7 +202,7 @@
   Object.defineProperty(S, "taggerOn", { get: () => S.taggerMaster && !(S.info && S.info.tagger_paused) });
   let poll = null;
 
-  const CAT_LABEL = { all: "Все", species: "Виды", character: "Персонажи", franchise: "Франшизы", general: "Темы" };
+  const CAT_LABEL = { all: "Все", species: "Виды", character: "Персонажи", franchise: "Франшизы", general: "Темы и детали", clothing:"Одежда", setting:"Окружение" };
   const pct = (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v * 100)) + "%";
   const mult = (v) => "×" + Number(v).toFixed(2).replace(".", DEC);
   const plural = (n, a, b, c) => { if (window.I18N.lang === "en") return Math.abs(n) === 1 ? a : c; n = Math.abs(n) % 100; const k = n % 10; return n > 10 && n < 20 ? c : k === 1 ? a : k >= 2 && k <= 4 ? b : c; };
@@ -231,7 +241,7 @@
   };
   // площадки: буквы на цветном квадрате (свои значки, без чужих логотипов)
   const PLAT = { telegram: ["TG", "#2A9FD8", "Telegram"], discord: ["DS", "#5865F2", "Discord"], vk: ["VK", "#2D7BE5", "ВКонтакте"],
-    e6ai: ["BA", "#24508F", "blep.art"], reddit: ["R", "#F0541E", "Reddit"], deviantart: ["DA", "#14A85A", "DeviantArt"], bluesky: ["BS", "#1185FE", "Bluesky"], joyreactor: ["JR", "#C2410C", "Joyreactor"], x: ["X", "#3A3F4B", "X"] };
+    e6ai: ["BA", "#24508F", "blep.art"], e621: ["621", "#b28b40", "e621"], floofgens: ["FG", "#7762c4", "floofgens.net"], reddit: ["R", "#F0541E", "Reddit"], deviantart: ["DA", "#14A85A", "DeviantArt"], bluesky: ["BS", "#1185FE", "Bluesky"], joyreactor: ["JR", "#C2410C", "Joyreactor"], x: ["X", "#3A3F4B", "X"] };
   const pbadge = (platform, { cls = "", tip = "", link = "", sm = false } = {}) => {
     const [t, c, name] = PLAT[platform] || [String(platform || "?").slice(0, 2).toUpperCase(), "#555", platform];
     const attrs = `class="pb ${sm ? "sm" : ""} ${cls}" style="--pc:${c}" data-tip="${esc(tip || name)}" aria-label="${esc(tip || name)}"`;
@@ -321,36 +331,50 @@
     if (ae && $main.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && ae.type !== "checkbox") return;
     softRender();
   }
+  let trendRequest = 0;
   async function loadOverview() {
-    S.data = null; S.fc = null; S.error = null;
-    if (!S.info.trends[S.src].ready) return;
+    const request = ++trendRequest;
+    const query = {source:S.src,rating:S.rating,category:S.cat,mine_only:S.mine,show_common:S.trendCommon,period:S.trendPeriod};
+    S.data = null; S.trendForecast = null; S.error = null;
+    if (!S.info.trends[query.source]?.ready) { S.loading=false; return; }
     S.loading = true; render();
     try {
-      S.data = await api("trends_overview", { source: S.src, rating: S.rating, category: S.cat, mine_only: S.mine });
-      const all = (S.data.rising || []).concat(S.data.popular || []);
-      if (!S.sel || !all.some((x) => x.tag === S.sel)) S.sel = all.length ? all[0].tag : null;
-      if (S.sel) S.fc = await api("trends_forecast", { source: S.src, tag: S.sel, rating: S.rating });
-    } catch (e) { S.error = e.message; }
-    S.loading = false;
+      const result = await api('trends_overview', query);
+      if (request !== trendRequest) return;
+      S.data = result;
+      S.loading = false;
+      const all = (result?.rising || []).concat(result?.popular || []);
+      if (!S.sel || !all.some(x => x.tag === S.sel)) S.sel = all[0]?.tag || null;
+      if (S.view === "trends") render();
+      if (S.sel) {
+        const tag = S.sel;
+        const forecast = await api('trends_forecast', {source:query.source,tag,rating:query.rating}).catch(() => null);
+        if (request === trendRequest && S.sel === tag) S.trendForecast = forecast;
+      }
+    } catch (e) { if (request === trendRequest) S.error = e.message; }
+    finally { if (request === trendRequest) S.loading=false; }
   }
   // список каналов — из базы, мгновенно (без обращения к Telegram)
   async function loadChannels() {
     try { S.tgCh = await api("tg_channels", { refresh: false }); } catch (e) { /* покажем позже */ }
   }
   // статус входа: сначала последний известный (сразу), настоящая проверка — следом, без ожидания экрана
+  let tgStatusCheck = null;
   async function loadTg(refresh) {
+    if (!refresh && !["telegram", "import", "net"].includes(S.platSec)) return;
     try {
       if (!S.tg) S.tg = await api("tg_status_quick");
       await loadChannels();
     } catch (e) { S.tgErr = e.message; }
-    const check = (async () => {
+    if (tgStatusCheck) { if (!refresh) return; await tgStatusCheck; }
+    const check = tgStatusCheck = (async () => {
       try {
-        S.tg = await api("tg_status");
+        S.tg = await api("tg_status", {}, {silent:!refresh});
         S.tgErr = S.tg.error || "";
         if (refresh && S.tg.authorized) S.tgCh = await api("tg_channels", { refresh: true });
       } catch (e) { S.tgErr = e.message; }
       if (S.view === "settings") quietRender();
-    })();
+    })().finally(() => { tgStatusCheck = null; });
     if (refresh) await check;
   }
   function quietRender() {
@@ -754,22 +778,31 @@
 
   // «Статистика»: сразу сохранённый результат, а если данные поменялись — тихо подтягиваем пересчитанный
   let statsPoll = null;
+  let statsRequest = 0;
   async function fetchStats() {
+    const request = ++statsRequest, sp = S.sp, sc = S.sc;
+    const current = () => request === statsRequest && sp === S.sp && sc === S.sc;
     const [st, ins] = await Promise.all([
-      api("stats_overview", { period: S.sp, chat_id: S.sc || null }).catch((e) => ({ error: e.message })),
-      api("insights_overview").catch((e) => ({ error: e.message })),
+      api("stats_overview", { period: sp, chat_id: sc || null }).catch(e => ({ error: e.message })).then(st => {
+        if (current()) { S.stats = st; S.statsLoading = false; if (S.view === "stats") quietRender(); }
+        return st;
+      }),
+      api("insights_overview").catch(e => ({ error: e.message })).then(ins => {
+        if (current()) { S.ins = ins; if (S.view === "stats") quietRender(); }
+        return ins;
+      }),
     ]);
-    S.stats = st; S.ins = ins;
-    return (st && st._cache && st._cache.stale) || (ins && ins._cache && ins._cache.stale);
+    return current() && (st?._cache?.stale || ins?._cache?.stale);
   }
   async function loadStats() {
     clearTimeout(statsPoll);
     S.statsLoading = true;
     if (!S.stats) render();
-    const stale = await fetchStats();
-    S.statsLoading = false;
-    await window.Pub.loadInsights();
-    if (stale) pollStats(0);
+    const [stale] = await Promise.all([
+      fetchStats(),
+      window.Pub.loadInsights().then(() => { if (S.view === "stats") quietRender(); }),
+    ]);
+    if (stale && S.view === "stats") pollStats(0);
   }
   function pollStats(n) {
     clearTimeout(statsPoll);
@@ -784,7 +817,10 @@
   }
   async function pick(tag) {
     S.sel = tag;
-    S.fc = await api("trends_forecast", { source: S.src, tag, rating: S.rating }).catch(() => null);
+    const source = S.src, rating = S.rating;
+    const forecast = await api("trends_forecast", { source, tag, rating }).catch(() => null);
+    if (S.src !== source || S.rating !== rating || S.sel !== tag) return;
+    S.trendForecast = forecast;
     render();
     const el = document.getElementById("forecast");
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -809,6 +845,10 @@
     });
   }
   function softRender() {
+    const finish = window.PerfUI?.rendering(S.view);
+    try { return softRenderImpl(); } finally { finish?.(); }
+  }
+  function softRenderImpl() {
     if (S.pstatOpen || S.viewFile || document.querySelector(".bigprev")) return;   // поверх страницы открыто окно — её не трогаем
     const positions=destinationPositions();
     softMode = true; softPending = null;
@@ -827,6 +867,10 @@
   }
   let lastRenderedView = null, viewTransition = null;
   function render() {
+    const finish = window.PerfUI?.rendering(S.view);
+    try { return renderImpl(); } finally { finish?.(); }
+  }
+  function renderImpl() {
     const previousView = lastRenderedView, positions=destinationPositions();
     renderMain();
     animateDestinations(positions);
@@ -863,9 +907,9 @@
       const el = document.getElementById("growth-chart");
       if (el) window.Charts.lineChart(el, S.stats.channels.map((c, i) => ({ name: c.title, color: ["var(--s1)", "var(--s2)", "var(--s3)"][i % 3], points: c.monthly })));
     }
-    if (S.view === "trends" && S.data && S.fc) {
+    if (S.view === "trends" && S.data && S.trendForecast) {
       const fcEl = document.getElementById("fc-chart");
-      if (fcEl) forecastChart(fcEl, S.fc);
+      if (fcEl) forecastChart(fcEl, S.trendForecast);
     }
     if (S.view === "trends" && S.data) {
       const nEl = document.getElementById("niche-chart");
@@ -874,21 +918,24 @@
   }
 
   function renderTrends() {
+    const sourceNames = {e6ai:"blep.art",e621:"e621",floofgens:"floofgens.net"};
+    if (!sourceNames[S.src]) S.src = "e6ai";
+    const sourceName = sourceNames[S.src];
     const st = S.info.trends[S.src];
     const job = st.job;
     const running = job && job.state === "running";
     const about = S.src === "e621"
       ? "e621 — крупнейший фурри-архив. ИИ-работы туда загружать нельзя, но это лучший индикатор вкусов фандома: тренды часто приходят оттуда."
-      : "Ваша площадка для ИИ-работ. Популярность — избранное на пост: просмотров blep.art не отдаёт.";
-    const dump = st.meta ? `выгрузка от ${st.meta.dump_date.split("-").reverse().join(".")} · ${num(st.meta.posts)} ${plural(st.meta.posts, "пост", "поста", "постов")} за 2 года` : "данных пока нет";
+      : `${sourceName}: темы и интерес аудитории по избранному. Это статистика работ с тегом, а не оценка влияния самого тега.`;
+    const dump = st.meta ? `выгрузка от ${st.meta.dump_date.split("-").reverse().join(".")} · ${num(st.meta.posts)} ${plural(st.meta.posts, "пост", "поста", "постов")} в расчёте` : "данных пока нет";
     let h = `
     <div class="head" style="align-items:flex-end">
       <div style="display:flex;flex-direction:column;gap:6px;max-width:760px">
-        <h1>Тренды · ${S.src}</h1>
+        <h1>Тренды · ${sourceName}</h1>
         <p class="muted">${about}</p>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
-        ${seg("src", [["e6ai", "blep.art"], ["e621", "e621"]], S.src)}
+        ${seg("src", Object.entries(sourceNames), S.src)}
         <div style="display:flex;align-items:center;gap:10px">
           <span class="muted small">${dump}</span>
           <button class="btn" data-action="update" ${running ? "disabled" : ""}>${st.ready ? "Обновить" : "Скачать"}</button>
@@ -898,7 +945,7 @@
     </div>`;
     if (S.trSet) h += trendsSettingsHtml();
     if (running) {
-      h += `<div class="card"><div class="head"><h3>Готовлю данные ${S.src}</h3><span class="muted small">${esc(job.message)}</span></div>
+      h += `<div class="card"><div class="head"><h3>Готовлю данные ${sourceName}</h3><span class="muted small">${esc(job.message)}</span></div>
         <div class="progress"><div style="width:${Math.round(job.progress * 100)}%"></div></div>
         <p class="note">Можно пользоваться приложением дальше — данные обновятся сами.</p></div>`;
     } else if (job && job.state === "error") {
@@ -921,19 +968,19 @@
 
     // опережающие сигналы
     if (d.leads === null) {
-      const other = S.src === "e621" ? "blep.art" : "e621";
-      h += `<div class="card"><h2>Опережающие сигналы</h2><p class="muted">Скачайте выгрузку ${other}, чтобы сравнивать, что растёт на e621 и ещё не дошло до blep.art.</p></div>`;
+      const other = S.src === "e621" ? d.leads_label : "e621";
+      h += `<div class="card"><h2>Опережающие сигналы</h2><p class="muted">${esc(d.comparison_note || `Скачайте выгрузку ${other}, чтобы сравнить рост тем на e621 и ${d.leads_label}.`)}</p></div>`;
     } else {
       const card = (l) => `<div class="wrap">
-        <button class="lead" data-pick="${esc(l.tag)}" data-src="e6ai" title="Открыть прогноз на blep.art">
+        <button class="lead" data-pick="${esc(l.tag)}" data-src="${d.leads_target}" title="Открыть прогноз на ${esc(d.leads_label)}">
           <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-right:22px"><span class="tag" style="font-weight:600">${esc(l.tag)}</span>${l.mine ? `<span class="pill mine">ваш стиль</span>` : ""}</span>
           <span class="kv"><span>e621</span><b style="color:var(--good)">${num(l.e621_before)} → ${num(l.e621_now)}</b></span>
-          <span class="kv"><span>blep.art</span><b>${num(l.e6ai_before)} → ${num(l.e6ai_now)}</b></span>
+          <span class="kv"><span>${esc(d.leads_label)}</span><b>${num(l.e6ai_before)} → ${num(l.e6ai_now)}</b></span>
         </button>${hideBtn(l.tag)}</div>`;
       const grp = (title, note, list) => `<div style="display:flex;flex-direction:column;gap:8px">
         <div class="head"><h3>${title}</h3><span class="muted small">${note}</span></div>
         ${list.length ? `<div class="leads">${list.map(card).join("")}</div>` : `<p class="muted small">Сейчас ничего заметного.</p>`}</div>`;
-      h += `<section class="card"><div class="head"><h2>Опережающие сигналы: растёт на e621, на blep.art ещё нет</h2>
+      h += `<section class="card"><div class="head"><h2>Опережающие сигналы: e621 → ${esc(d.leads_label)}</h2>
         <span class="muted small">работ в месяц: 3 месяца назад → сейчас</span></div>
         ${grp("Растёт на e621", "теги, которые давно есть, но набирают обороты", d.leads.growing)}
         ${grp("Новое на e621", "полгода назад тега почти не было: новый персонаж, игра или мем", d.leads.new)}`;
@@ -945,11 +992,15 @@
       <span class="lbl">Рейтинг</span>${seg("rating", [["all", "Все"], ["s", "Safe"], ["q", "Questionable"], ["e", "Explicit"]], S.rating)}
       <span class="vsep"></span>
       <span class="lbl">Категория</span>${seg("cat", Object.entries(CAT_LABEL), S.cat)}
+      <label class="check"><input type="checkbox" data-action="trend-common" ${S.trendCommon ? "checked" : ""}> Показать общие теги</label>
       <label class="check" style="margin-left:auto"><input type="checkbox" data-action="mine" ${S.mine ? "checked" : ""}> Только мой стиль</label>
     </div>`;
     if (S.mine && !S.info.settings.style_tags.length) {
       h += `<div class="card"><p class="muted">Список «мой стиль» пуст — добавьте теги в <a href="#" data-view-link="settings" data-tab="trends">настройках трендов</a>.</p></div>`;
     }
+
+    h += `<div class="bar"><span class="lbl">Период роста</span>${seg("trendPeriod", [["month","4 недели"],["quarter","3 месяца"]], S.trendPeriod)}
+      <span class="muted small">${d.filters?.hidden_common ? `Общие теги скрыты: ${d.filters.hidden_common}.` : ''} Выгрузка: ${esc(d.dump_date)} · учтены недели до ${esc(d.week_end)}.</span></div>`;
 
     // сезон
     if (d.seasonal && d.seasonal.length) {
@@ -971,23 +1022,23 @@
       const badge = x.badge ? `<span class="pill ${{ "сезон": "season", "ранний сигнал": "early", "ваш стиль": "mine" }[x.badge]}">${x.badge}</span>`
         : (kind === "pop" && x.mine ? `<span class="pill mine">ваш стиль</span>` : "");
       const title = kind === "pop"
-        ? `${x.tag}: пост с тегом набирает ${mult(x.lift)} избранного к среднему посту; ${x.per_month} в месяц`
-        : `${x.tag}: отклик ${pct(x.response)}, число работ ${pct(x.supply)} за 3 месяца`;
-      return `<div class="wrap"><button class="li ${S.sel === x.tag ? "sel" : ""}" data-pick="${esc(x.tag)}" title="${esc(title)}">
+        ? `${x.reason || "Отклик постов с тегом"}. Выборка: ${x.sample ?? "—"} работ за 4 недели; отклик ${mult(x.lift)}`
+        : `${x.reason || "Рост темы"}. Выборка: ${x.sample ?? "—"} против ${x.previous_sample ?? "—"} работ за ${d.filters?.growth_weeks || 13} недель`;
+      return `<div class="wrap"><button class="li trend-topic ${S.sel === x.tag ? "sel" : ""}" data-pick="${esc(x.tag)}" title="${esc(title)}"><span class="trend-main">
         ${kind === "pop" ? `<span class="rank">${i + 1}</span>` : ""}
         <span class="name">${catDot(x.category)}<span class="tag">${esc(x.tag)}</span>${badge}</span>
-        ${sparkline(x.spark)}${val}<span class="meta">${num(x.per_month)}/мес</span></button>${hideBtn(x.tag)}</div>`;
+        ${sparkline(x.spark)}${val}<span class="meta">${num(x.per_month)}/мес</span></span><span class="trend-reason">${esc(x.reason || "")} · ${x.sample ?? "—"} работ${x.confidence ? ` · ${esc(x.confidence)}` : ""}</span></button>${hideBtn(x.tag)}</div>`;
     };
     h += `<div class="row">
       <section class="card grow"><div class="head"><h2>Популярно сейчас</h2><span class="muted small">отклик за 4 недели</span></div>
         <div class="list">${d.popular.length ? d.popular.map((x, i) => row(x, i, "pop")).join("") : `<p class="muted">Нет тегов с достаточным числом постов.</p>`}</div></section>
-      <section class="card grow"><div class="head"><h2>Набирает популярность</h2><span class="muted small">3 месяца к предыдущим 3</span></div>
-        <div class="list">${d.rising.length ? d.rising.map((x, i) => row(x, i, "rise")).join("") : `<p class="muted">Заметного роста сейчас нет.</p>`}</div></section>
+      <section class="card grow"><div class="head"><h2>Набирает популярность</h2><span class="muted small">${d.filters?.growth_weeks === 4 ? "4 недели к предыдущим 4" : "3 месяца к предыдущим 3"}</span></div>
+        <div class="list">${d.rising.length ? d.rising.map((x, i) => row(x, i, "rise")).join("") : `<p class="muted">${d.coverage?.growth_previous ? "Нет заметного роста с достаточной выборкой." : "Недостаточно данных за предыдущий период для сравнения."}</p>`}</div></section>
     </div>`;
 
     // прогноз
-    if (S.fc) {
-      const f = S.fc, ch = f.change;
+    if (S.trendForecast) {
+      const f = S.trendForecast, ch = f.change;
       const verdict = ch > 0.08 ? "Рост " + pct(ch) : ch < -0.08 ? "Спад " + pct(ch) : "Без изменений";
       const last = f.forecast[f.forecast.length - 1];
       const bt = f.backtest && f.backtest.total ? `Проверка на истории: направление угадано в ${Math.round(f.backtest.accuracy * 100)}% случаев (${f.backtest.hits} из ${f.backtest.total}).` : "";
@@ -1037,21 +1088,22 @@
 
   function emptyState(running) {
     const big = S.src === "e621";
+    const label = {e6ai:"blep.art",e621:"e621",floofgens:"floofgens.net"}[S.src] || S.src;
     return `<section class="card empty">
-      <h2>Данных ${S.src} ещё нет</h2>
-      <p class="muted">Приложение скачает ежедневную выгрузку всей базы ${S.src} (${big ? "это большой файл, порядка гигабайта — займёт время" : "несколько десятков мегабайт"}) и посчитает тренды у вас на компьютере.</p>
+      <h2>Данных ${label} ещё нет</h2>
+      <p class="muted">Приложение скачает ежедневную выгрузку базы ${label} (${big ? "большой файл — загрузка займёт время" : "размер зависит от текущей выгрузки сайта"}) и посчитает тренды у вас на компьютере.</p>
       <div style="display:flex;flex-wrap:wrap;gap:10px">
-        <button class="btn primary" data-action="update" ${running ? "disabled" : ""}>Скачать выгрузку ${S.src}</button>
+        <button class="btn primary" data-action="update" ${running ? "disabled" : ""}>Скачать выгрузку ${label}</button>
         <button class="btn" data-action="manual">Подключить скачанные файлы</button>
       </div>
       ${S.manual ? manualForm() : ""}
     </section>`;
   }
   function manualForm() {
-    const base = S.src === "e621" ? "https://e621.net/db_export/" : "https://blep.art/db_export/";
+    const base = {e6ai:"https://blep.art/db_export/",e621:"https://e621.net/db_export/",floofgens:"https://floofgens.net/db_export/"}[S.src];
     const pickBtn = S.info.can_pick_files ? `<button class="btn" data-action="pickfiles">Выбрать файлы…</button>` : "";
     return `<div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:720px;margin-top:6px">
-      <p class="note">Скачайте с ${base} два файла с одной датой: <span class="tag">posts-ГГГГ-ММ-ДД.csv.gz</span> и <span class="tag">tags-ГГГГ-ММ-ДД.csv.gz</span>.</p>
+      <p class="note">Скачайте с ${base} согласованную пару файлов: <span class="tag">posts-ГГГГ-ММ-ДД.csv.gz</span> и <span class="tag">tags-ГГГГ-ММ-ДД.csv.gz</span> или <span class="tag">posts.csv.gz</span> и <span class="tag">tags.csv.gz</span>.</p>
       ${pickBtn}
       <div class="field"><label for="mp">Файл постов</label><input id="mp" placeholder="C:\\Users\\…\\Downloads\\posts-2026-10-09.csv.gz"></div>
       <div class="field"><label for="mt">Файл тегов</label><input id="mt" placeholder="C:\\Users\\…\\Downloads\\tags-2026-10-09.csv.gz"></div>
@@ -1070,8 +1122,9 @@
         <div class="row">
           <div class="field" style="flex:1 1 200px"><label for="r6">Обновлять blep.art, раз в … дней</label><input id="r6" type="number" min="1" value="${s.trends.e6ai.refresh_days}"></div>
           <div class="field" style="flex:1 1 200px"><label for="r621">Обновлять e621, раз в … дней</label><input id="r621" type="number" min="1" value="${s.trends.e621.refresh_days}"></div>
+          <div class="field" style="flex:1 1 200px"><label for="rfloof">Обновлять floofgens.net, раз в … дней</label><input id="rfloof" type="number" min="1" value="${s.trends.floofgens.refresh_days}"></div>
         </div>
-        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 260px"><label for="nick">Ник для запросов к e621 и blep.art ${hint("Сайты просят указывать ник в запросах программ — так они понимают, кто к ним обращается. Пароль не нужен.")}</label>
+        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 260px"><label for="nick">Ник для запросов к e621, blep.art и floofgens.net ${hint("Сайты просят указывать ник в запросах программ — так они понимают, кто к ним обращается. Пароль не нужен.")}</label>
             <input id="nick" value="${esc(s.nickname || "")}" placeholder="например, fennec_artist"></div>
           <button class="btn" data-pa="nick-save">Сохранить ник</button></div>
         <div class="cardfoot"><button class="btn primary" data-action="save-settings">Сохранить</button><span class="ok small">${esc(S.flash)}</span></div></section>`;
@@ -1129,13 +1182,16 @@
         <p class="muted small">Память компьютера занята на ${n.system.ram_used}% из ${String(n.system.ram_gb).replace(".", DEC)} ГБ.</p>`;
       if (n.groups.some((g) => /Браузер/.test(g.name))) h += `<div class="callout"><p>Открыт браузер Crosspost (сбор статистики ВК или публикация). Если сейчас ничего не идёт — его можно закрыть.</p><button class="btn small" data-action="perf-kill">Закрыть браузер</button></div>`;
     }
+    const timings = S.perf.timings?.server || [];
+    h += `<h3>Самые медленные запросы за сеанс</h3><p class="muted small">Время работы сервера; отчёт также включает ожидание ответа в интерфейсе, отрисовку и блокировки дольше 50 мс. 95-й процентиль — время, в которое укладываются 95% сохранённых замеров.</p>
+      <div class="kvlist">${timings.filter(t => t.kind === 'server_api' && !t.name.startsWith('perf_')).slice(0,8).map(t => `<div><span>${esc(t.name)} · ${t.n}</span><span>среднее ${num(t.mean_ms)} мс · P95 ${num(t.p95_ms)} мс · макс. ${num(t.max_ms)} мс</span></div>`).join('')}</div>`;
     const mem = (sm.memory || []).filter((m) => m.hours >= 0.5);
     if (mem.length) h += `<h3>Память за сутки</h3><div class="kvlist">${mem.map((m) => `<div><span>${roleName[m.role] || m.role}</span><span>было ${num(m.first)} МБ → сейчас ${num(m.last)} МБ, максимум ${num(m.max)} МБ · процессор в среднем ${String(m.cpu_avg).replace(".", DEC)}%</span></div>`).join("")}</div>`;
     const slow = (sm.tasks || []).slice(0, 6);
     if (slow.length) h += `<h3>Фоновые задачи за сутки</h3><div class="kvlist">${slow.map((t) => `<div><span>${esc(t.name)} <span class="muted small">${roleName[t.role] || t.role}</span></span><span>${t.n} раз · всего ${String(t.s).replace(".", DEC)} с · дольше всего ${String(t.max_s).replace(".", DEC)} с${t.errors ? ` · <span class="err">ошибок ${t.errors}</span>` : ""}</span></div>`).join("")}</div>`;
     h += `<div class="cardfoot"><button class="btn" data-action="perf-report">Сохранить отчёт</button>
       ${(n.groups || []).some((g) => g.name === "Теггер") ? `<button class="btn ghost" data-action="perf-tagger">Выгрузить теггер</button>` : ""}
-      <span class="muted small">Чтобы поймать тормоза, оставьте Crosspost открытым на час, потом сохраните отчёт.</span></div></section>`;
+      <span class="muted small">Откройте медленные вкладки и сохраните отчёт. Замеры запросов и отрисовки собираются только локально в этой сессии; тексты, ссылки и ключи не записываются. Файл отправляется только вами.</span></div></section>`;
     return h;
   }
   function trendsSecHtml() {
@@ -1144,28 +1200,28 @@
 
   // меню настроек: группа, пункты, когда группа видна (по включённым функциям)
   const PSECS = [["Программа", [["app", "Общие"], ["features", "Функции"], ["worker", "Фоновая отправка"]], () => true],
-    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art / e621"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]], () => true],
+    ["Площадки", [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art"], ["e621", "e621"], ["floofgens", "floofgens.net"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"], ["x", "X"]], () => true],
     ["Оформление поста", [["signatures", "Подписи"], ["hashtags", "Хэштеги"], ["translate", "Перевод", () => modOn("translation")]], () => modOn("crosspost")],
     ["Файлы", [["light", "JPEG-превью"], ["media", "Видео и GIF"], ["versions", "Умное таргетирование", () => modOn("targeting")], ["files", "Хранение файлов"]], () => modOn("crosspost")],
-    ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || modOn("e6ai")],
+    ["Теги", [["tags", "Теггер и база тегов"]], () => modOn("tagger") || ["e6ai","e621","floofgens"].some(modOn)],
     ["Статистика и тренды", [["collect", "Сбор статистики", () => statsOn()], ["trends", "Тренды", () => modOn("trends")]], () => statsOn() || modOn("trends")],
     ["Дополнительно", [["net", "Прокси и соединение"], ["diag", "Диагностика"]], () => true]];
   // четыре функции приложения; у каждой — модули, которые она включает и выключает разом
   const FEATURES = [
     ["crosspost", "Кросспостинг", "Публикация одного поста сразу на несколько площадок, отложенная отправка по расписанию и история публикаций.", ["crosspost", "history"]],
-    ["tags", "Подбор тегов", "Автоматически предлагает теги по картинке — для хэштегов и для blep.art / e621. Без неё теги вводятся вручную.", ["tagger"]],
+    ["tags", "Подбор тегов", "Автоматически предлагает теги по картинке — для хэштегов и для blep.art / e621 / floofgens.net. Без неё теги вводятся вручную.", ["tagger"]],
     ["stats", "Статистика", "Просмотры и реакции по площадкам, лучшие работы и время публикации, уведомления о всплесках и прогноз.", ["stats", "collect", "news", "forecast"]],
-    ["trends", "Тренды", "Что сейчас популярно на blep.art и e621: растущие теги, ниши и сравнение с вашим стилем.", ["trends"]],
+    ["trends", "Тренды", "Что сейчас популярно на blep.art, e621 и floofgens.net: растущие теги, ниши и сравнение с вашим стилем.", ["trends"]],
     ["targeting", "Умное таргетирование", "Для постов в нескольких версиях (например, комикс с русскими и английскими надписями): отметьте версию у каждого файла, и на каждую площадку уйдут подходящие.", ["targeting"]],
     ["translation", "Языки и перевод", "Отдельный английский текст и подписи для англоязычных площадок. Автоперевод — через DeepSeek, по кнопке.", ["translation"]]];
   const featOn = (f) => f[3].some((k) => modOn(k));
   const statsOn = () => modOn("stats") || modOn("collect");
-  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "blep.art / e621", "загрузка, теги, теггер и база тегов"]],
-    extras: [["tagger", "Теггер", "предлагает теги по картинке для blep.art / e621 и хэштегов; без него теги вводятся вручную"],
+  const MODS = { platforms: [["telegram", "Telegram", "каналы и группа"], ["discord", "Discord", "вебхуки"], ["vk", "ВКонтакте", "группа"], ["reddit", "Reddit", "r/FurAI и r/aiyiff · браузер, экспериментально"], ["joyreactor", "JoyReactor", "браузер, экспериментально"], ["x", "X", "SFW · браузер, экспериментально"], ["bluesky", "Bluesky", ""], ["deviantart", "DeviantArt", ""], ["e6ai", "blep.art", "оригиналы и теги"], ["e621", "e621", "оригиналы и теги"], ["floofgens", "floofgens.net", "оригиналы и теги"]],
+    extras: [["tagger", "Теггер", "предлагает теги по картинке для blep.art / e621 / floofgens.net и хэштегов; без него теги вводятся вручную"],
       ["collect", "Сбор статистики", "регулярно сохраняет просмотры и реакции опубликованных постов, учитывает правки модераторов и догружает превью"],
       ["news", "Новости по свежим артам", "уведомления в колокольчике: популярные работы, всплески реакций, новые комментарии"],
       ["forecast", "Прогноз", "ожидаемые просмотры и подсказка лучшего времени публикации"]],
-    screens: [["history", "История", "календарь и список публикаций"], ["stats", "Статистика", "просмотры и индекс успеха каналов"], ["trends", "Тренды", "blep.art и e621, обновление выгрузок"]] };
+    screens: [["history", "История", "календарь и список публикаций"], ["stats", "Статистика", "просмотры и индекс успеха каналов"], ["trends", "Тренды", "blep.art, e621 и floofgens.net, обновление выгрузок"]] };
   const modOn = (k) => !(S.info && S.info.modules) || S.info.modules[k] !== false;
   // какие экраны видны: «Новый пост» и «История» — кросспостинг, «Статистика» и «Тренды» — свои функции, «Настройки» — всегда
   const viewOn = (v) => v === "settings" ? true : v === "post" ? modOn("crosspost") : v === "history" ? modOn("crosspost") && modOn("history") : modOn(v);
@@ -1177,8 +1233,36 @@
     if (!viewOn(S.view)) { S.view = ["post", "history", "stats", "trends", "settings"].find(viewOn); store.set("view", S.view); return true; }
     return false;
   }
+  function platformPickerHtml() {
+    const selected = MODS.platforms.filter(([key]) => modOn(key));
+    return `<section class="card setc"><h2>Мои площадки</h2>
+      <p class="muted small">Выберите нужные площадки. Убранные площадки не отображаются в меню и редакторе и не участвуют в отправке. Ключи и история сохраняются.</p>
+      <div class="chips">${selected.map(([key, name]) => `<button class="chip on" data-platform-remove="${key}" aria-label="Убрать площадку ${esc(name)}">${pbadge(key, {sm:true})} ${esc(name)} ×</button>`).join('') || '<span class="muted">Площадки не выбраны</span>'}</div>
+      <details class="platform-picker" id="platform-picker" ${S.platformPickerOpen ? 'open' : ''}>
+        <summary>Выбрать площадки</summary>
+        <input type="search" data-platform-search aria-label="Поиск площадок" placeholder="Найти площадку…" value="${esc(S.platformPickerQuery || '')}">
+        <div class="platform-options">${MODS.platforms.map(([key, name, desc]) => `<label class="platform-option" data-platform-match="${esc(name.toLocaleLowerCase())}" ${(S.platformPickerQuery && !name.toLocaleLowerCase().includes(S.platformPickerQuery.toLocaleLowerCase())) ? 'hidden' : ''}>
+          <input type="checkbox" data-mod="${key}" ${modOn(key) ? 'checked' : ''}><span><b>${esc(name)}</b><span class="muted small">${esc(desc)}</span></span></label>`).join('')}</div>
+        <p class="muted small" data-platform-empty hidden>Площадка не найдена</p>
+      </details></section>`;
+  }
+  document.addEventListener('toggle', e => {
+    if (e.target.id === 'platform-picker') S.platformPickerOpen = e.target.open;
+  }, true);
+  document.addEventListener('input', e => {
+    if (!e.target.matches('[data-platform-search]')) return;
+    const box = e.target.closest('.platform-picker'), q = e.target.value.trim().toLocaleLowerCase();
+    if (box.id === 'platform-picker') S.platformPickerQuery = e.target.value;
+    let count = 0;
+    box.querySelectorAll('[data-platform-match]').forEach(row => {
+      row.hidden = !row.dataset.platformMatch.includes(q);
+      if (!row.hidden) count++;
+    });
+    const empty = box.querySelector('[data-platform-empty]');
+    if (empty) empty.hidden = count > 0;
+  });
   function featuresHtml() {
-    return `<section class="card setc"><div class="head"><h2>Функции ${hint("Выключенная функция не работает ни в окне, ни в фоновой отправке и не обращается к сайтам; её экраны и настройки скрываются. Накопленные данные и ключи не удаляются — включите обратно, и всё на месте. Площадки включаются и выключаются переключателями в меню слева, в группе «Площадки».")}</h2></div>
+    return platformPickerHtml() + `<section class="card setc"><div class="head"><h2>Функции ${hint("Выключенная функция не работает ни в окне, ни в фоновой отправке и не обращается к сайтам; её экраны и настройки скрываются. Накопленные данные и ключи не удаляются — включите обратно, и всё на месте. Площадки выбираются в списке «Мои площадки» выше.")}</h2></div>
         <div class="featlist">${FEATURES.map((f) => { const on = featOn(f); return `<label class="feat ${on ? "on" : ""}">
           <span class="tgl"><input type="checkbox" data-feat="${f[0]}" ${on ? "checked" : ""} aria-label="${f[1]}"></span>
           <span><b>${f[1]}</b><span class="muted small">${esc(f[2])}</span></span></label>`; }).join("")}</div></section>`;
@@ -1205,7 +1289,7 @@
       return window.Pub.platStatus(k);
     };
     const isPlat = (k) => MODS.platforms.some((m) => m[0] === k);
-    return `<nav class="platnav" aria-label="Разделы настроек">${PSECS.filter((g) => g[2]()).map(([g, items0]) => { const items = g === "Площадки" ? window.Pub.byOrder(items0) : items0.filter((x) => !x[2] || x[2]()); return `${g ? `<h3>${g}</h3>` : ""}${items.map(([k, l], ix) => {
+    return `<nav class="platnav" aria-label="Разделы настроек">${PSECS.filter((g) => g[2]()).map(([g, items0]) => { const items = g === "Площадки" ? window.Pub.byOrder(items0.filter(([k]) => !isPlat(k) || modOn(k))) : items0.filter((x) => !x[2] || x[2]()); return `${g ? `<h3>${g}</h3>` : ""}${g === "Площадки" ? `<button class="btn small" data-platform-catalog>Выбрать площадки</button>` : ""}${items.map(([k, l], ix) => {
       const off = isPlat(k) && !modOn(k);
       const [lamp, sub] = off ? ["", "выключена"] : st(k);
       const btn = `<button class="pn ${S.platSec === k || (k === "telegram" && S.platSec === "import") ? "on" : ""} ${off ? "off" : ""} ${isPlat(k) ? "hassw" : ""}" data-psec="${k}" aria-current="${S.platSec === k || (k === "telegram" && S.platSec === "import")}"><span class="lamp ${lamp}"></span><span><b>${l}</b>${sub ? `<span>${esc(sub)}</span>` : ""}</span></button>`;
@@ -1479,7 +1563,7 @@
     const tg = ins.tagging || {}, job = S.info.ins_job, run = job && job.state === "running";
     const pl = (n) => `${num(n)} ${plural(n, "пост", "поста", "постов")}`;
     const tagRow = (t) => `<div class="grow-row"><span class="gname">${esc(t.label)}<br><span class="muted small">${pl(t.n)}${t.days ? `, последний ${num(t.days)} ${plural(t.days, "день", "дня", "дней")} назад` : ""}</span></span>${dbar(t.mult)}<b class="gval">${mult(t.mult)}</b></div>`;
-    let h = `<section class="card"><div class="head"><h2>Что на картинке заходит лучше ${hint("По тегам, которые теггер нашёл на превью постов. ×1,4 — посты с этим тегом в среднем на 40% лучше вашего обычного поста при прочих равных: то же время, тот же тип поста. Редкие теги подтянуты к ×1.")}</h2></div>`;
+    let h = `<section class="card"><div class="head"><h2>Что на картинке заходит лучше ${hint("Модель оценивает связи тегов с результатом с учётом времени и типа поста. Это не доказательство влияния тега: персонаж, стиль и качество могут отличаться. Редкие признаки подтянуты к ×1.")}</h2></div>`;
     if (run) h += `<div id="insprog"><div class="progress"><div data-bar style="width:${Math.round(job.progress * 100)}%"></div></div><p class="muted small" data-msg>${esc(job.message || "")}</p></div>`;
     else if (job && job.state === "error") h += `<p class="err">${esc(job.error || "")}</p>`;
     if (!run && tg.todo) {
@@ -1489,9 +1573,10 @@
         : `<p class="muted">Чтобы разобрать содержание работ, <a href="#" data-view-link="platforms" data-tab="tags">установите теггер</a>.</p>`;
     }
     if (!tg.with_preview && !tg.tagged) h += `<p class="muted small">У импортированных постов нет превью. Переимпортируйте канал из выгрузки Telegram Desktop с фото или через API.</p>`;
-    if (ins.too_few) h += `<p class="muted">Для выводов нужно хотя бы 30 постов старше недели (сейчас ${num(ins.n)}).</p>`;
+    h += `<p class="muted small">Связи в истории не доказывают влияние тега: вместе с ним могли меняться персонаж, композиция и качество работы.</p>`;
+    if (ins.too_few) h += `<p class="muted">Для выводов нужно хотя бы 30 постов старше недели с предшествующей нормой канала (сейчас ${num(ins.n)}).</p>`;
     if (ins.tags_up && ins.tags_up.length) {
-      h += `<div class="groups"><div class="grp"><h3>Поднимает охват</h3>${ins.tags_up.slice(0, 10).map(tagRow).join("")}</div>
+      h += `<div class="groups"><div class="grp"><h3>Связано с большим откликом</h3>${ins.tags_up.slice(0, 10).map(tagRow).join("")}</div>
         <div class="grp"><h3>Заходит слабее</h3>${ins.tags_down.length ? ins.tags_down.map(tagRow).join("") : `<p class="muted small">Явно проседающих тем нет.</p>`}</div>
         ${ins.forgotten && ins.forgotten.length ? `<div class="grp"><h3>Заходило, но давно не было ${hint("Темы, которые давали больше обычного, а вы их не публиковали месяц и дольше. Кандидаты на следующий арт.")}</h3>${ins.forgotten.map(tagRow).join("")}</div>` : ""}</div>`;
     } else if (st.hashtags.length) {
@@ -1504,12 +1589,9 @@
       h += `<div class="split">`;
       if (c) h += `<section class="card"><div class="head"><h2>Как пост набирает ${st.metric === "reactions" ? "реакции" : "просмотры"} ${hint((c.own ? "По вашим замерам. " : "Светлые столбики — примерная кривая Telegram: своих замеров пока мало. Они копятся сами, пока работает фоновая отправка. ") + "По этой кривой карточка поста в «Истории» оценивает итог уже через пару часов.")}</h2><span class="muted small">доля от итога за неделю</span></div>
         <div class="curve">${c.points.map((p) => `<div class="cv"><div class="cvb"><span style="height:${Math.round(p.frac * 100)}%" class="${p.own ? "" : "est"}"></span></div><b>${Math.round(p.frac * 100)}%</b><span class="muted small">${hl(p.h)}</span></div>`).join("")}</div></section>`;
-      if (q) h += `<section class="card"><div class="head"><h2>Прогноз популярности ${hint("Проверка честная: модель угадывает посты, которых не видела при обучении. Чем больше постов и тегов, тем точнее. Сам прогноз — в «Новом посте».")}</h2><span class="muted small">учится на ${pl(q.n)}</span></div>
-        <p><span class="badge ${q.level === "good" ? "ok" : q.level === "mid" ? "warn" : "off"}" style="padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600">${q.level === "good" ? "Работает" : q.level === "mid" ? "Грубый ориентир" : "Пока слабый"}</span> <span class="muted" translate="no">${esc(q.text)}</span></p>
-        <div class="kvlist"><div><span>Угадывает «лучше или хуже обычного»</span><b>${Math.round(q.direction * 100)}% постов</b></div>
-          <div><span>Обычная ошибка в цифре</span><b>в ${q.typical_err.toFixed(1).replace(".", DEC)} раза</b></div>
-          <div><span>Постов с тегами картинки</span><b>${num(q.n_tagged)} из ${num(q.n)}</b></div>
-          ${acc && acc.n ? `<div><span>Прогнозы при публикации попали в диапазон</span><b>${acc.inside} из ${acc.n}</b></div>` : ""}</div>
+      if (q) h += `<section class="card"><div class="head"><h2>Прогноз популярности</h2><span class="muted small">учится на ${pl(q.n)}</span></div>
+        ${window.Charts.forecastQuality(q)}
+        ${acc && acc.n ? `<p>Сохранённые прогнозы при публикации попали в диапазон: <b>${acc.inside} из ${acc.n}</b></p>` : ""}
         ${acc && acc.items && acc.items.length ? `<h3>Прогноз и факт</h3><div class="kvlist">${acc.items.slice(0, 6).map((i) => `<div><span class="clip">${esc(i.title || "без названия")} <span class="muted small">${esc(i.channel || "")}</span></span><span>${num(i.expected)} → <b>${num(i.actual)}</b>${i.mature ? "" : ` <span class="muted small">набирает</span>`}</span></div>`).join("")}</div>` : ""}</section>`;
       h += `</div>`;
     }
@@ -1549,7 +1631,7 @@
   const SOON = {};
   function renderSoon() {
     const [t, d] = SOON[S.view] || ["Скоро", ""];
-    $main.innerHTML = `<h1>${t}</h1><section class="card soon"><p>${d}</p><p class="muted small">Раздел в работе. Сейчас готовы <a href="#" data-view-link="trends">тренды blep.art и e621</a>.</p></section>`;
+    $main.innerHTML = `<h1>${t}</h1><section class="card soon"><p>${d}</p><p class="muted small">Раздел в работе. Сейчас готовы <a href="#" data-view-link="trends">тренды blep.art, e621 и floofgens.net</a>.</p></section>`;
   }
 
   // ---------------- события ----------------
@@ -1579,7 +1661,7 @@
     if (pfb) {
       const a = pfb.dataset.action;
       try {
-        if (a === "perf-report") await api("perf_report");
+        if (a === "perf-report") await api("perf_report", {client:window.PerfUI?.snapshot() || []});
         if (a === "perf-kill") { const r = await api("perf_kill_browsers"); toast(r.killed ? `Закрыто процессов браузера: ${r.killed}` : "Лишних процессов браузера нет", "ok"); }
         if (a === "perf-tagger") await api("tagger_unload");
       } catch (err) { /* ошибка уже показана */ }
@@ -1595,10 +1677,17 @@
       try { await window.Pub.setOrder(o); } catch (err) { alert(err.message); }
       render(); return;
     }
+    const catalog = e.target.closest('[data-platform-catalog]');
+    if (catalog) { S.platSec = 'features'; store.set('platSec', 'features'); S.platformPickerOpen = true; render(); document.querySelector('#platform-picker input')?.focus(); return; }
+    const removePlatform = e.target.closest('[data-platform-remove]');
+    if (removePlatform) {
+      S.info.modules = await api('modules_set', {key: removePlatform.dataset.platformRemove, on: false});
+      applyModules(); S.plan = null; await window.Pub.load('settings'); render(); return;
+    }
     const mon = e.target.closest("[data-modon]");
     if (mon) { S.info.modules = await api("modules_set", { key: mon.dataset.modon, on: true }); S.plan = null; await window.Pub.load("settings"); render(); return; }
     const ps = e.target.closest("[data-psec]");
-    if (ps) { S.platSec = ps.dataset.psec; store.set("platSec", S.platSec); render(); window.scrollTo(0, 0); return; }
+    if (ps) { S.platSec = ps.dataset.psec; store.set("platSec", S.platSec); render(); window.scrollTo(0, 0); await loadTg(false); return; }
     const link = e.target.closest("[data-view-link]");
     if (link) { e.preventDefault(); S.view = link.dataset.viewLink === "platforms" ? "settings" : link.dataset.viewLink; store.set("view", S.view);
       if (link.dataset.tab) { S.platSec = link.dataset.tab; store.set("platSec", S.platSec); }
@@ -1690,7 +1779,7 @@
       if (S[k] === v) return;
       S[k] = v;
       if (k === "src") { store.set("src", v); S.sel = null; S.manual = false; }
-      if (k === "rating" || k === "cat") store.set(k, v);
+      if (["rating","cat","trendPeriod"].includes(k)) store.set(k, v);
       if (k === "sp" || k === "sc") { store.set(k, v); await loadStats(); render(); return; }
       await loadOverview(); render(); return;
     }
@@ -1764,7 +1853,7 @@
       }
       if (act === "pickfiles") {
         const files = await api("pick_files");
-        const posts = files.find((f) => /posts-/.test(f)), tags = files.find((f) => /tags-/.test(f));
+        const posts = files.find((f) => /posts(?:-|\.csv)/.test(f)), tags = files.find((f) => /tags(?:-|\.csv)/.test(f));
         if (posts) document.getElementById("mp").value = posts;
         if (tags) document.getElementById("mt").value = tags;
       }
@@ -1780,7 +1869,7 @@
         if (v("nick") !== null) ch.nickname = v("nick").trim();
         if (v("style") !== null) ch.style_tags = v("style").split(/[\s,]+/).filter(Boolean);
         if (v("hidden") !== null) ch.hidden_tags = v("hidden").split(/[\s,]+/).filter(Boolean);
-        if (v("r6") !== null) ch.trends = { e6ai: { refresh_days: +v("r6") || 1 }, e621: { refresh_days: +v("r621") || 7 } };
+        if (v("r6") !== null) ch.trends = { e6ai: { refresh_days: +v("r6") || 1 }, e621: { refresh_days: +v("r621") || 7 }, floofgens:{refresh_days:+v("rfloof")||1} };
         await api("settings_save", { changes: ch });
         await loadInfo(); S.flash = "Сохранено"; render();
       }
@@ -1827,6 +1916,7 @@
       const c = S.tgCh.find((x) => x.chat_id === e.target.dataset.chsel);
       S.tgCh = await api("tg_select", { chat_id: c.chat_id, selected: e.target.checked, rating: c.rating || "all" }); S.stats = null; render(); return;
     }
+    if (e.target.dataset.action === "trend-common") { S.trendCommon = e.target.checked; store.set("trendCommon",S.trendCommon); await loadOverview(); render(); }
     if (e.target.dataset.action === "mine") { S.mine = e.target.checked; store.set("mine", S.mine); await loadOverview(); render(); }
   });
 

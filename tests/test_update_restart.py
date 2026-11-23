@@ -44,6 +44,29 @@ class UpdateRestart(unittest.TestCase):
             self.assertTrue(ok,error)
             self.assertEqual(client.open.call_count,1)
 
+    def test_unsuccessful_restart_restores_and_starts_previous_version(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ):
+            root = Path(directory) / 'install'
+            data = Path(directory) / 'data'
+            new = data / 'updates' / 'new'
+            for folder, version in ((root, '0.2.16'), (new, '0.2.17')):
+                (folder / 'app').mkdir(parents=True)
+                (folder / 'app' / '__init__.py').write_text(f'__version__ = "{version}"')
+            args = ['update', '--root', str(root), '--new', str(new), '--data', str(data)]
+            child = Mock()
+            child.poll.return_value = None
+            with patch.object(U.sys, 'argv', args), patch.object(U.time, 'sleep'), patch.object(
+                U.subprocess, 'run', return_value=Mock(returncode=0)
+            ), patch.object(U, 'popen_detached', return_value=child), patch.object(
+                U, 'wait_for_restart', side_effect=[(False, 'timeout'), (True, '')]
+            ) as wait:
+                self.assertEqual(U.main(), 1)
+            child.kill.assert_called_once()
+            child.wait.assert_called_once()
+            self.assertEqual([call.args[2] for call in wait.call_args_list], ['0.2.17', '0.2.16'])
+            self.assertIn('0.2.16', (root / 'app' / '__init__.py').read_text())
+            self.assertFalse(json.loads((data / 'update-result.json').read_text())['ok'])
+
     def test_restart_cleans_python_environment_and_captures_errors(self):
         with tempfile.TemporaryDirectory() as directory,patch.dict(os.environ,PYTHONPATH='old-code',PYTHONHOME='wrong-python'),patch.object(U.subprocess,'Popen') as start:
             U.popen_detached(['python','-m','app'],directory,logfile=Path(directory)/'update.log')

@@ -18,6 +18,7 @@ from core.common import PlatformError
 
 _lock = threading.Lock()
 PLATFORMS = {
+    "deviantart": ("deviantart.com", "sta.sh"),
     "vk": ("vk.com", "vk.ru", "vkid.ru"),
     "reddit": ("reddit.com",),
     "x": ("x.com", "twitter.com"),

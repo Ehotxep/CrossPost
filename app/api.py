@@ -23,6 +23,12 @@ class Api:
             raise ValueError("Восстановление подготовлено. Перезапустите приложение для применения копии.")
         if name.startswith("_") or name == "call" or not callable(getattr(self, name, None)):
             raise ValueError(f"Неизвестный метод: {name}")
+        tag_methods = {"tag_cats", "post_tags", "e6_learned", "e6_forget", "e6_never", "e6_check_now", "e6db_status", "e6db_update", "tag_search", "e6_initial", "e6_form"}
+        if name in tag_methods:
+            from app import e6tags
+            args = dict(args or {})
+            with e6tags.for_site(args.pop("booru_site", None) or e6tags.site()):
+                return getattr(self, name)(**args)
         return getattr(self, name)(**(args or {}))
 
     # --- общее ---
@@ -32,7 +38,7 @@ class Api:
                 "trends": {src: self._trends_state(src) for src in dumps.SOURCES},
                 "tg_job": self.jobs.get("tg:sync"), "pub_job": self.jobs.get("publish"),
                 "ins_job": self.jobs.get("insights:tag"),
-                "browser_jobs": {p: self.jobs.get(p + ":auth") for p in ('reddit', 'joyreactor')},
+                "browser_jobs": {p: self.jobs.get(p + ":auth") for p in ('reddit', 'joyreactor', 'x')},
                 "vk_job": self.jobs.get("vk:auth"), "vk_stats_job": self.jobs.get("vk:stats"), "modules": self.modules(), "tagger_paused": __import__("app.tagger.remote", fromlist=["x"]).paused, "levels": self._levels(),
                 "update": self._update_info()}
 
@@ -100,7 +106,8 @@ class Api:
         return PS.module_on(key)
 
     # --- панель процессов: всё, что сейчас идёт в фоне ---
-    JOB_LABELS = {"tg:pool": ("Запас прокси Telegram", "settings:net"), "ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды blep.art", "trends"), "trends:e621": ("Тренды e621", "trends"),
+    JOB_LABELS = {
+        "tg:pool": ("Запас прокси Telegram", "settings:net"), "ext:sync": ("Посты ВК и Bluesky для календаря", "history"), "trends:e6ai": ("Тренды blep.art", "trends"), "trends:e621": ("Тренды e621", "trends"), "trends:floofgens": ("Тренды floofgens.net", "trends"),
                   "e6db": ("База тегов blep.art", "settings:tags"), "tagger:install": ("Установка теггера", "settings:tags"),
                   "tagger:run": ("Подбор тегов", "post"), "publish": ("Публикация", "post"),
                   "tg:sync": ("Загрузка из Telegram", "settings:import"), "insights:tag": ("Разметка истории теггером", "stats"),
@@ -355,6 +362,8 @@ class Api:
 
     def trends_import(self, source: str, posts_path: str, tags_path: str):
         """Подключить вручную скачанные файлы выгрузки (в фоне)."""
+        if source not in dumps.SOURCES:
+            raise ValueError("Неизвестный источник")
         from app import subproc
 
         def run(report):
@@ -363,20 +372,36 @@ class Api:
             metrics.forget(source)
         return self.jobs.start(f"trends:{source}", run)
 
-    def trends_overview(self, source: str, rating: str = "all", category: str = "all", mine_only: bool = False):
+    def trends_overview(self, source: str, rating: str = "all", category: str = "all", mine_only: bool = False, show_common: bool = False, period: str = "quarter"):
         model = metrics.get_model(source, rating)
         if model is None:
             return None
         cfg = settings.load()
         style, hidden = cfg.get("style_tags", []), cfg.get("hidden_tags", [])
-        data = metrics.overview(model, category, style, mine_only, hidden)
-        other = "e6ai" if source == "e621" else "e621"
+        data = metrics.overview(model, category, style, mine_only, hidden, show_common, period)
+        if source == 'e621':
+            other = 'floofgens' if (aggregate.out_dir('floofgens') / 'meta.json').exists() else 'e6ai'
+        else:
+            other = 'e621'
+        target = other if source == 'e621' else source
+        data['leads_target'] = target
+        data['leads_label'] = dumps.LABELS[target]
+        data['comparison_note'] = ''
         m_other = metrics.get_model(other, rating)
         if m_other is not None:
-            m621, m6 = (model, m_other) if source == "e621" else (m_other, model)
-            data["leads"] = metrics.leads(m621, m6, style, hidden=hidden)
+            from datetime import date
+            gap = abs((date.fromisoformat(model.meta['dump_date']) - date.fromisoformat(m_other.meta['dump_date'])).days)
+            if gap > 14:
+                data['leads'] = None
+                data['comparison_note'] = 'Даты выгрузок отличаются больше чем на две недели — обновите данные для сравнения'
+            elif any(snap.site_n[snap.cols(13)].sum() < snap.mins['rise'] or snap.site_n[snap.cols(26,13)].sum() < snap.mins['rise'] for snap in (model,m_other)):
+                data['leads'] = None
+                data['comparison_note'] = 'Недостаточно истории для сравнения сайтов за два трёхмесячных периода'
+            else:
+                m621, target_model = (model, m_other) if source == 'e621' else (m_other, model)
+                data['leads'] = metrics.leads(m621, target_model, style, hidden=hidden, show_common=show_common, category=category, mine_only=mine_only)
         else:
-            data["leads"] = None
+            data['leads'] = None
         return data
 
     def trends_forecast(self, source: str, tag: str, rating: str = "all"):
@@ -557,15 +582,17 @@ class Api:
 
     def pub_save(self, section: str, changes: dict):
         from app.publish import settings as PS
-        if section in ('reddit', 'joyreactor'):
+        if section in ('reddit', 'joyreactor', 'x'):
             from app.publish.browser_targets import validate_changes
             changes = validate_changes(section, changes)
         if section == "telegram" and not changes.get("bot_token"):
             changes.pop("bot_token", None)   # пустое поле = оставить сохранённый токен
-        if section == "e6ai" and not changes.get("api_key"):
+        if section in PS.BOORU and not changes.get("api_key"):
             changes.pop("api_key", None)
         if section == "e6ai":
-            changes = PS.site_changes(changes)   # аккаунт и постоянные теги — выбранного сайта
+            changes = dict(changes)
+            if "api_key" in changes:
+                changes["blep_api_key"] = changes.pop("api_key")
         if section == "vk" and not changes.get("access_token"):
             changes.pop("access_token", None)
         if section == "deviantart" and not changes.get("client_secret"):
@@ -655,14 +682,19 @@ class Api:
             raise ValueError("Сначала укажите токен бота")
         return tg_bot.chat_info(cfg, chat, need_post=not group)
 
-    def pub_tg_known(self):
-        """Каналы и группы, которые знает импорт (если выполнен вход через API — с пометкой канал/группа)."""
-        try:
-            authorized = self.tg.keys() is not None and self.tg.status().get("authorized")
-        except Exception:
-            authorized = False
-        rows = self.tg.channels(refresh=bool(authorized))
-        return {"authorized": bool(authorized),
+    def pub_tg_known(self, refresh: bool = False):
+        """Saved chat suggestions are local; contact Telegram only on explicit refresh."""
+        from app import cache
+        if refresh:
+            status = self.tg_status()
+            authorized = bool(status.get('authorized'))
+            if not authorized:
+                raise ValueError(status.get('error') or 'Для обновления списка войдите в Telegram через API')
+        else:
+            saved = cache.read('tg_status')
+            authorized = bool(saved and saved.get('data', {}).get('authorized'))
+        rows = self.tg.channels(refresh=bool(refresh and authorized))
+        return {"authorized": authorized,
                 "chats": [{"chat_id": r["chat_id"], "title": r["title"], "username": r["username"],
                            "broadcast": r.get("broadcast")} for r in rows]}
 
@@ -730,7 +762,7 @@ class Api:
         cfg = PS.load()
         if not cfg[platform].get('browser_ok'):
             raise ValueError('Сначала войдите на сайт через браузер')
-        if platform == 'reddit' and community not in BT.SUBREDDITS:
+        if platform == 'reddit' and (not BT.valid_community(community) or community not in cfg['reddit'].get('communities', {})):
             raise ValueError('Неизвестное сообщество Reddit')
         flair = 'SFW' if platform == 'reddit' and community == 'FurAI' else ''
         # The placeholder is only used in the unsubmitted test form; real posts
@@ -747,10 +779,14 @@ class Api:
                 image = Image.new('RGB', (800, 600), (235, 238, 245))
                 ImageDraw.Draw(image).text((40, 280), 'Crosspost test - not published', fill=(40, 60, 120))
                 image.save(path, 'JPEG')
-                result = social_web.post(platform, [str(path)], title, text, community=community, flair=flair,
-                                         nsfw=False, tags=tags, dry_run=True,
-                                         headless=False, progress=lambda p: report(progress=p),
-                                         log=lambda message: report(message=message))
+                if platform == 'x':
+                    result = social_web.x_dry([str(path)], headless=False, progress=lambda p: report(progress=p),
+                                              log=lambda message: report(message=message))
+                else:
+                    result = social_web.post(platform, [str(path)], title, text, community=community, flair=flair,
+                                             nsfw=False, tags=tags, dry_run=True,
+                                             headless=False, progress=lambda p: report(progress=p),
+                                             log=lambda message: report(message=message))
             report(progress=1, message='Пробный прогон без публикации. Снимок: ' + str(result['shot']))
         return self.jobs.start(platform + ':auth', run)
 
@@ -914,20 +950,24 @@ class Api:
         return outputs.open_folder()
 
     # --- e6ai и теггер ---
-    def pub_e6ai(self, username: str = "", api_key: str = ""):
+    def pub_e6ai(self, username: str = "", api_key: str = "", site: str = "e6ai"):
         """Проверить и сохранить вход на e6ai (пустой ключ — оставить сохранённый)."""
         from app.publish import e6ai as E6, settings as PS
-        cur = PS.load()["e6ai"]
+        if site not in PS.BOORU:
+            raise ValueError("Неизвестный сайт")
+        cur = PS.load()[site]
         cfg = dict(cur, username=(username or cur["username"]).strip(), api_key=(api_key or cur["api_key"]).strip())
         info = E6.check(cfg)
-        PS.update("e6ai", PS.site_changes({"username": cfg["username"], "api_key": cfg["api_key"], "enabled": True}))
+        PS.update(site, ({"username": cfg["username"], "blep_api_key": cfg["api_key"], "enabled": True} if site == "e6ai" else {"username": cfg["username"], "api_key": cfg["api_key"], "enabled": True}))
         out = self.pub_settings()
         out["e6ai_check"] = info
         return out
 
     def pub_e6_site(self, site: str):
-        """Куда загружать: e6ai или e621. Аккаунт, ключ и постоянные теги у каждого сайта свои."""
+        """Совместимость старого клиента: выбрать только базу тегов, без переключения отправки."""
         from app.publish import settings as PS
+        if site in PS.BOORU_SITES and not PS.BOORU_SITES[site]["available"]:
+            raise ValueError(f'{PS.BOORU_SITES[site]["name"]}: в разработке, публикация пока недоступна')
         if site not in PS.BOORU:
             raise ValueError("Неизвестный сайт")
         PS.update("e6ai", {"site": site})
@@ -1095,12 +1135,13 @@ class Api:
     # --- производительность ---
     def perf_status(self):
         from app import perf
-        return {"now": perf.snapshot(), "summary": perf.summary(24)}
+        from app import diagnostics
+        return {"now": perf.snapshot(), "summary": perf.summary(24), "timings": diagnostics.snapshot()}
 
-    def perf_report(self):
+    def perf_report(self, client: list | None = None):
         """Сохранить отчёт о производительности (без ключей и текстов постов) и открыть папку."""
         from app import perf
-        f = perf.report()
+        f = perf.report(client=client)
         try:
             self._open_folder(str(__import__("pathlib").Path(f).parent))
         except Exception:  # noqa: BLE001 — нет проводника (тесты) — не страшно
@@ -1161,7 +1202,7 @@ class Api:
         from app import e6tags
         from app.publish import settings as PS
         import json as _json
-        never = PS.load()["e6ai"].get("never_suggest") or []
+        never = PS.load()[e6tags.site()].get("never_suggest") or []
         out = {}
         for i in ids or []:
             f = sub("uploads") / f"{i}.tags.json"
@@ -1170,12 +1211,13 @@ class Api:
 
     # --- чему научились по правкам модераторов e6ai ---
     def e6_learned(self):
+        from app import e6tags
         from app.insights import e6learn
         from app.publish import settings as PS
         L = e6learn.learned()
         return {"removed": sorted([t for t, v in L.items() if v["removed"] > v["added"]], key=lambda t: -L[t]["removed"]),
                 "added": sorted([t for t, v in L.items() if v["added"] >= v["removed"] and v["added"]], key=lambda t: -L[t]["added"]),
-                "counts": L, "never": PS.load()["e6ai"].get("never_suggest") or []}
+                "counts": L, "never": PS.load()[e6tags.site()].get("never_suggest") or []}
 
     def e6_forget(self, tag: str = ""):
         from app.insights import e6learn
@@ -1185,7 +1227,8 @@ class Api:
     def e6_never(self, tags: list):
         from app.publish import settings as PS
         clean = sorted({str(t).strip().lower().replace(" ", "_") for t in tags or [] if str(t).strip()})
-        PS.update("e6ai", {"never_suggest": clean})
+        from app import e6tags
+        PS.update(e6tags.site(), {"never_suggest": clean})
         return self.e6_learned()
 
     def e6_check_now(self):
@@ -1211,6 +1254,8 @@ class Api:
     def _e6_tags_dump(self, site: str = "e6ai"):
         """Файл тегов из выгрузки для трендов, если он сегодняшний — второй раз не качаем."""
         from datetime import date
+        if site not in dumps.SOURCES:
+            return None
         loc = dumps.local_latest(site)
         if loc and loc[0] == date.today().isoformat():
             return loc[2]
@@ -1223,14 +1268,16 @@ class Api:
     def e6_initial(self, ids: list):
         """Начальный выбор тегов для картинок по подсказкам теггера (только уверенное, без мелких деталей)."""
         from app.publish import e6check, settings as PS
-        pre = PS.load()["e6ai"].get("preselect", 0.35)
+        from app import e6tags
+        pre = PS.load()[e6tags.site()].get("preselect", 0.35)
         preds = self.post_tags(ids)
         return {i: (e6check.initial(p, pre) if p is not None else None) for i, p in preds.items()}
 
     def e6_form(self, items: list, rating: str = ""):
         """Строки компактной формы и проверка для каждой картинки: items = [{id, tags, meta}]."""
         from app.publish import e6check, settings as PS
-        e6 = PS.load()["e6ai"]
+        from app import e6tags
+        e6 = PS.load()[e6tags.site()]
         from app.publish import uploads
         preds = self.post_tags([x["id"] for x in items or []])
 
@@ -1356,6 +1403,8 @@ class Api:
         if p["errors"]:
             raise ValueError(p["errors"][0])
         duplicates.require_confirmation(draft, duplicate_ack)
+        from app.publish.da_access import preserve_preparation
+        draft = preserve_preparation(draft, p)
         self._tg_ctx()
         from core.fsutil import file_lock
         from app.paths import data_dir
@@ -1363,7 +1412,9 @@ class Api:
         with file_lock(data_dir() / 'publication-start'):
             if backups.pending():
                 raise ValueError('Перезапустите приложение для завершения восстановления')
-            return self.jobs.start("publish", lambda report: runner.start(draft, report))
+            if not self.jobs.start("publish", lambda report: runner.start(draft, report)):
+                raise ValueError("Предыдущая публикация ещё идёт")
+            return True
 
     def post_schedule(self, draft: dict, run_at: str, duplicate_ack: str = ''):
         """Запланировать пост на дату (ISO, с часовым поясом или по времени этого компьютера)."""
@@ -1413,7 +1464,7 @@ class Api:
         from app.publish import schedule
         schedule.publish_now(sid)
         if not worker.status()["running"]:   # фоновой отправки нет — публикуем из окна
-            threading.Thread(target=schedule.tick, args=(self,), daemon=True).start()
+            threading.Thread(target=schedule.dispatch_now, args=(self,), daemon=True).start()
         return schedule.items()
 
     # --- конвейер: очередь постов, время выбирает программа ---
@@ -1596,6 +1647,14 @@ class Api:
             out["tagging"] = bool(ids) and self.tagger_run(ids) is not None
         return out
 
+    def post_edit_prepare(self, pub_id: int, key: str):
+        from app.publish.edit_post import prepare
+        return prepare(pub_id, key)
+
+    def post_edit_apply(self, pub_id: int, key: str, text: str, revision: str):
+        from app.publish.edit_post import apply
+        return apply(pub_id, key, text, revision)
+
     def pub_stats(self, pub_id: int):
         from app.insights import post_stats
         return post_stats.for_publication(int(pub_id))
@@ -1624,21 +1683,33 @@ class Api:
         from app.insights import warmup as W
         if not _re.fullmatch(r"\d{4}-\d{2}", ym or ""):
             raise ValueError("Месяц в виде ГГГГ-ММ")
-        from app.insights import ext_posts
+        from app.insights import calendar, ext_posts
         try:
             ext_posts.mirror_vk()   # свежие замеры ВК — сразу, без ожидания 3-часового круга (локально, без сети)
         except Exception:  # noqa: BLE001
             from app.applog import log
             log("календарь: не удалось подтянуть замеры ВК")
         ext_posts.sync_async()   # посты ВК и Bluesky, вышедшие мимо Crosspost, — раз в 3 часа, в фоне
-        r = cache.get(W.calendar_name(ym), W.calendar_compute(ym), W.calendar_key(), max_age=1800)
+        hidden = calendar.hidden_atoms()
+        visibility = calendar.visibility_key(hidden)
+        r = cache.get(W.calendar_name(ym), lambda: calendar.month(ym, hidden=hidden),
+                      W.calendar_key(), max_age=1800,
+                      accept_cached=lambda data: data.get("visibility") == visibility)
         return dict(r["data"], _cache={"at": r["at"], "stale": r["stale"], "refreshing": r["refreshing"]},
                     ext=ext_posts.state())
 
-    def cal_merge(self, atoms: list):
+    def cal_hide(self, atoms: list):
+        from app.insights import calendar
+        return calendar.set_visibility(atoms, hidden=True)
+
+    def cal_restore(self, atoms: list):
+        from app.insights import calendar
+        return calendar.set_visibility(atoms, hidden=False)
+
+    def cal_merge(self, atoms: list, force: bool = False):
         """Объединить выбранные работы календаря в одну (атомы — исходные посты)."""
         from app.insights import calendar
-        return calendar.merge(atoms)
+        return calendar.merge(atoms, force=force)
 
     def cal_split(self, atoms: list):
         """Разъединить работу календаря на отдельные посты."""

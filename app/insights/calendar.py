@@ -4,6 +4,7 @@
 Один арт, вышедший в двух каналах (SFW-канал и 18+), — одна работа в календаре: склеиваем по
 публикации из Crosspost или по похожести превью (перцептивный хэш), лучший индекс из копий.
 """
+import hashlib
 import json
 import math
 from datetime import date, datetime, timedelta
@@ -48,11 +49,11 @@ def _int(v):
     return int(v)
 
 
-def _level(v) -> str:
+def _level(v, levels=None) -> str:
     if v is None or (isinstance(v, float) and math.isnan(v)):
         return ""
     from app.insights import norms
-    lv = norms.levels()   # ступени — из вашей истории (по всем каналам)
+    lv = levels if levels is not None else norms.levels()   # ступени — из вашей истории (по всем каналам)
     return "l4" if v >= lv["super"] else "l3" if v >= lv["hit"] else "l2" if v >= lv["good"] else "l0" if v < 0.77 else "l1"
 
 
@@ -80,7 +81,33 @@ def rules_key():
     return (r["n"], r["m"])
 
 
+
+def hidden_atoms():
+    return {row["atom"] for row in db.query("SELECT atom FROM calendar_hidden")}
+
+
+def visibility_key(atoms):
+    return hashlib.sha256(json.dumps(sorted(atoms)).encode()).hexdigest()
+
+
+def set_visibility(atoms, *, hidden):
+    """Hide calendar sources without modifying publication history or imported data."""
+    if not isinstance(atoms, list) or not 1 <= len(atoms) <= 1000 or any(
+        not isinstance(atom, str) or not atom or len(atom) > 256 or "\x00" in atom
+        for atom in atoms
+    ):
+        raise ValueError("Выберите запись календаря")
+    changed = []
+    with db.tx() as conn:
+        for atom in dict.fromkeys(atoms):
+            sql = ("INSERT OR IGNORE INTO calendar_hidden (atom) VALUES (?)"
+                   if hidden else "DELETE FROM calendar_hidden WHERE atom=?")
+            if conn.execute(sql, (atom,)).rowcount:
+                changed.append(atom)
+    return changed
+
 def _rules():
+    db.conn().execute("CREATE TABLE IF NOT EXISTS cal_rules (a TEXT NOT NULL, b TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (a, b))")
     joins, splits = [], set()
     for r in db.query("SELECT a, b, kind FROM cal_rules"):
         if r["kind"] == "join":
@@ -90,11 +117,16 @@ def _rules():
     return joins, splits
 
 
-def merge(keys: list) -> int:
+def merge(keys: list, force: bool = False) -> int:
     """Вручную объединить посты (ключи исходных постов) в одну работу."""
     keys = list(dict.fromkeys(str(k) for k in keys or []))
     if len(keys) < 2:
         raise ValueError("Выберите хотя бы две работы")
+    if len(keys) > 1000:
+        raise ValueError("Выберите до 1000 исходных постов")
+    joins, splits = _rules()
+    if not force and any(frozenset((a, b)) in splits for a in keys for b in keys if a != b):
+        raise ValueError("Эти посты ранее отмечены разными. Используйте принудительное объединение.")
     with db.tx() as c:
         for i, a in enumerate(keys):   # прежние «не склеивать» между этими постами снимаем
             for b in keys[i + 1:]:
@@ -122,7 +154,7 @@ def split(keys: list) -> int:
 def decide(a: list, b: list, yes: bool) -> bool:
     """Ответ на подсказку «Похоже на тот же арт»: объединить или запомнить, что это разные работы."""
     if yes:
-        merge([*a, *b])
+        merge([*a, *b], force=True)
         return True
     with db.tx() as c:
         for x in a:
@@ -149,15 +181,25 @@ def _group(atoms: list):
     joins, splits = _rules()
     by_key = {a["key"]: a for a in atoms}
     parent = {k: k for k in by_key}
+    for a, b in joins:
+        parent.setdefault(a, a)
+        parent.setdefault(b, b)
+    for atom in atoms:
+        if atom.get("pub_id"):
+            alias = f'u{atom["pub_id"]}'
+            parent.setdefault(alias, alias)
 
     def find(x):
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
         return x
+    joined_keys = {key for pair in joins for key in pair}
+    for atom in atoms:
+        if atom.get("pub_id") and f'u{atom["pub_id"]}' in joined_keys:
+            parent[find(atom["key"])] = find(f'u{atom["pub_id"]}')
     for a, b in joins:
-        if a in by_key and b in by_key:
-            parent[find(a)] = find(b)
+        parent[find(a)] = find(b)
     bucket: dict = {}
     for a in atoms:
         bucket.setdefault(find(a["key"]), []).append(a)
@@ -177,12 +219,21 @@ def _group(atoms: list):
                     return True
         return False
     out: list = []
+    by_publication = {}
     for g in glist:
-        twin = next((o for o in out[-12:] if not blocked(g, o) and same(g, o)), None)
+        ids = {x["pub_id"] for x in g if x["pub_id"]}
+        twin = next((o for pid in sorted(ids) for o in by_publication.get(pid, []) if not blocked(g, o)), None)
         if twin is None:
-            out.append(list(g))
+            twin = next((o for o in out[-12:] if not blocked(g, o) and same(g, o)), None)
+        if twin is None:
+            twin = list(g)
+            out.append(twin)
         else:
             twin.extend(g)
+        for pid in ids:
+            groups = by_publication.setdefault(pid, [])
+            if all(existing is not twin for existing in groups):
+                groups.append(twin)
     return out, splits
 
 
@@ -208,27 +259,44 @@ def _suggest(groups: list, splits: set, limit: int = 5) -> list:
     return [r[1:] for r in res[:limit]]
 
 
-def _collapse(g: list) -> dict:
-    """Группа постов → одна работа в календаре; цифры и превью — от лучшей копии."""
-    main = max(g, key=lambda x: (x["index"] if x["index"] is not None else -1, bool(x["preview"])))
-    first = min(g, key=lambda x: x["ts"])
+def _collapse(g: list, joined=None) -> dict:
+    """Группа → работа: данные свежей публикации, без суммирования повторов."""
+    # Destinations of one CrossPost publication are one source. A later mirror
+    # without an index must not hide available statistics of that same post.
+    source_key = lambda x: ("pub", x["pub_id"]) if x.get("pub_id") else ("post", x["key"])
+    newest_source = source_key(max(g, key=lambda x: x["ts"]))
+    fresh = [x for x in g if source_key(x) == newest_source]
+    main = max(fresh, key=lambda x: (x["index"] if x["index"] is not None else -1,
+                                     x.get("stat_at") or 0, bool(x["preview"])))
+    first = min(fresh, key=lambda x: x["ts"])
     it = {k: v for k, v in main.items() if k != "_h"}
     it.update(day=first["day"], time=first["time"], ts=first["ts"])
     it["channels"] = sorted({c for x in g for c in x["channels"]})
-    it["pub_id"] = next((x["pub_id"] for x in g if x["pub_id"]), None)
+    it["pub_id"] = next((x["pub_id"] for x in sorted(g, key=lambda x: -x["ts"]) if x["pub_id"]), None)
     it["app"] = any(x["app"] for x in g)
     it["post_id"] = main["post_id"] or next((x["post_id"] for x in g if x["post_id"]), None)
     for k in ("preview", "text", "link"):
         it[k] = main[k] or next((x[k] for x in g if x[k]), main[k])
-    it["parts"] = [p for x in sorted(g, key=lambda x: x["ts"]) for p in x["parts"]]
-    it["atoms"] = [x["key"] for x in sorted(g, key=lambda x: x["ts"])]
-    joined = {frozenset(j) for j in _rules()[0]}
+    latest_parts = {}
+    for x in sorted(g, key=lambda x: (x["ts"], x.get("stat_at") or 0)):
+        for part in x["parts"]:
+            latest_parts[(part["plat"], part.get("label", ""))] = part
+    it["parts"] = list(latest_parts.values())
+    it["search_members"] = [{"text": x.get("text", ""), "day": x["day"],
+                            "platform": x.get("platform", ""), "pub_id": x.get("pub_id")}
+                           for x in g]
+    it["atoms"] = list(dict.fromkeys([x["key"] for x in sorted(g, key=lambda x: x["ts"])] +
+                                    [f'u{x["pub_id"]}' for x in g if x.get("pub_id")]))
+    it["pub_ids"] = sorted({x["pub_id"] for x in g if x.get("pub_id")})
+    if joined is None:
+        joined = {frozenset(j) for j in _rules()[0]}
     it["manual"] = any(frozenset((a, b)) in joined for a in it["atoms"] for b in it["atoms"] if a != b)
     return it
 
 
 
-def month(ym: str) -> dict:
+def month(ym: str, all_history: bool = False, *, hidden=None) -> dict:
+    hidden = set() if all_history else hidden_atoms() if hidden is None else hidden
     y, m = (int(x) for x in ym.split("-"))
     tz = datetime.now().astimezone().tzinfo
     first = date(y, m, 1)
@@ -239,10 +307,13 @@ def month(ym: str) -> dict:
     t1 = datetime(grid_end.year, grid_end.month, grid_end.day, tzinfo=tz)
 
     df = stats.indexed(None)
+    from app.insights import norms
+    levels = norms.levels()
+    joined = {frozenset(j) for j in _rules()[0]}
     items = []
     pubmap = _pub_map()
     if not df.empty:
-        part = df[(df["dt"] >= t0) & (df["dt"] < t1)]
+        part = df
         for _, r in part.iterrows():
             est = bool(r.get("est", False))
             idx = r["index_est"] if est else r["index"]
@@ -259,7 +330,7 @@ def month(ym: str) -> dict:
                 "channels": [r["channel"]], "rating": r["ch_rating"], "link": r["link"] if isinstance(r["link"], str) else "",
                 "views": views, "reactions": int(r["reactions"] or 0), "forwards": _int(r["forwards"]) or 0,
                 "proj": _int(r["proj"]) if est and r["by_views"] else None,
-                "index": idx, "est": est, "level": _level(idx), "by_views": bool(r["by_views"]),
+                "index": idx, "est": est, "level": _level(idx, levels), "by_views": bool(r["by_views"]),
                 "n_media": int(r["n_media"] or 1), "age_h": round(float(r.get("age_h", 0) or 0), 1),
                 "kind": _kind(r.get("media_type")), "media": str(r.get("media_type") or ""),
             })
@@ -267,27 +338,13 @@ def month(ym: str) -> dict:
         _decorate(it, "telegram")
     try:   # посты, вышедшие в обход Crosspost (ВК, Bluesky)
         from app.insights import ext_posts
-        for it in ext_posts.items_between(t0.timestamp(), t1.timestamp(), tz):
+        for it in ext_posts.items_between(0, 4102444800, tz):
             _decorate(it, it["ext"])
             items.append(it)
     except Exception:   # noqa: BLE001 — внешние посты не должны ломать календарь
         pass
-    # склеиваем копии одного арта: ручные объединения → по публикации Crosspost/похожему превью, кроме разъединённых
-    for it in items:
-        it["_h"] = _ahash(it["preview"])
-    groups, splits = _group(items)
-    suggest_raw = _suggest(groups, splits)
-    merged = []
-    by_group = {}
-    for g in groups:
-        it = _collapse(g)
-        by_group[id(g)] = it
-        merged.append(it)
-    suggestions = [{"a": [x["key"] for x in g1], "b": [x["key"] for x in g2], "ka": by_group[id(g1)]["key"], "kb": by_group[id(g2)]["key"],
-                    "bits": bits, "days": round(dt / 86400, 1)} for bits, dt, g1, g2 in suggest_raw]
-
     # публикации из Crosspost без постов в статистике (например, только Discord/ВК)
-    seen = {it["pub_id"] for it in merged if it["pub_id"]}
+    seen = {it["pub_id"] for it in items if it["pub_id"]}
     for r in db.query("SELECT id, created, title, text, dests, files, rating FROM publications"):
         if r["id"] in seen:
             continue
@@ -295,16 +352,40 @@ def month(ym: str) -> dict:
             dt = datetime.fromisoformat(r["created"].replace("Z", "+00:00")).astimezone(tz)
         except Exception:
             continue
-        if not (t0 <= dt < t1):
-            continue
         dests = json.loads(r["dests"] or "[]")
-        merged.append({"key": f"u{r['id']}", "post_id": None, "pub_id": r["id"], "app": True,
+        items.append({"key": f"u{r['id']}", "post_id": None, "pub_id": r["id"], "app": True,
                        "day": dt.date().isoformat(), "time": dt.strftime("%H:%M"), "ts": dt.timestamp(),
                        "preview": None, "text": (r["title"] or r["text"] or "")[:160], "channels": [d.get("name", "") for d in dests if d.get("state") == "done"],
                        "rating": r["rating"], "link": next((d.get("link") for d in dests if str(d.get("link", "")).startswith("http")), ""),
                        "views": None, "reactions": None, "forwards": None, "proj": None, "index": None, "est": False, "level": "",
                        "by_views": True, "n_media": len(json.loads(r["files"] or "[]")), "age_h": None,
                        "kind": _pub_kind(json.loads(r["files"] or "[]"))})
+
+    for it in items:
+        if "parts" not in it:
+            _decorate(it, "crosspost")
+    if hidden:
+        items = [
+            it for it in items
+            if it["key"] not in hidden and f'u{it["pub_id"]}' not in hidden
+        ]
+    # Give u<ID> a stable alias even when imported statistics later appear.
+    # склеиваем копии одного арта: ручные объединения → по публикации Crosspost/похожему превью, кроме разъединённых
+    for it in items:
+        it["_h"] = _ahash(it["preview"])
+    groups, splits = _group(items)
+    suggest_raw = _suggest([g for g in groups if t0.timestamp() <= min(x["ts"] for x in g) < t1.timestamp()], splits)
+    merged = []
+    by_group = {}
+    for g in groups:
+        it = _collapse(g, joined)
+        by_group[id(g)] = it
+        merged.append(it)
+    suggestions = [{"a": [x["key"] for x in g1], "b": [x["key"] for x in g2], "ka": by_group[id(g1)]["key"], "kb": by_group[id(g2)]["key"],
+                    "bits": bits, "days": round(dt / 86400, 1)} for bits, dt, g1, g2 in suggest_raw]
+
+    if not all_history:
+        merged = [it for it in merged if t0.timestamp() <= it["ts"] < t1.timestamp()]
 
     # запланированные
     from app.publish import schedule
@@ -328,9 +409,43 @@ def month(ym: str) -> dict:
     leaders = sorted(scored, key=lambda x: -x["index"])[:4]
     geo = math.exp(sum(math.log(max(i["index"], 0.05)) for i in scored) / len(scored)) if scored else None
     return {
+        "visibility": visibility_key(hidden),
         "ym": ym, "start": grid_start.isoformat(), "end": grid_end.isoformat(),
         "today": datetime.now(tz).date().isoformat(),
         "days": days, "sched": sched, "leaders": leaders, "suggestions": suggestions,
-        "summary": {"posts": len(in_month), "hits": sum(1 for i in scored if i["index"] >= __import__("app.insights.norms", fromlist=["x"]).levels()["hit"]),
+        "summary": {"posts": len(in_month), "hits": sum(1 for i in scored if i["index"] >= levels["hit"]),
                     "typical": round(geo, 2) if geo else None, "est": sum(1 for i in in_month if i["est"])},
     }
+
+
+def publication_groups():
+    """Manual groups shared by history and publication statistics; originals stay intact."""
+    joins, _ = _rules()
+    parent = {}
+    def find(key):
+        parent.setdefault(key, key)
+        if parent[key] != key:
+            parent[key] = find(parent[key])
+        return parent[key]
+    def union(a, b):
+        parent[find(a)] = find(b)
+    for a, b in joins:
+        union(a, b)
+    pubmap = _pub_map()
+    for row in db.query("SELECT id, chat_id, msg_id, msg_ids FROM posts"):
+        for value in str(row["msg_ids"] or row["msg_id"]).split(","):
+            if value.strip().isdigit():
+                pid = pubmap.get((str(row["chat_id"]), int(value)))
+                if pid:
+                    union(f'p{row["id"]}', f'u{pid}')
+    try:
+        from app.insights.ext_posts import pub_links
+        for key, pid in pub_links().items():
+            union(key, f'u{pid}')
+    except Exception:
+        pass
+    groups = {}
+    for row in db.query("SELECT id FROM publications"):
+        pid = row["id"]
+        groups.setdefault(find(f'u{pid}'), []).append(pid)
+    return {pid: sorted(ids) for ids in groups.values() for pid in ids}

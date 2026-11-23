@@ -12,7 +12,9 @@ from app.paths import sub
 SOURCES = {
     "e6ai": "https://blep.art",
     "e621": "https://e621.net",
+    "floofgens": "https://floofgens.net",
 }
+LABELS = {"e6ai":"blep.art", "e621":"e621", "floofgens":"floofgens.net"}
 _NAME_RE = re.compile(r"\b(posts|tags)-(\d{4}-\d{2}-\d{2})\.csv\.gz\b")
 
 

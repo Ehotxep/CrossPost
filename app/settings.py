@@ -23,6 +23,7 @@ DEFAULTS = {
     "trends": {
         "e6ai": {"enabled": True, "refresh_days": 1},
         "e621": {"enabled": True, "refresh_days": 7},
+        "floofgens": {"enabled": True, "refresh_days": 1},
     },
 }
 

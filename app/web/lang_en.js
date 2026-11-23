@@ -1293,6 +1293,7 @@ window.EN_DICT = {
 "Проверяю запас:": "Checking the reserve:",
 "Проверяю контрольную сумму…": "Checking the checksum…",
 "Проверяю файлы…": "Checking files…",
+"Проверяю теги…": "Checking tags…",
 "Проверяю…": "Checking…",
 "Прогноз": "Forecast",
 "Прогноз ·": "Forecast ·",
@@ -2752,3 +2753,188 @@ window.EN_DICT = {
 for (const [key, value] of Object.entries(window.EN_DICT)) {
   if (key.includes("e6ai")) window.EN_DICT[key.replaceAll("e6ai", "blep.art")] = value.replaceAll("e6ai", "blep.art");
 }
+
+Object.assign(window.EN_DICT, {
+  "Для floofgens.net нужны собственные имя пользователя и API-ключ. Аккаунты, ключи, постоянные теги и базы тегов сайтов сохраняются отдельно.": "floofgens.net requires its own username and API key. Accounts, keys, permanent tags and tag databases are stored separately for each site."
+});
+
+Object.assign(window.EN_DICT, {
+  "Мои площадки": "My platforms",
+  "Выбрать площадки": "Choose platforms",
+  "Поиск площадок": "Search platforms",
+  "Найти площадку…": "Find a platform…",
+  "Площадки не выбраны": "No platforms selected",
+  "Площадка не найдена": "No matching platform",
+  "Поиск booru-сайта": "Search booru sites",
+  "Найти сайт…": "Find a site…",
+  "Выберите нужные площадки. Убранные площадки не отображаются в меню и редакторе и не участвуют в отправке. Ключи и история сохраняются.": "Choose the platforms you need. Removed platforms are hidden from the menu and editor and excluded from publishing. Credentials and history are kept."
+});
+
+Object.assign(window.EN_DICT, {
+  "Показать общие теги":"Show common tags", "Одежда":"Clothing", "Окружение":"Settings", "Темы и детали":"Themes and details",
+  "Период роста":"Growth period", "4 недели":"4 weeks", "3 месяца":"3 months",
+  "Обновлять floofgens.net, раз в … дней":"Update floofgens.net every … days",
+  "Данных floofgens.net ещё нет":"No floofgens.net data yet",
+  "Нет заметного роста с достаточной выборкой.":"No notable growth with a sufficient sample.",
+  "Недостаточно данных за предыдущий период для сравнения.":"There is not enough data from the previous period for a comparison."
+});
+
+Object.assign(window.EN_DICT, {
+  "Избранное в одинаковом возрасте":"Favorites at the same post age",
+  "Наблюдения через сутки, трое суток и неделю. Пропущенные замеры не восстанавливаются из сегодняшних цифр.":"Observations at one day, three days and one week. Missed checkpoints are not reconstructed from current totals.",
+  "Дата поста пока не получена":"The post date has not been retrieved yet",
+  "Ожидается замер":"Waiting for an observation", "Пропущен":"Missed"
+});
+
+Object.assign(window.EN_DICT, {
+  "Недостаточно более поздних постов для проверки прогноза":"Not enough later posts to validate the forecast",
+  "Обычный результат канала почти не менялся: преимущество модели не оценено":"The channel baseline barely varied: model advantage could not be measured",
+  "На более поздних постах модель не точнее обычного результата канала":"On later posts the model is no more accurate than the channel baseline",
+  "Есть предварительное преимущество; проверочная выборка пока мала":"There is a preliminary advantage, but the validation sample is small",
+  "Небольшое преимущество перед обычным результатом канала":"A small advantage over the channel baseline",
+  "На проверенном периоде модель точнее обычного результата канала":"The model outperforms the channel baseline during the tested period",
+  "Сохранённый прогноз рассчитан по прежней методике.":"This saved forecast used the previous methodology.",
+  "Преимущество не оценено":"Advantage not evaluated",
+  "Модель не точнее обычного результата":"The model is no more accurate than the baseline",
+  "Ошибка модели ниже на {n}%":"Model error is {n}% lower",
+  "Проверено более поздних постов":"Later posts evaluated",
+  "Периоды проверки":"Validation periods",
+  "Медианная ошибка модели / обычного результата":"Median error: model / baseline",
+  "Сравнение средней абсолютной ошибки лог-индекса":"Comparison of mean absolute log-index error",
+  "На чём основан прогноз":"Forecast evidence",
+  "Обучение на прошлом, проверка на более поздних периодах; между ними — 7 дней для созревания постов. Обычный результат — предшествующая норма каждого канала.":"Training uses the past and validation uses later periods, with a 7-day maturity gap. The baseline is each channel's preceding typical result.",
+  "Проверка общая для подключённых к обучению каналов. Точность для отдельного канала может отличаться.":"Validation pools the channels used for training. Accuracy for a particular channel may differ.",
+  "Ретроспективная проверка по текущим итогам истории. Это не архив прогнозов, сохранённых перед отправкой. Похожие работы могут повторяться в разных периодах.":"Retrospective validation uses currently stored historical totals. It is not an archive of predictions saved before publishing. Similar artworks may recur in different periods.",
+  "Связано с ростом":"Associated with higher results", "Связано со снижением":"Associated with lower results",
+  "Связано с большим откликом":"Associated with stronger response",
+  "оценка шанса на хит":"estimated hit chance",
+  "Связи в истории не доказывают влияние тега: вместе с ним могли меняться персонаж, композиция и качество работы.":"Historical associations do not prove a tag's effect: character, composition and artwork quality may also have changed."
+});
+
+Object.assign(window.EN_DICT, {
+  "Для прогноза нужно хотя бы 30 постов старше недели с предшествующей нормой канала (сейчас":"A forecast needs at least 30 posts older than a week with a preceding channel baseline (currently",
+  "Для выводов нужно хотя бы 30 постов старше недели с предшествующей нормой канала (сейчас":"Insights need at least 30 posts older than a week with a preceding channel baseline (currently"
+});
+
+Object.assign(window.EN_DICT, {
+  "Площадки-источники":"Source platforms",
+  "Выберите, ссылки на какие площадки добавлять в источники. Для каждого сайта выбор сохраняется отдельно.":"Choose which platforms' post links to include as sources. Each site's choices are saved separately.",
+  "Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Ссылки на пост — в источники» должен быть включён.":"Only successfully published posts with a public link are included. Private Telegram links are excluded. Links from sites published later are not yet available. Enable the main post-links-as-sources switch.",
+  "Выбор площадок-источников должен содержать переключатели известных площадок":"Source selections must contain switches for known platforms"
+});
+
+Object.assign(window.EN_DICT, {
+  "Копировать теги с другой площадки":"Copy tags from another platform",
+  "На других площадках ещё нет выбранных тегов для этих файлов.":"Other platforms do not yet have selected tags for these files.",
+  "Источник тегов":"Tag source", "Для файлов":"Files", "Весь пост":"Entire post",
+  "Способ копирования":"Copy mode", "Добавить без дублей":"Merge without duplicates", "Заменить теги":"Replace tags",
+  "Копировать в {site}":"Copy to {site}",
+  "Копируются выбранные теги соответствующих файлов. Файлы без исходных тегов пропускаются. Постоянные теги и настройки сайтов не меняются; проверку «Всё верно» нужно пройти заново.":"Selected tags are copied between matching files. Files without source tags are skipped. Permanent tags and site settings are unchanged; review and confirm the destination tags again.",
+  "Нет выбранных тегов для копирования":"No selected tags to copy",
+  "Некорректные параметры копирования тегов":"Invalid tag copy parameters",
+  "Заменить теги в {site} для выбранных файлов? Теги исходного сайта сохранятся.":"Replace tags in {site} for the selected files? The source site's tags will be preserved.",
+  "Теги скопированы: {count}. Пропущено файлов без тегов: {skipped}":"Tags copied for {count} files. Skipped files without tags: {skipped}"
+});
+
+Object.assign(window.EN_DICT, {
+  "Добавлять ссылки в источники":"Include links as sources",
+  "Куда должна вести ссылка?":"Where should the link lead?",
+  "На пост с изображением":"To the image post",
+  "Откроется конкретная публикация":"Opens the specific post",
+  "На канал или профиль":"To the channel or profile",
+  "Откроется страница автора или сообщества":"Opens the author or community page",
+  "Если в ссылке на пост нет автора, будет указан сайт целиком.":"If the post link does not identify its author, the website address is used.",
+  "С каких площадок брать ссылки?":"Which platforms should provide links?",
+  "Добавляются только публичные ссылки на уже опубликованные посты.":"Only public links to already published posts are included.",
+  "Учитываются только успешно опубликованные посты с публичной ссылкой. Закрытые ссылки Telegram не добавляются. Ссылки на сайты, отправляемые позже, ещё недоступны. Общий переключатель «Добавлять ссылки в источники» должен быть включён.":"Only successfully published posts with a public link are included. Private Telegram links are excluded. Links from sites published later are not yet available. Enable the main include-links-as-sources switch.",
+  "Неизвестный вид ссылки-источника":"Unknown source link type"
+});
+
+Object.assign(window.EN_DICT, {
+  "Самые медленные запросы за сеанс": "Slowest requests this session",
+  "Время работы сервера; отчёт также включает ожидание ответа в интерфейсе, отрисовку и блокировки дольше 50 мс. 95-й процентиль — время, в которое укладываются 95% сохранённых замеров.": "Server processing time. The report also includes UI request times, rendering and main-thread blocks over 50 ms. The 95th percentile is the time within which 95% of retained measurements complete.",
+  "Откройте медленные вкладки и сохраните отчёт. Замеры запросов и отрисовки собираются только локально в этой сессии; тексты, ссылки и ключи не записываются. Файл отправляется только вами.": "Open the slow tabs, then save a report. Request and rendering timings are collected locally for this session; text, links and keys are not recorded. Only you can share the file."
+});
+
+Object.assign(window.EN_DICT, {"среднее {mean} мс · P95 {p95} мс · макс. {max} мс":"mean {mean} ms · P95 {p95} ms · max {max} ms"});
+
+Object.assign(window.EN_DICT, {"Подсказки каналов берутся из сохранённого списка.":"Channel suggestions use the saved list.", "Обновить список из Telegram":"Refresh list from Telegram"});
+
+Object.assign(window.EN_DICT, {"Для обновления списка войдите в Telegram через API":"Sign in to Telegram through the API to refresh the list"});
+
+Object.assign(window.EN_DICT, {
+  "Копировать теги между площадками": "Copy tags between platforms",
+  "Копирование тегов между площадками": "Copying tags between platforms",
+  "Откуда": "From",
+  "Куда": "To",
+  "Заменить выбранные теги": "Replace selected tags",
+  "По умолчанию теги добавляются без дублей. Исходные теги сохраняются. После копирования проверьте теги на принимающем сайте.": "Tags are merged without duplicates by default. Source tags are preserved. Review tags on the destination site after copying.",
+  "Платное скачивание оригинала по умолчанию": "Paid original downloads by default",
+  "Цена по умолчанию, USD": "Default price, USD",
+  "Укажите цену": "Enter a price",
+  "Публиковать для подписчиков по умолчанию": "Publish to subscribers by default",
+  "Тиры по умолчанию — по одному названию на строку": "Default tiers — one name per line",
+  "Название уровня подписки": "Subscription tier name",
+  "Платный режим DeviantArt должен быть переключателем": "The paid DeviantArt mode must be a boolean",
+  "Цена DeviantArt должна быть строкой в USD": "The DeviantArt price must be a USD string",
+  "Укажите положительную цену в USD, не более двух знаков после запятой": "Enter a positive USD price with at most two decimal places",
+  "Укажите названия тиров DeviantArt списком, до 100 символов каждое": "Enter DeviantArt tier names as a list, at most 100 characters each"
+});
+
+Object.assign(window.EN_DICT, {"{site} · тегов: {count}": "{site} · tags: {count}", "Теги скопированы в {site}. Обработано файлов: {count}, пропущено: {skipped}.": "Tags copied to {site}. Files processed: {count}, skipped: {skipped}."});
+
+Object.assign(window.EN_DICT, {
+  "Продажи и подписки — параметры по умолчанию": "Sales and subscriptions — defaults",
+  "Экспериментальный режим. Платные работы отправляются через отдельный браузер DeviantArt. Сначала выполните вход и пробный прогон. Обычные публикации продолжают работать через API.": "Experimental mode. Paid works use a separate DeviantArt browser. Sign in and run a dry test first. Regular works continue to use the API.",
+  "Войти в браузере DeviantArt": "Sign in through the DeviantArt browser",
+  "Проверить без публикации": "Test without publishing",
+  "✓ Вход в браузере сохранён": "✓ Browser login saved",
+  "Вход в браузере не выполнен": "Not signed in through the browser",
+  "Укажите точные названия тиров из вашего аккаунта, по одному на строку. Перед отправкой CrossPost проверит выбранные тиры и цену. Параметры сохраняются автоматически.": "Enter exact tier names from your account, one per line. CrossPost checks the selected tiers and price before submitting. Settings save automatically.",
+  "Пробный прогон DeviantArt": "DeviantArt dry run",
+  "Работаю с DeviantArt…": "Working with DeviantArt…"
+});
+
+Object.assign(window.EN_DICT, {
+  "Загрузить тиры из аккаунта": "Load tiers from account",
+  "Подпись входит в лимит 280 символов.": "The signature counts towards the 280-character limit.",
+  "X: пока только SFW, до четырёх изображений и 280 взвешенных символов. Текст не обрезается. При неизвестном результате проверьте сайт перед повтором.": "X currently supports SFW only, up to four images and 280 weighted characters. Text is not truncated. Verify the site before retrying an unknown result."
+});
+
+Object.assign(window.EN_DICT, {
+  "Режим публикации DeviantArt": "DeviantArt publishing mode",
+  "Обычная · API": "Regular · API",
+  "Подготовить в Sta.sh": "Prepare in Sta.sh",
+  "Обычная публикация через OAuth API. Цена и отдельный браузерный вход не нужны.": "Regular publishing uses the OAuth API. No price or separate browser sign-in is required.",
+  "Цена скачивания, USD (только для Premium Download)": "Download price, USD (Premium Download only)"
+});
+
+Object.assign(window.EN_DICT, {
+  "Удалить из календаря": "Remove from calendar",
+  "Запись удалена из календаря.": "Entry removed from the calendar.",
+  "Вернуть в календарь": "Restore to calendar"
+});
+
+Object.assign(window.EN_DICT, {
+  "Прогноз просмотров": "View forecast",
+  "Ожидает отправки": "Waiting to send",
+  "Отправка при первой возможности": "Will send as soon as possible",
+  "Опубликовать этот пост сейчас? Если уже идёт отправка, пост начнёт публиковаться после неё.": "Publish this post now? If another post is sending, this one will follow it."
+});
+
+Object.assign(window.EN_DICT, {
+  "Копировать теги": "Copy tags",
+  "между площадками": "between platforms",
+  "Открыть просмотр": "Open preview",
+  "Заменить файл…": "Replace file…",
+  "Переместить в начало": "Move to start",
+  "Переместить в конец": "Move to end",
+  "Для всех площадок": "For all platforms",
+  "Русская версия": "Russian version",
+  "Без текста": "No text",
+  "Убрать из поста": "Remove from post",
+  "Отменить действие": "Undo",
+  "Порядок изображений изменён": "Image order changed",
+  "Изображение перемещено в начало": "Image moved to the start",
+  "Изображение перемещено в конец": "Image moved to the end"
+});

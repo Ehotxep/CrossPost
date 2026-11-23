@@ -25,7 +25,7 @@ class BrowserIsolation(unittest.TestCase):
         for platform in B.PLATFORMS:
             B._launch(pw,False,platform=platform)
         paths=[call.kwargs["user_data_dir"] for call in pw.chromium.launch_persistent_context.call_args_list]
-        self.assertEqual(len(set(paths)),4)
+        self.assertEqual(len(set(paths)),len(B.PLATFORMS))
         self.assertTrue(all(Path(path).parent==self.root/'browser_profiles' for path in paths))
         self.assertNotIn(str(self.root/'browser'),paths)
         with self.assertRaises(ValueError):

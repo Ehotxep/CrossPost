@@ -31,3 +31,40 @@ test('credentials, account names and folder moves are not autosave fields',()=>{
  const {describe}=load();
  for(const id of ['trkey','bspass','bottok','dasecret','e6key','vktok','apiid','apihash','fdir','fmove'])assert.equal(describe({id,value:'secret',checked:true}),null,id);
 });
+
+test('booru source toggles keep rapid platform changes and sites independent',async()=>{
+ const api=load(),calls=[];
+ const queue=new api.SaveQueue(async(key,patch)=>calls.push({key,patch}));
+ for(const [site,platform,on] of [['floofgens','telegram',false],['floofgens','vk',false],['e621','bluesky',false]]){
+  const spec=api.describe({id:`e6source-${site}-${platform}`,checked:on,value:''});
+  assert.equal(spec.key,site);queue.edit(spec.key,spec.patch);
+ }
+ await queue.flush();
+ assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+  {key:'floofgens',patch:{source_platforms:{telegram:false,vk:false}}},
+  {key:'e621',patch:{source_platforms:{bluesky:false}}}
+ ]);
+});
+
+test('source link mode toggles are scoped to their booru site',()=>{
+ const {describe}=load();
+ for(const site of ['e6ai','e621','floofgens'])for(const checked of [true,false]){
+  const spec=describe({id:`e6resource-${site}`,checked,value:''});
+  assert.equal(spec.key,site);assert.equal(spec.patch.source_link_mode,checked?'resource':'post');
+ }
+});
+
+test('explicit source choices retain site and mode without on-off decoding',()=>{
+ const {describe}=load();
+ for(const site of ['e6ai','e621','floofgens'])for(const mode of ['post','resource']){
+  const spec=describe({id:`e6link-${site}-${mode}`,checked:true,value:mode});
+  assert.equal(spec.key,site);assert.equal(spec.patch.source_link_mode,mode);
+ }
+});
+
+test('X settings and hashtag choices autosave under the X platform',()=>{
+ const {describe}=load();
+ assert.equal(describe({id:'bt-x-enabled',checked:true}).patch.enabled,true);
+ assert.equal(describe({id:'bt-x-window',checked:false}).patch.show_window,false);
+ const hash=describe({id:'htU-x',checked:false});assert.equal(hash.key,'hashtags');assert.equal(hash.patch.use.x,false);
+});

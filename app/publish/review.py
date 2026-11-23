@@ -51,25 +51,27 @@ def composition(draft):
             text = bluesky.build_text(text)[0]
             if text != full:
                 warnings.append('Текст Bluesky будет сокращён до лимита площадки')
-        elif platform in ('vk', 'joyreactor'):
+        elif platform in ('vk', 'joyreactor','x'):
             text = (f'{title}\n\n{text}' if include else text).strip()
-        elif platform == 'e6ai':
-            text = ((f'[b]{title}[/b]\n' if title else '') + runner.variant(cfg, draft, platform)[1]).strip() if cfg['e6ai'].get('with_description', True) else ''
+        elif platform in ('e6ai', 'e621', 'floofgens'):
+            text = ((f'[b]{title}[/b]\n' if title else '') + runner.variant(cfg, draft, platform)[1]).strip() if cfg[platform].get('with_description', True) else ''
             fmt = 'DText'
-            if cfg['e6ai'].get('with_sources', True):
+            if cfg[platform].get('with_sources', True):
                 warnings.append('Ссылки на опубликованные копии добавятся после отправки на другие площадки')
-        if platform in ('reddit', 'joyreactor'):
+        if platform in ('reddit', 'joyreactor','x'):
             warnings += ['Браузерная интеграция экспериментальная; выполните пробный прогон в настройках']
             warnings += [d['name'] + ': ' + '; '.join(d['details']) for d in dests]
         previews = []
         for f in selected:
-            tags = runner.e6_tags(cfg, draft, f['id']) if platform == 'e6ai' else []
-            original = platform == 'e6ai'
+            tags = runner.e6_tags(cfg, draft, f['id'], platform) if platform in ('e6ai', 'e621', 'floofgens') else []
+            original = platform in ('e6ai', 'e621', 'floofgens')
             if platform == 'deviantart':
                 from platforms import deviantart
                 original = cfg['deviantart'].get('originals', True) and f['size'] <= deviantart.FILE_MAX_BYTES
             transform = ('Оригинал' if original else
                          f"JPEG-превью: масштаб {cfg['light']['scale']}, качество {cfg['light']['quality']}") if f['kind'] == 'image' else 'Исходный файл; перекодирование при необходимости по лимитам площадки'
+            if platform=='deviantart' and (cfg[platform].get('premium_download') or cfg[platform].get('subscriber_only')):
+                transform='Черновик Sta.sh с JPEG-превью; оригинал прикрепляется вручную' if cfg[platform].get('premium_download') and f['kind']=='image' else 'Файл работы в черновике Sta.sh'
             previews.append({k: f.get(k) for k in ('id', 'name', 'kind', 'size', 'width', 'height')})
             previews[-1].update(transform=transform, tags=tags)
             if platform == 'bluesky':
@@ -114,6 +116,20 @@ def readiness(draft, remote=False):
                     response = requests.get(bluesky._home(cfg['bluesky'], session) + '/xrpc/com.atproto.server.getSession',
                                             headers={'Authorization': 'Bearer ' + session.get('accessJwt', '')}, timeout=(5, 15))
                     check.update(state='ok' if response.status_code == 200 else 'error', message='Сессия действительна' if response.status_code == 200 else f'Проверка сессии: HTTP {response.status_code}')
+                elif platform in settings.BOORU_PLATFORMS:
+                    from app.publish import e6ai
+                    account=e6ai.check(cfg[platform])
+                    limit=account.get('upload_limit')
+                    check.update(state='ok',message='API-ключ принят: '+str(account['name'])+(f'; лимит загрузок: {limit}' if limit is not None else ''))
+                    if isinstance(limit,(int,float)) and limit<=0:
+                        check.update(state='error',message='Ключ принят, но доступная квота загрузок исчерпана')
+                elif platform=='deviantart':
+                    from platforms import deviantart
+                    token=deviantart._token(cfg[platform])
+                    response=requests.get(f'{deviantart.API}/user/whoami',headers={'Authorization':'Bearer '+token},timeout=(5,15),allow_redirects=False)
+                    identity=deviantart._json(response,'проверка входа')
+                    if not identity.get('username'):raise ValueError('DeviantArt не подтвердил аккаунт')
+                    check.update(state='ok',message='OAuth-вход подтверждён: '+identity['username'])
                 else:
                     check['message'] = 'Вход и права нужно проверить в настройках площадки; автоматическая проверка здесь недоступна'
             except Exception as e:

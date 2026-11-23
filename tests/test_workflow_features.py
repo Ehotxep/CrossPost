@@ -113,6 +113,76 @@ class WorkflowFeatures(unittest.TestCase):
         draft['files'] = ['missing']
         self.assertFalse(self.review.readiness(draft)['ready'])
 
+    def test_x_queue_publication_is_explicit_sfw_and_persists_confirmation(self):
+        from app.publish import social_web
+        self.settings.update('modules',{'x':True})
+        self.settings.update('x',{'enabled':True,'browser_ok':True})
+        draft={'files':[self.image()],'title':'Title','text':'Body','rating':'sfw','signature':False,'hashtags':[],'tagger':False}
+        plan=self.runner.plan(draft)
+        self.assertTrue(next(d for d in plan['dests'] if d['key']=='x')['will'])
+        with patch.object(social_web,'post',return_value={'link':'https://x.com/fixture/status/123','note':''}) as send:
+            self.runner.start(draft,lambda **kwargs:None)
+        self.assertEqual(send.call_count,1)
+        self.assertEqual(send.call_args.args[0],'x')
+        self.assertEqual(send.call_args.args[2:4],('Title','Body'))
+        saved=self.runner.state()
+        self.assertEqual(saved['dests'][0]['link'],'https://x.com/fixture/status/123')
+        draft['rating']='erotic'
+        self.assertFalse(next(d for d in self.runner.plan(draft)['dests'] if d['key']=='x')['will'])
+        draft.update(rating='sfw',text='x'*281)
+        self.assertFalse(next(d for d in self.runner.plan(draft)['dests'] if d['key']=='x')['will'])
+
+    def test_x_length_counts_wide_text_and_tco_links(self):
+        from app.publish.browser_targets import x_length,validate_changes
+        self.assertEqual(x_length('abc'),3)
+        self.assertEqual(x_length('猫😀'),4)
+        self.assertEqual(x_length('https://example.com/a'),23)
+        with self.assertRaises(ValueError):validate_changes('x',{'browser_ok':True})
+        self.assertEqual(validate_changes('x',{'enabled':True}),{'enabled':True})
+        from urllib.parse import urlsplit
+        from app.publish.booru import resource_link
+        self.assertEqual(resource_link('x',urlsplit('https://x.com/fixture/status/123')),'https://x.com/fixture')
+
+    def test_api_readiness_checks_booru_and_da_without_opening_browser_or_uploading(self):
+        from app.publish import e6ai,da_web
+        from platforms import deviantart
+        selected=[{'platform':p,'key':p,'name':p,'will':True} for p in ('e6ai','e621','floofgens','deviantart')]
+        response=Mock(status_code=200);response.json.return_value={'username':'Fixture'}
+        with patch.object(self.runner,'plan',return_value={'dests':selected,'errors':[]}), \
+                patch.object(e6ai,'check',return_value={'name':'Fixture','upload_limit':5}) as check, \
+                patch.object(e6ai,'upload') as upload,patch.object(da_web.B,'session') as browser, \
+                patch.object(deviantart,'_token',return_value='fixture'),patch.object(self.review.requests,'get',return_value=response):
+            result=self.review.readiness({},remote=True)
+        self.assertTrue(result['access_verified'])
+        self.assertEqual(check.call_count,3)
+        upload.assert_not_called();browser.assert_not_called()
+
+    def test_paid_da_runner_saves_drafts_without_marking_public_link(self):
+        from datetime import datetime, timedelta, timezone
+        from app.publish import schedule
+        from core import retry
+        from platforms import deviantart
+        self.settings.update("deviantart", {"enabled": True, "premium_download": True})
+        draft = dict(files=[self.image()], title="Title", text="Description",
+                     rating="sfw", signature=False, hashtags=["wolf"])
+        response = Mock(status_code=200)
+        response.json.return_value = {"itemid": 37}
+        with patch.object(self.runner.core_common, "load_token", return_value={"access_token":"fixture"}), \
+                patch.object(deviantart, "_token", return_value="fixture"), \
+                patch.object(retry, "post", return_value=response) as post:
+            run_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+            job = schedule.add(draft, run_at)
+            queued = json.loads(self.db.query("SELECT draft FROM scheduled WHERE id=?", (job["id"],))[0]["draft"])
+            self.settings.update("deviantart", {"premium_download": False})
+            self.runner.start(queued, lambda **kwargs: None)
+        post.assert_called_once()
+        self.assertTrue(post.call_args.args[0].endswith("/stash/submit"))
+        dest = next(d for d in self.runner.state()["dests"] if d["key"]=="deviantart")
+        self.assertEqual(dest["outcome"], "prepared")
+        self.assertFalse(dest["link"])
+        saved = self.runner.history(1)[0]["dests"][0]
+        self.assertEqual(saved["stash_drafts"]["0"]["url"], "https://sta.sh/011")
+
     def seed_backup(self):
         draft = self.discord()
         self.settings.update('telegram', {'bot_token': 'private-bot-token'})

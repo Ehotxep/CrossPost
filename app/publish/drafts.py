@@ -5,13 +5,28 @@ from datetime import datetime, timezone
 from app import db
 
 FIELDS = ('title', 'text', 'rating', 'signature', 'exclude', 'variants', 'hashtags',
-          'e6ai_tags', 'e6ai_meta', 'multi', 'marks', 'tagger', 'profile', 'platform_texts', 'alts', 'reddit_flairs')
+          'e6ai_tags', 'e6ai_meta', 'booru_posts', 'multi', 'marks', 'tagger', 'profile', 'platform_texts', 'alts', 'reddit_flairs')
 
 
 def content(draft):
     if not isinstance(draft, dict):
         raise ValueError('Ожидался черновик поста')
     result = {k: copy.deepcopy(draft[k]) for k in FIELDS if k in draft}
+    if 'booru_posts' in result:
+        from app.publish.booru import PLATFORMS
+        slots = result['booru_posts']
+        if not isinstance(slots, dict):
+            raise ValueError('Теги площадок должны быть объектом')
+        for platform, slot in slots.items():
+            if platform not in PLATFORMS or not isinstance(slot, dict):
+                raise ValueError('Неизвестная площадка в тегах поста')
+            tags, meta = slot.get('tags', {}), slot.get('meta', {})
+            if not isinstance(tags, dict) or not isinstance(meta, dict):
+                raise ValueError('Неверный формат тегов площадки')
+            if any(not isinstance(values, list) or any(not isinstance(t, str) for t in values) for values in tags.values()):
+                raise ValueError('Теги изображения должны быть списком строк')
+            if any(not isinstance(value, dict) for value in meta.values()):
+                raise ValueError('Неверный формат проверки тегов')
     files = draft.get('files') or []
     if not isinstance(files, list) or len(files) > 40:
         raise ValueError('В черновике допускается до 40 файлов')
@@ -27,9 +42,9 @@ def content(draft):
     if not isinstance(alts, dict) or any(not isinstance(v, str) or len(v) > 1000 for v in alts.values()):
         raise ValueError('Описание картинки: до 1000 символов')
     result['alts'] = {uid: alts[uid] for uid in ids if uid in alts}
-    from app.publish.browser_targets import FLAIRS
+    from app.publish.browser_targets import valid_community
     flairs = result.get('reddit_flairs') or {}
-    if not isinstance(flairs, dict) or any(k not in FLAIRS or (v not in FLAIRS[k] and not (k == 'aiyiff' and v == '')) for k, v in flairs.items()):
+    if not isinstance(flairs, dict) or any(not valid_community(k) or not isinstance(v, str) or len(v) > 100 or '\n' in v or '\r' in v for k, v in flairs.items()):
         raise ValueError('Неизвестный flair Reddit')
     result['reddit_flairs'] = flairs
     overrides = result.get('platform_texts') or {}

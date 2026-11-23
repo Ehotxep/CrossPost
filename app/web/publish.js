@@ -14,13 +14,26 @@
   let planTimer = null;
 
   const S = () => C().S;
-  const TEXTP = ["telegram", "discord", "vk", "bluesky", "deviantart", "reddit", "joyreactor"];   // площадки с текстом поста и подписью
+  const TEXTP = ["telegram", "discord", "vk", "bluesky", "deviantart", "reddit", "joyreactor", "x"];   // площадки с текстом поста и подписью
   const esc = (s) => C().esc(s == null ? "" : s);
   const mod = (k) => { const st = window.CP && window.CP.S, m = st && st.info && st.info.modules; return !m || m[k] !== false; };   // модуль включён
-  const BN = () => {   // куда загружаем: e6ai или e621 (безопасно и до загрузки настроек)
-    const st = window.CP && window.CP.S, e6 = st && st.pub && st.pub.e6ai;
-    return (e6 && e6.site_name) || "e6ai";
+  const BOORUS = ['e6ai', 'e621', 'floofgens'];
+  const BN = () => {
+    const s = S();
+    if (s.view === 'settings') {
+      if (BOORUS.includes(s.platSec)) return s.platSec;
+      return BOORUS.includes(s.booruTagSite) ? s.booruTagSite : BOORUS.find(k => s.pub?.modules?.[k] !== false) || 'e6ai';
+    }
+    const active = BOORUS.filter(k => s.pub?.[k]?.enabled && !(s.draft?.exclude || []).includes(k));
+    return active.includes(s.booruTagSite) ? s.booruTagSite : active[0] || s.booruTagSite || 'e6ai';
   };
+  const BL = () => S().pub?.booru_sites?.[BN()]?.name || ({e6ai:'blep.art',e621:'e621',floofgens:'floofgens.net'}[BN()]);
+  const TAG_METHODS = new Set(['tag_cats','post_tags','e6_learned','e6_forget','e6_never','e6_check_now','e6db_status','e6db_update','tag_search','e6_initial','e6_form']);
+  const tagApi = (name, args={}) => C().api(name, TAG_METHODS.has(name) ? {...args, booru_site:BN()} : args);
+  function booruTabs() {
+    const keys = BOORUS.filter(k => S().pub?.modules?.[k] !== false && (S().view === 'settings' || (S().pub[k]?.enabled && !(S().draft?.exclude || []).includes(k))));
+    return `<div class="chips" aria-label="Сайт для редактирования тегов">${keys.map(k => `<button class="chip ${BN() === k ? 'on' : ''}" data-pa="booru-tags" data-site="${k}">${C().pbadge(k,{sm:true})} ${esc(S().pub.booru_sites[k].name)}</button>`).join('')}</div>`;
+  }
   const mb = (b) => b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + " КБ" : (b / 1024 / 1024).toFixed(b < 10 * 1024 * 1024 ? 1 : 0).replace(".", DEC) + " МБ";
   const tok = () => encodeURIComponent(window.API_TOKEN);
   const ratingPill = (r) => r === "sfw" ? `<span class="pill sfw">SFW</span>` : r === "erotic" ? `<span class="pill erotic">Эротика</span>` : r === "explicit" ? `<span class="pill nsfw">18+</span>` : "";
@@ -30,7 +43,25 @@
   const multiOn = () => featOn("targeting") && !!draft().multi;
   function draft() {
     const s = S();
-    if (!s.draft) s.draft = C().store.get("draft", null) || { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
+    if (!s.draft) s.draft = C().store.get("draft", null) || { files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} };
+    if (s.pub) {
+      if (!s.draft.booru_posts) {
+        const legacy = s.pub.legacy_booru_site || 'e6ai';
+        s.draft.booru_posts = {[legacy]: {tags:s.draft.e6tags || s.draft.e6ai_tags || {}, meta:s.draft.e6meta || s.draft.e6ai_meta || {}}};
+        if (legacy !== 'e6ai') {
+          s.draft.exclude = (s.draft.exclude || []).map(k => k === 'e6ai' ? legacy : k);
+          const profile = s.draft.profile;
+          if (profile) {
+            if (profile.e6ai) { profile[legacy] = profile.e6ai; delete profile.e6ai; }
+            for (const field of ['text_lang','versions']) if (profile[field]?.e6ai !== undefined) { profile[field][legacy] = profile[field].e6ai; delete profile[field].e6ai; }
+            if (profile.platforms) profile.platforms = profile.platforms.map(k => k === 'e6ai' ? legacy : k);
+          }
+          if (s.draft.platform_texts?.e6ai) { s.draft.platform_texts[legacy] = s.draft.platform_texts.e6ai; delete s.draft.platform_texts.e6ai; }
+        }
+      }
+      const slot = s.draft.booru_posts[BN()] ||= {tags:{},meta:{}};
+      s.draft.e6tags = slot.tags; s.draft.e6meta = slot.meta;
+    }
     return s.draft;
   }
   function saveDraft() { C().store.set("draft", S().draft); queueDraftSave(); }
@@ -40,7 +71,7 @@
   const requests=new window.PostState.LatestRequests();
   const draftKey=()=>JSON.stringify([apiDraft(),S().pub]);
 
-  const EMPTY = () => ({ files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} });
+  const EMPTY = () => ({ files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {}, booru_posts:{} });
   // досылка опубликованного поста на другие площадки: черновик этого поста открывается на экране «Новый пост»,
   // а ваш текущий черновик откладывается и возвращается после
   async function openExtend(pubId) {
@@ -51,7 +82,7 @@
     if (!cur.extend) C().store.set("draft_saved", cur);
     const x = r.draft || {};
     s.draft = { files: r.files, variants: x.variants || {}, title: x.title || "", text: x.text || "", rating: x.rating, signature: x.signature !== false,
-      exclude: x.exclude || [], hashtags: x.hashtags == null ? null : x.hashtags, e6tags: x.e6ai_tags || {}, e6meta: x.e6ai_meta || {}, multi: !!x.multi, marks: x.marks || {},
+      exclude: x.exclude || [], hashtags: x.hashtags == null ? null : x.hashtags, e6tags: x.e6ai_tags || {}, e6meta: x.e6ai_meta || {}, booru_posts:x.booru_posts, multi: !!x.multi, marks: x.marks || {},
       platform_texts:x.platform_texts||{},alts:x.alts||{},reddit_flairs:x.reddit_flairs||{},profile:x.profile||null,extend: { pub_id: r.pub_id, title: r.title, done: r.done, failed: r.failed, missing: r.missing } };
     saveDraft();
     s.pstatOpen = null; s.postMode = "edit"; s.when = "now"; s.tried = false; s.schedMsg = "";
@@ -66,7 +97,7 @@
 
   // ---------------- загрузка данных ----------------
   async function load(view) {
-    const s = S(), api = C().api;
+    const s = S(), api = tagApi;
     try {
       if (view === "post") {
         if (!s.pub) s.pub = await api("pub_settings");
@@ -77,11 +108,13 @@
         if (st.job && st.job.state === "running") { s.postMode = "progress"; C().startPoll(); }
         await refreshPlan(); pollPrep(); loadTags(true);
       } else if (view === "history") {
-        await loadHistoryPage(s.historyOffset || 0);
-        s.sched = await api("post_scheduled");
-        try { s.pipe = await api("pipeline_state"); } catch (e) { s.pipe = null; }
-        try { s.histSum = await api("pub_stats_summary"); } catch (e) { s.histSum = {}; }
-        await loadCalendar();
+        const paint = () => { if (s.view === "history") C().softRender(); };
+        await Promise.all([
+          loadHistoryPage(s.historyOffset || 0).then(paint),
+          api("post_scheduled").then(r => { s.sched = r; paint(); }),
+          api("pipeline_state").then(r => { s.pipe = r; paint(); }).catch(() => { s.pipe = null; }),
+          loadCalendar().then(paint),
+        ]);
       } else {
         s.pub = await api("pub_settings");
         try { s.tagger = await api("tagger_status"); } catch (e) { s.tagger = null; }
@@ -133,19 +166,20 @@
     if (!f || !f.items || !f.items.length) return s.fcErr ? `<p class="err small">${esc(s.fcErr)}</p>` : "";
     let bestShown = false;
     return f.items.map((x) => {
-      if (!x.ok) return `<div class="fc"><div class="fchead"><span>Прогноз · ${esc(x.channel || "")}</span></div><span class="muted small">${esc(x.why)}</span></div>`;
+      if (!x.ok) return `<div class="fc"><div class="fchead"><span>Прогноз · ${esc(x.channel || "")}</span></div><span class="muted small">${esc(x.why)}</span>${window.Charts.forecastQuality(x.quality, true)}</div>`;
       const q = x.quality || {};
       const fac = (x.factors || []).filter((y) => Math.abs(y.mult - 1) >= 0.03);
       const up = fac.filter((y) => y.mult >= 1).slice(0, 4), down = fac.filter((y) => y.mult < 1).slice(0, 4);
-      const bt = bestShown || s.when === "later" ? null : (x.best_times || []).find((b) => b.gain >= 1.05);
+      const bt = q.level === "low" || bestShown || s.when === "later" ? null : (x.best_times || []).find((b) => b.gain >= 1.05);
       if (bt) bestShown = true;   // время одно на весь пост — подсказываем по первому каналу
       const li = (y) => `<li><span data-tip="${y.kind === "tag" ? "Тег картинки" : y.kind === "time" ? "Время публикации" : "Тип поста"}" translate="no">${esc(y.name.replace(/^Время: /, ""))}</span><b>${pct(y.mult)}</b></li>`;
       return `<div class="fc">
         <div class="fchead"><span>Прогноз · ${esc(x.channel)}</span>${q.level === "low" ? `<span class="pill" data-tip="${esc(q.text || "")}">слабый</span>` : q.level === "mid" ? `<span class="pill" data-tip="${esc(q.text || "")}">ориентир</span>` : ""}</div>
         <div class="fcbig">≈ ${n(x.expected)}<span>${esc(x.unit)}</span></div>
-        <div class="fcrow"><span>обычно ${n(x.low)}–${n(x.high)}</span><span><b>${mult(x.index)}</b> к норме ${n(x.base)}</span><span>хит <b>${Math.round(x.p_hit * 100)}%</b></span>${x.percentile !== null ? `<span>лучше <b>${Math.round(x.percentile * 100)}%</b> постов</span>` : ""}</div>
-        ${up.length || down.length ? `<div class="drivers"><div class="u"><h4>Прибавляет</h4><ul>${up.map(li).join("") || `<li><span class="muted">—</span></li>`}</ul></div>
-          <div class="d"><h4>Убавляет</h4><ul>${down.map(li).join("") || `<li><span class="muted">—</span></li>`}</ul></div></div>` : ""}
+        <div class="fcrow"><span>обычно ${n(x.low)}–${n(x.high)}</span><span><b>${mult(x.index)}</b> к норме ${n(x.base)}</span>${q.level !== "low" ? `<span>оценка шанса на хит <b>${Math.round(x.p_hit * 100)}%</b></span>` : ""}${x.percentile !== null ? `<span>лучше <b>${Math.round(x.percentile * 100)}%</b> постов</span>` : ""}</div>
+        ${up.length || down.length ? `<div class="drivers"><div class="u"><h4>Связано с ростом</h4><ul>${up.map(li).join("") || `<li><span class="muted">—</span></li>`}</ul></div>
+          <div class="d"><h4>Связано со снижением</h4><ul>${down.map(li).join("") || `<li><span class="muted">—</span></li>`}</ul></div></div>` : ""}
+        ${window.Charts.forecastQuality(q, true)}
         ${bt ? `<button class="besttime" data-pa="fc-when" data-at="${esc(bt.at)}">${C().ICON.clock}<span class="bt">Лучше опубликовать ${esc(fmtWhen(new Date(bt.at)))}</span><b>${pct(bt.gain)}</b></button>` : ""}
         ${x.tags_known ? "" : `<span class="muted small">${f.tagging ? "Теггер смотрит картинки — прогноз уточнится…" : "Содержание картинки не учтено: теггер не установлен."}</span>`}
       </div>`;
@@ -182,7 +216,7 @@
   // ---------------- Новый пост ----------------
   const RATING_TIP = { sfw: "Без обнажённости", erotic: "Обнажённость и откровенные позы без половых актов", explicit: "Всё, что дальше" };
   // порядок площадок — из «Настроек» (стрелки у площадок в меню): подписи, версии, язык, предпросмотр, значки
-  const porder = () => (S().pub && S().pub.platform_order) || ["telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "reddit", "joyreactor"];
+  const porder = () => (S().pub && S().pub.platform_order) || ["telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "reddit", "joyreactor", "x"];
   const byOrder = (arr, key = (x) => x[0]) => { const o = porder(), ix = (x) => { const i = o.indexOf(key(x)); return i < 0 ? 99 : i; }; return arr.slice().sort((a, b) => ix(a) - ix(b)); };
   const pfor = (list) => {   // значки площадок; отключённые модули не показываем
     const m = (S().pub && S().pub.modules) || {};
@@ -239,8 +273,10 @@
     const tile = (f, i) => {
       const ar = f.width && f.height ? `aspect-ratio:${f.width}/${f.height};` : "width:160px;";
       const ready = f.kind === "image" && prep[f.id] === "ready";
-      return `<figure class="gt" data-user-attrs="data-tip" draggable="${multiOn() && s.brush ? "false" : "true"}" data-gi="${i}" style="${ar}" data-tip="${esc(f.name)}${f.width ? "\n" + f.width + "×" + f.height : ""} · ${mb(f.size)}${d.files.length > 1 ? "\nПеретащите, чтобы поменять порядок" : ""}">
+      return `<figure class="gt" tabindex="0" aria-label="${i + 1}. ${esc(f.name)}" data-file-id="${esc(f.id)}" data-user-attrs="data-tip" draggable="${multiOn() && s.brush ? "false" : "true"}" data-gi="${i}" style="${ar}" data-tip="${esc(f.name)}${f.width ? "\n" + f.width + "×" + f.height : ""} · ${mb(f.size)}${d.files.length > 1 ? "\nПеретащите, чтобы поменять порядок" : ""}">
         ${f.kind === "video" ? `<img src="/uthumb/${f.id}?t=${tok()}" alt="${esc(f.name)}" draggable="false" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'vid',textContent:'${esc(f.format || "MP4")}'}))">` : `<img src="/uthumb/${f.id}?t=${tok()}" alt="${esc(f.name)}" draggable="false">`}
+        <span class="gnum" aria-hidden="true">${i + 1}</span>
+        ${d.files.length > 1 ? `<span class="draghandle" aria-hidden="true" data-tip="Перетащите, чтобы поменять порядок">⠿</span>` : ""}
         ${f.kind === "video" ? `<span class="play" aria-hidden="true">▶</span>` : ""}
         ${multiOn() ? `<button class="vmark v-${(d.marks || {})[f.id] || "all"}" data-pa="vmark" data-id="${f.id}" data-tip="Версия файла: нажмите, чтобы сменить">${vlabel((d.marks || {})[f.id])}</button>` : ""}
         ${f.kind === "video" || f.kind === "gif" ? `<button class="gifbtn" data-pa="ved-open" data-i="${i}" data-tip="Обрезать, повернуть, уменьшить, сделать GIF из видео или видео из GIF">Изменить</button>` : ""}
@@ -416,7 +452,7 @@
       return p.signatures.use[k] !== false && (d.rating && d.rating !== "sfw" ? v.nsfw : v.sfw);
     }) : [];
     const titleFor = p ? [["telegram", p.telegram.include_title], ["discord", p.discord.include_title], ["vk", p.vk.include_title]].filter(([, on]) => on).map(([k]) => k) : [];
-    const tagsOn = p && ((p.e6ai && p.e6ai.enabled) || (p.hashtags && p.hashtags.enabled));
+    const tagsOn = p && ((BOORUS.some(k => p[k]?.enabled)) || (p.hashtags && p.hashtags.enabled));
     const X = d.extend;
     const toolButtons = `<div class="post-tools-buttons"><button class="btn small ${s.postPanel==='drafts'?'on':''}" data-pa="post-panel" data-panel="drafts" aria-expanded="${s.postPanel==='drafts'}" aria-controls="post-tools">Черновики</button><button class="btn small ${s.postPanel==='templates'?'on':''}" data-pa="post-panel" data-panel="templates" aria-expanded="${s.postPanel==='templates'}" aria-controls="post-tools">Шаблоны</button></div>`;
     const head = (X ? `<div class="toolbar"><h1>Дослать пост</h1><span class="spacer"></span>${toolButtons}<button class="btn ghost" data-pa="extend-cancel">${C().ICON.close} Отменить досылку</button></div>
@@ -435,8 +471,8 @@
       ${s.pubErr?.features && s.postPanel!=='checks' && s.postPanel!=='templates'?C().problemHtml(s.pubErr.features):''}
       <div class="postgrid"><div class="postmain">
         <section class="card"><div class="cardhead"><h2>Файлы</h2>
-            ${d.files.some((f) => f.kind !== "image") ? `<span class="optline">GIF и видео уходят как есть ${C().hint("Переделываются только там, где площадка иначе не примет: ужать под лимит Discord или Telegram, перекодировать в H.264 или в WebM для " + (BN() === "e6ai" ? "blep.art" : BN()) + ". Подробности — «Настройки» → «Видео и GIF».")}</span>` :
-            `<span class="optline">JPEG-превью для соцсетей, PNG-оригинал в Telegram и на ${BN() === "e6ai" ? "blep.art" : BN()} ${C().hint("Оригиналы не меняются. Для постов делается JPEG-превью по рецепту из «Настроек» → «JPEG-превью»; он готовится сразу, пока вы пишете текст. PNG-оригиналы уходят файлами в Telegram и на blep.art.")}</span>`}
+            ${d.files.some((f) => f.kind !== "image") ? `<span class="optline">GIF и видео уходят как есть ${C().hint("Переделываются только там, где площадка иначе не примет: ужать под лимит Discord или Telegram, перекодировать в H.264 или в WebM для " + (BL()) + ". Подробности — «Настройки» → «Видео и GIF».")}</span>` :
+            `<span class="optline">JPEG-превью для соцсетей, PNG-оригинал в Telegram и на ${BL()} ${C().hint("Оригиналы не меняются. Для постов делается JPEG-превью по рецепту из «Настроек» → «JPEG-превью»; он готовится сразу, пока вы пишете текст. PNG-оригиналы уходят файлами в Telegram и на выбранный booru-сайт.")}</span>`}
             ${featOn("targeting") ? `<label class="tgl multitgl"><input type="checkbox" data-dfield="multi" ${d.multi ? "checked" : ""}><span>Умное таргетирование ${C().hint("Для работ в нескольких вариантах: с русскими надписями, с английскими, без надписей. Отметьте версию у каждого файла — на каждую площадку уйдут только её версии. Какие версии куда — «Настройки» → «Файлы поста» → «Умное таргетирование». Обычные посты это не затрагивает.")}</span></label>` : ""}</div>
           ${d.files.length ? galleryHtml() : `<label class="drop" id="drop" tabindex="0">
             <input type="file" id="fileinp" multiple accept="${ACCEPT}" hidden>
@@ -468,16 +504,21 @@
     const i = d.files.findIndex((x) => x.id === job.src);
     if (i < 0) { C().api("post_remove_file", { file_id: nf.id }).catch(() => {}); return; }   // файл из поста уже убрали
     d.files.splice(i, 1, nf);
-    if (d.e6tags && d.e6tags[job.src]) { d.e6tags[nf.id] = d.e6tags[job.src]; delete d.e6tags[job.src]; }
-    if (d.e6meta && d.e6meta[job.src]) { d.e6meta[nf.id] = d.e6meta[job.src]; delete d.e6meta[job.src]; }
-    if (d.marks && d.marks[job.src]) { d.marks[nf.id] = d.marks[job.src]; delete d.marks[job.src]; }
+    const perFile = [d.alts, d.marks];
+    for (const slot of Object.values(d.booru_posts || {})) perFile.push(slot.tags, slot.meta);
+    for (const values of perFile) {
+      if (values && Object.hasOwn(values, job.src)) {
+        values[nf.id] = values[job.src];
+        delete values[job.src];
+      }
+    }
     C().api("post_remove_file", { file_id: job.src }).catch(() => {});
     saveDraft(); await refreshPlan();
     C().toast(`${nf.kind === "gif" ? "GIF" : "Видео"} готов${nf.kind === "gif" ? "" : "о"}: ${mb(nf.size)}, ${nf.width}×${nf.height}` + (r.over ? ". Тяжелее заказанного лимита — возьмите отрезок короче" : ""), r.over ? "info" : "ok");
     if (s.view === "post") C().render();
   }
   // ----- второй язык: английский вариант заголовка и описания, на какие площадки он уходит -----
-  const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art / e621"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]];
+  const LANGP = [["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВК"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt"], ["e6ai", "blep.art"], ["e621", "e621"], ["floofgens", "floofgens.net"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"], ["x", "X"]];
   // шаблоны сервисов: [код, адрес, модель по умолчанию, название]
   const TRP = [["deepseek", "https://api.deepseek.com", "deepseek-flash", "DeepSeek"], ["openai", "https://api.openai.com/v1", "gpt-4o-mini", "OpenAI"],
     ["openrouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", "OpenRouter"], ["ollama", "http://localhost:11434/v1", "qwen2.5:7b", "Ollama (локально)"],
@@ -511,7 +552,7 @@
     </div>
     ${trHtml()}
     <div class="field"><label>Английский вариант отправлять на ${C().hint("Выбор запоминается: для следующих постов площадки останутся такими же. Остальные получат основной текст. Если английский вариант пуст, любая площадка получит основной текст. Хэштеги берутся из настроек площадки, а подпись — английская из «Настройки» → «Подписи» (если её нет — основная).")}</label>
-      <div class="chips">${list.map(([p, n]) => `<button class="chip ${tl[p] === "en" ? "on" : ""}" style="--tc:var(--accent)" data-pa="tlang" data-p="${p}" aria-pressed="${tl[p] === "en"}">${C().pbadge(p, { sm: true })} ${esc(n)}</button>`).join("")}</div></div>`;
+      <div class="chips">${list.map(([p, n]) => `<button class="chip ${tl[p] === "en" ? "on" : ""}" style="--tc:var(--accent)" data-pa="tlang" data-p="${p}" aria-pressed="${tl[p] === "en"}">${C().pbadge(p, { sm: true })} ${esc(n)}${tl[p] === "both" ? " · RU + EN" : ""}</button>`).join("")}</div></div>`;
   }
   // ----- хэштеги для соцсетей -----
   function htHtml() {
@@ -520,7 +561,7 @@
     const cur = p.hashtags || [], sug = p.hashtags_suggested || [];
     const all = [...new Set([...cur, ...sug])];
     return `<div class="cardhead"><h3 style="display:flex;align-items:center;gap:8px">Хэштеги для соцсетей ${pfor(TEXTP.filter((k) => (s.pub.hashtags.use || {})[k] !== false))}
-        ${C().hint("Для поиска работ в Telegram, Discord и ВК. Собираются из рейтинга, персонажей и видов из тегов " + (BN() === "e6ai" ? "blep.art" : BN()) + " и подсказок теггера, плюс постоянные из «Настроек». Нажмите на хэштег, чтобы убрать или вернуть.")}</h3>
+        ${C().hint("Для поиска работ в Telegram, Discord и ВК. Собираются из рейтинга, персонажей и видов из тегов " + (BL()) + " и подсказок теггера, плюс постоянные из «Настроек». Нажмите на хэштег, чтобы убрать или вернуть.")}</h3>
         ${d.hashtags == null ? `<span class="muted small">собраны из тегов</span>` : `<button class="btn small" data-pa="ht-auto">${C().ICON.refresh} Собрать из тегов заново</button>`}</div>
       <div class="chips">${all.map((t) => `<button class="chip ht ${cur.includes(t) ? "on" : ""}" data-pa="ht" data-tag="${esc(t)}">#${esc(t)}</button>`).join("")}
         <input class="taginput" data-htadd="1" placeholder="добавить хэштег" aria-label="Добавить хэштег" style="flex:0 1 180px"></div>`;
@@ -552,7 +593,7 @@
       o.rare != null && !o.on ? "rare" : "", o.mrem > o.madd && !o.on ? "mremd" : ""].join(" ");
     let tip = o.lock ? "Постоянный тег из «Настроек» → " + BN() : o.imp ? BN() + " добавит сам — отправлять не нужно" :
       (o.p != null ? `Теггер: ${Math.round(o.p * 100)}%` + (o.on ? "" : " — нажмите, чтобы добавить") : o.on ? "Нажмите, чтобы убрать" : "Нажмите, чтобы отметить");
-    if (o.rare != null) tip += `\nРедкий тег: ${o.rare} ${C().plural(o.rare, "пост", "поста", "постов")} на ${BN() === "e6ai" ? "blep.art" : BN()} — сам не отмечается`;
+    if (o.rare != null) tip += `\nРедкий тег: ${o.rare} ${C().plural(o.rare, "пост", "поста", "постов")} на ${BL()} — сам не отмечается`;
     if (o.mrem) tip += `\nМодераторы убирали этот тег: ${o.mrem} раз`;
     if (o.madd) tip += `\nМодераторы добавляли этот тег: ${o.madd} раз`;
     if (o.lock || o.imp) return `<span class="${cls}" data-tip="${esc(tip)}">${esc(tname(o.t))}</span>`;
@@ -563,9 +604,13 @@
   }
   function e6FormHtml(f) {
     const s = S(), d = draft(), F = (s.e6form || {})[f.id], m = e6meta(f.id);
-    const isArtist = BN() === "e621";   // на e621 строка «Директор» — это «Художник»
+    const isArtist = BN() !== "e6ai";   // на e621 строка «Директор» — это «Художник»
     if (!F) return `<p class="muted small">Готовлю форму…</p>`;
-    const R = F.rows, c = F.check, need = new Set(c.need);
+    const pending = s.e6Change?.draft === d && s.e6Change.site === BN();
+    const selected = pending ? new Set(d.e6tags[f.id] || []) : null;
+    const R = selected ? Object.fromEntries(Object.entries(F.rows).map(([name, options]) => [name,
+      options.map(o => o.lock || o.imp ? o : {...o, on: selected.has(o.t)})])) : F.rows;
+    const need = new Set(pending ? [] : F.check.need);
     const lim = (lst, n) => { const on = lst.filter((o) => o.on || o.imp || o.lock); const sug = lst.filter((o) => !(o.on || o.imp || o.lock)).slice(0, n); return [...on, ...sug]; };
     const row = ([k, label, nk, tip], body) => {
       if (k === "director" && isArtist) { label = "Художник"; nk = "художник"; }
@@ -590,7 +635,7 @@
     h += `<details class="frest" data-fid="${f.id}" ${open ? "open" : ""}><summary><span class="fl">Остальное</span><span class="small muted">${restOn.length} ${C().plural(restOn.length, "тег", "тега", "тегов")}${restSug.length ? ` · ${restSug.length} ${C().plural(restSug.length, "подсказка", "подсказки", "подсказок")}` : ""} — фон, поза, одежда, выражение</span></summary>
       <div class="chips">${restOn.map((o) => e6chip(f.id, "rest", o)).join("")}${e6input(f.id, "", "добавить: smile outside…")}</div>
       ${restSug.length ? `<div class="chips sug">${restSug.map((o) => e6chip(f.id, "rest", o)).join("")}</div>` : ""}</details>`;
-    return h + e6CheckHtml(f, F);
+    return h + (pending ? '<p class="muted small" role="status">Проверяю теги…</p>' : e6CheckHtml(f, F));
   }
   function e6CheckHtml(f, F) {
     const c = F.check, tags = (l) => l.length ? ` <span class="tl">${l.map((t) => esc(t.replace(/_/g, " "))).join(", ")}</span>` : "";
@@ -599,29 +644,54 @@
     if (c.need.length) li.push(`<li class="bad">Не заполнено: <b>${esc(c.need.join(", "))}</b></li>`);
     c.errors.forEach((x) => li.push(`<li class="bad">${esc(x.text)}${tags(x.tags)}</li>`));
     c.warnings.forEach((x) => li.push(`<li class="warn">${esc(x.text)}${tags(x.tags)}</li>`));
-    if (Object.keys(c.renamed || {}).length) li.push(`<li class="info">Переименовано по правилам ${BN() === "e6ai" ? "blep.art" : BN()}: ${Object.entries(c.renamed).map(([a, b]) => esc(a) + " → " + esc(b)).join(", ")}</li>`);
-    if ((c.trimmed || []).length) li.push(`<li class="info">Убрано лишнее — ${BN() === "e6ai" ? "blep.art" : BN()} добавит само: ${c.trimmed.map(esc).join(", ")}</li>`);
+    if (Object.keys(c.renamed || {}).length) li.push(`<li class="info">Переименовано по правилам ${BL()}: ${Object.entries(c.renamed).map(([a, b]) => esc(a) + " → " + esc(b)).join(", ")}</li>`);
+    if ((c.trimmed || []).length) li.push(`<li class="info">Убрано лишнее — ${BL()} добавит само: ${c.trimmed.map(esc).join(", ")}</li>`);
     if (li.length) h += `<ul>${li.join("")}</ul>`;
     const blocked = c.need.length || c.errors.length;
     const imgs = draft().files;
     const copy = imgs.length > 1 && imgs[0].id === f.id ? `<button class="btn small ghost" data-pa="e6copy" data-id="${f.id}" data-tip="Персонаж, пол, вид и остальные теги этой картинки — на все остальные картинки поста. Подтвердить нужно будет каждую.">Теги → на остальные</button>` : "";
     h += `<div class="e6sum"><span>Итого <b>${c.total}</b> ${C().plural(c.total, "тег", "тега", "тегов")}${c.implied.length ? ` <span class="muted" data-tip="${esc(c.implied.join(", "))}">(${c.implied.length} добавит сайт)</span>` : ""}</span>
       <span class="e6act">${copy}${c.confirmed && !blocked ? `<button class="btn small okd" data-pa="e6ok" data-id="${f.id}" data-un="1" data-tip="Нажмите, чтобы снять отметку">✓ Проверено</button>` :
-        `<button class="btn small ${blocked ? "" : "primary"}" data-pa="e6ok" data-id="${f.id}" ${blocked ? `disabled data-tip="Сначала заполните отмеченное красным"` : `data-tip="Подтвердите, что теги верные — без этого ${BN() === "e6ai" ? "blep.art" : BN()} не загрузим"`}>Всё верно</button>`}</span></div>`;
+        `<button class="btn small ${blocked ? "" : "primary"}" data-pa="e6ok" data-id="${f.id}" ${blocked ? `disabled data-tip="Сначала заполните отмеченное красным"` : `data-tip="Подтвердите, что теги верные — без этого ${BL()} не загрузим"`}>Всё верно</button>`}</span></div>`;
     return h + `</div>`;
   }
   function e6DbHtml() {
     const s = S(), st = s.e6db;
     if (!st) return "";
     const j = st.job;
-    if (j && j.state === "running") return `<div class="e6db"><span class="spin"></span><span class="small">${esc(j.message || "Скачиваю базу тегов " + (BN() === "e6ai" ? "blep.art" : BN()) + "…")}</span></div>`;
+    if (j && j.state === "running") return `<div class="e6db"><span class="spin"></span><span class="small">${esc(j.message || "Скачиваю базу тегов " + (BL()) + "…")}</span></div>`;
     if (st.ready) return "";
-    return `<div class="e6db"><span class="small">База тегов ${BN() === "e6ai" ? "blep.art" : BN()} не скачана: без неё нет подсказок при вводе, и не проверить, существует ли тег.${j && j.state === "error" ? ` <span class="err">${esc(j.error || "")}</span>` : ""}</span>
+    return `<div class="e6db"><span class="small">База тегов ${BL()} не скачана: без неё нет подсказок при вводе, и не проверить, существует ли тег.${j && j.state === "error" ? ` <span class="err">${esc(j.error || "")}</span>` : ""}</span>
       <button class="btn small primary" data-pa="e6db-get">Скачать базу</button></div>`;
   }
   function e6on() {   // e6ai настроен и не выключен для этого поста (по умолчанию выключен)
-    const s = S(), e6 = s.pub && s.pub.e6ai;
-    return !!(e6 && e6.enabled && !(draft().exclude || []).includes("e6ai"));
+    const s = S(), e6 = s.pub && s.pub[BN()];
+    return !!(e6 && e6.enabled && !(draft().exclude || []).includes(BN()));
+  }
+  function booruCopyHtml(d) {
+    const s = S(), prefs = s.booruCopyPrefs?.[BN()] || {};
+    const target = BOORUS.includes(prefs.target) ? prefs.target : BN();
+    const names = {e6ai:'blep.art',e621:'e621',floofgens:'floofgens.net'};
+    const sources = BOORUS.filter(site => site !== target).map(site => ({site, count:d.files.reduce((n,f) => n+(d.booru_posts?.[site]?.tags?.[f.id] || []).length,0)}));
+    const available = sources.filter(item => item.count);
+    const source = available.some(item => item.site === prefs.source) ? prefs.source : available[0]?.site;
+    const direction = source ? `${names[source]} → ${names[target]}` : 'между площадками';
+    return `<details class="more booru-copy-panel" data-booru-copy-panel data-detail-key="booru-copy" ${s.editorDetails?.['booru-copy']?'open':''}><summary><span>Копировать теги</span><span class="muted small">${direction}</span></summary><div class="booru-copy-body" role="group" aria-label="Копирование тегов между площадками">
+      <div class="booru-copy-direction"><div class="field"><label for="booru-copy-source">Откуда</label><select id="booru-copy-source" data-booru-copy-field="source">${sources.map(item => `<option value="${item.site}" ${item.site === source ? 'selected' : ''} ${item.count ? '' : 'disabled'}>${names[item.site]} · тегов: ${item.count}</option>`).join('')}</select></div>
+      <span class="booru-copy-arrow" aria-hidden="true">→</span><div class="field"><label for="booru-copy-target">Куда</label><select id="booru-copy-target" data-booru-copy-field="target">${BOORUS.map(site=>`<option value="${site}" ${site===target?'selected':''}>${names[site]}</option>`).join('')}</select></div></div>
+      ${!available.length ? `<p class="muted small">На других площадках ещё нет выбранных тегов для этих файлов.</p>` : ''}
+      <div class="row booru-copy-controls"><div class="field"><label for="booru-copy-file">Для файлов</label><select id="booru-copy-file" data-booru-copy-field="file"><option value="all">Весь пост</option>${d.files.map((f,i) => `<option value="${esc(f.id)}" ${prefs.file === f.id ? 'selected' : ''}>${i+1}. ${esc(f.name || f.id)}</option>`).join('')}</select></div>
+      <label class="booru-copy-replace"><input type="checkbox" id="booru-copy-mode" data-booru-copy-field="replace" ${prefs.mode==='replace'?'checked':''}> Заменить выбранные теги</label>
+      <button class="btn primary" data-pa="booru-copy-tags" ${available.length?'':'disabled'}>Копировать</button></div>
+      <p class="muted small">По умолчанию теги добавляются без дублей. Исходные теги сохраняются. После копирования проверьте теги на принимающем сайте.</p></div></details>`;
+  }
+  async function selectBooruTags(site, run=false) {
+    const s=S();
+    if(!BOORUS.includes(site))return;
+    s.booruTagSite=site;s.e6db=null;s.e6form={};s.e6preds={};s.e6cats={};s.tagCat={};
+    draft();C().render();
+    try {const status=await C().api('e6db_status',{booru_site:site});if(BN()===site)s.e6db=status;}catch(_){/* form remains editable */}
+    if(BN()===site){await loadTags(run);C().render();}
   }
   function e6Html() {
     const s = S(), d = draft();
@@ -629,13 +699,14 @@
     const imgs = d.files;
     const tg = s.tagger || {};
     const runJob = tg.run_job, running = runJob && runJob.state === "running";
-    let h = `<div class="tagsec" id="e6card"><div class="cardhead"><h3 style="display:flex;align-items:center;gap:8px">Теги ${BN() === "e6ai" ? "blep.art" : BN()} ${C().pbadge("e6ai", { sm: true })}
-        ${C().hint("Как форма загрузки на blep.art. Сплошные — уйдут на " + (BN() === "e6ai" ? "blep.art" : BN()) + ", пунктир — подсказка теггера (число — уверенность): нажмите, чтобы добавить. Бледные " + (BN() === "e6ai" ? "blep.art" : BN()) + " добавит сам. Мелкие детали (пирсинг, украшения, татуировки) теггер путает — их отмечайте сами. Без заполненных строк и «Всё верно» " + (BN() === "e6ai" ? "blep.art" : BN()) + " не загружаем.")}</h3>
+    let h = `<div class="tagsec" id="e6card"><div class="cardhead"><h3 style="display:flex;align-items:center;gap:8px">Теги ${BL()} ${C().pbadge(BN(), { sm: true })}
+        ${C().hint("Как форма загрузки на blep.art. Сплошные — уйдут на " + (BL()) + ", пунктир — подсказка теггера (число — уверенность): нажмите, чтобы добавить. Бледные " + (BL()) + " добавит сам. Мелкие детали (пирсинг, украшения, татуировки) теггер путает — их отмечайте сами. Без заполненных строк и «Всё верно» " + (BL()) + " не загружаем.")}</h3>
         <span class="muted small">${!mod("tagger") ? `теггер выключен — теги вписываются вручную (<a href="#" data-view-link="settings" data-tab="features">Функции</a>)` : tg.ready ? "теггер JTP PILOT²" : `теггер не установлен — <a href="#" data-view-link="platforms" data-tab="tags">установить</a>`}</span></div>`;
     if (s.tagCpu) h += `<div class="callout warn"><p>Теггер не видит видеокарту и подбирал бы теги на процессоре — это медленно и тормозит компьютер, поэтому теги пока не подбираются. <a href="#" data-view-link="settings" data-tab="tags">Как исправить</a></p></div>`;
-    h += e6DbHtml();
+    h += booruTabs() + e6DbHtml();
     if (running) h += `<p class="muted small">${esc(runJob.message || "Подбираю теги…")}</p>`;
-    if (!imgs.length) return h + `<p class="muted small">Добавьте картинки — теги для каждой свои: на ${BN() === "e6ai" ? "blep.art" : BN()} каждая картинка — отдельный пост.</p></div>`;
+    if (!imgs.length) return h + `<p class="muted small">Добавьте картинки — теги для каждой свои: на ${BL()} каждая картинка — отдельный пост.</p></div>`;
+    h += booruCopyHtml(d);
     h += imgs.map((f) => {
       const preds = ((s.e6preds || {})[f.id]);
       return `<div class="e6row" data-fid="${f.id}"><img src="/uthumb/${f.id}?t=${tok()}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'vid sm',textContent:'${f.kind === "video" ? "видео" : "GIF"}'}))">
@@ -647,7 +718,7 @@
   function e6dbCard() {
     const st = S().e6db || {}, j = st.job, run = j && j.state === "running";
     const when = st.updated ? new Date(st.updated * 1000).toLocaleDateString(LOC, { day: "numeric", month: "long" }) : "";
-    return `<section class="card setc"><div class="head"><h2>База тегов ${BN() === "e6ai" ? "blep.art" : BN()} ${C().hint("Все теги " + (BN() === "e6ai" ? "blep.art" : BN()) + " с категориями, переименования и связи (персонаж → франшиза). По ней: подсказки при вводе, перевод тегов теггера в теги " + (BN() === "e6ai" ? "blep.art" : BN()) + ", проверка, что тег существует. Около 10 МБ, скачивается с blep.art. Обновляется сама вместе с трендами blep.art.")}</h2>
+    return `<section class="card setc"><div class="head"><h2>База тегов ${BL()} ${C().hint("Все теги " + (BL()) + " с категориями, переименования и связи (персонаж → франшиза). По ней: подсказки при вводе, перевод тегов теггера в теги " + (BL()) + ", проверка, что тег существует. Скачивается с выбранного сайта. Размер и доступность зависят от его выгрузок.")}</h2>
         ${st.ready ? `<span class="badge ok">✓ ${C().num(st.tags)} тегов</span>` : `<span class="badge off">не скачана</span>`}</div>
       ${st.ready ? `<p class="muted small">Обновлена ${esc(when)}${st.day ? " · выгрузка за " + esc(st.day) : ""} · ${C().num(st.aliases)} переименований · ${C().num(st.implications)} связей</p>` : ""}
       ${run ? `<div class="callout"><p>${esc(j.message || "Скачиваю…")}</p><div class="progress thin" style="flex:1 1 100%"><div style="width:${Math.round((j.progress || 0) * 100)}%"></div></div></div>` : ""}
@@ -658,16 +729,21 @@
     const s = S(); s.tagCat = s.tagCat || {};
     const miss = [...new Set(tags)].filter((t) => !(t in s.tagCat));
     if (!miss.length) return false;
-    try { Object.assign(s.tagCat, await C().api("tag_cats", { tags: miss })); } catch (e) { return false; }
+    try { Object.assign(s.tagCat, await tagApi("tag_cats", { tags: miss })); } catch (e) { return false; }
     return true;
   }
   async function refreshE6() {
     const s = S(), d = draft();
-    const imgs = d.files;
+    const imgs = d.files, site = BN();
     if (!imgs.length || !e6on()) { s.e6form = {}; return; }
     d.e6tags = d.e6tags || {}; d.e6meta = d.e6meta || {};
+    const input = () => ({ items: d.files.map(f => ({ id: f.id, tags: d.e6tags[f.id] || [], meta: e6meta(f.id) })), rating: d.rating || "" });
+    const args = input();
+    const ticket = requests.begin("booru-form", JSON.stringify(args));
+    const current = () => s.draft === d && BN() === site && e6on() && requests.current(ticket, JSON.stringify(input()));
     try {
-      const res = await C().api("e6_form", { items: imgs.map((f) => ({ id: f.id, tags: d.e6tags[f.id] || [], meta: e6meta(f.id) })), rating: d.rating || "" });
+      const res = await tagApi("e6_form", args);
+      if (!current()) return;
       s.e6form = res; s.e6cats = s.e6cats || {};
       let ch = false;
       for (const [id, F] of Object.entries(res)) {
@@ -675,27 +751,32 @@
         if ((Object.keys(F.check.renamed || {}).length || (F.check.trimmed || []).length) && JSON.stringify(F.tags) !== JSON.stringify(d.e6tags[id] || [])) { d.e6tags[id] = F.tags; ch = true; }
       }
       if (ch) saveDraft();
-    } catch (e) { s.e6form = {}; }
+    } catch (e) { if (current()) s.e6form = {}; }
   }
   async function loadTags(run, force) {
-    const s = S(), d = draft(), api = C().api;
+    const s = S(), d = draft(), site = BN(), slot = d.booru_posts?.[site];
+    const ids = d.files.map(f => f.id);
+    const selected = () => s.draft === d && BN() === site && d.booru_posts?.[site] === slot
+      && d.files.length === ids.length && d.files.every((f,i) => f.id === ids[i]);
+    const api = (name, args = {}) => C().api(name, TAG_METHODS.has(name) ? {...args, booru_site:site} : args);
     const e6 = e6on();
     // теггер смотрит картинки, пока он включён (переключатель справа вверху); к посту теги привязываются, только если включён e6ai
-    if (!mod("tagger") || !force && !(s.taggerOn !== false && s.pub && ((s.pub.e6ai && s.pub.e6ai.enabled) || (s.pub.hashtags && s.pub.hashtags.enabled)))) {
+    if (!mod("tagger") || !force && !(s.taggerOn !== false && s.pub && ((BOORUS.some(k => s.pub[k]?.enabled)) || (s.pub.hashtags && s.pub.hashtags.enabled)))) {
       if (e6) { await refreshE6(); if (s.view === "post" && s.postMode !== "progress") paintE6(); }   // теггер выключен — форма e6ai всё равно нужна
       return;
     }
-    const ids = d.files.map((f) => f.id);
     if (!ids.length) return;
     try { s.tagger = await api("tagger_status"); } catch (e) { return; }
-    if (e6 && !s.e6db) { try { s.e6db = await api("e6db_status"); } catch (e) { /* без базы тоже работаем */ } }
+    if (e6 && !s.e6db) { try { const status = await api("e6db_status"); if (!selected()) return; s.e6db = status; } catch (e) { /* без базы тоже работаем */ } }
     const res = await api("post_tags", { ids });
+    if (!selected()) return;
     s.e6preds = Object.assign({}, s.e6preds, res);
     d.e6tags = d.e6tags || {};
     const fresh = ids.filter((id) => res[id] && d.e6tags[id] === undefined && e6);
     if (fresh.length) {   // первый раз — отмечаем только уверенное, без мелких деталей
       const init = await api("e6_initial", { ids: fresh });
-      fresh.forEach((id) => { if (init[id]) d.e6tags[id] = init[id]; });
+      if (!selected()) return;
+      fresh.forEach((id) => { if (init[id] && d.e6tags[id] === undefined) d.e6tags[id] = init[id]; });
       saveDraft();
     }
     await refreshE6();
@@ -717,8 +798,20 @@
     }
     if (s.view === "post" && s.postMode !== "progress") paintE6();
   }
-  async function e6changed(force) {
-    saveDraft(); await refreshE6(); await refreshPlan(); paintE6(force);
+  async function e6changed(force, immediate = false) {
+    const s = S(), change = {draft: draft(), site: BN()};
+    s.e6Change = change;
+    saveDraft();
+    if (immediate) paintE6(force);
+    try {
+      await refreshE6();
+      if (s.e6Change === change && s.draft === change.draft) await refreshPlan();
+    } finally {
+      if (s.e6Change === change) {
+        s.e6Change = null;
+        if (s.draft === change.draft) paintE6(force);
+      }
+    }
   }
   function paintE6(force) {
     const el = document.getElementById("e6card");
@@ -752,7 +845,7 @@
     if (!q || q.length < 2) { acClose(); return; }
     const seq = ++acSeq;
     let res = [];
-    try { res = await C().api("tag_search", { q, cat: inp.dataset.ac || "", limit: 10 }); } catch (e) { return; }
+    try { res = await tagApi("tag_search", { q, cat: inp.dataset.ac || "", limit: 10 }); } catch (e) { return; }
     if (seq !== acSeq || document.activeElement !== inp) return;
     if (!res.length) { acClose(); return; }
     const el = acEl(), r = inp.getBoundingClientRect();
@@ -820,7 +913,7 @@
     const doneL = p.dests.filter((x) => x.done);
     const needs = p.dests.filter(isNeed);
     const row = (x) => `<label class="drow ${x.will ? "" : isNeed(x) ? "needrow" : "dim"}">${C().pbadge(x.platform, { cls: x.will || isNeed(x) ? "" : "off" })}
-        <span class="dn"><b translate="no">${esc(/^e621 · /.test(x.name) ? x.name : x.name.replace(/^[^·]+· /, ""))}</b><span>${x.will ? esc(x.details.join(", ")) : esc(x.reason)}${isNeed(x) ? ` · <a href="#" data-pa="e6need">к тегам</a>` : ""}</span></span>
+        <span class="dn"><b translate="no">${esc(BOORUS.includes(x.platform) ? x.name : x.name.replace(/^[^·]+· /, ""))}</b><span>${x.will ? esc(x.details.join(", ")) : esc(x.reason)}${isNeed(x) ? ` · <a href="#" data-pa="e6need" data-site="${esc(x.platform)}">к тегам</a>` : ""}</span></span>
         <span class="tgl"><input type="checkbox" ${x.will || isNeed(x) ? "checked" : ""} ${x.can_toggle || x.off ? "" : "disabled"} data-pa="toggle" data-key="${esc(x.key)}" aria-label="${esc(x.name)}"></span></label>`;
     // пока пост только собирается, «выберите рейтинг» и «добавьте картинки» — не ошибки, а подсказки:
     // красным они становятся, только если нажать «Опубликовать» раньше времени
@@ -828,27 +921,9 @@
     const e6wait = (e) => /^(e6ai|e621): теги не готовы/.test(e);   // это уже видно в строке e6ai выше
     const noPlat = Array.isArray(p.configured) && !p.configured.length;   // ни одной подключённой и включённой площадки
     const errs = (p.errors || []).filter((e) => (!soft(e) || s.tried) && !e6wait(e) && !(noPlat && /Ни одна площадка не настроена/.test(e)));
-    let h = `<div class="side-sec"><div class="head"><h2>Публикация</h2>${will.length ? `<span class="muted small">${will.length} ${C().plural(will.length, "место", "места", "мест")}</span>` : ""}</div>`;
-    if (noPlat) h += `<div class="nohint" role="note"><b>Некуда публиковать</b><span>Ни одна площадка не подключена или не включена. Добавьте площадки в настройках — и здесь появится список мест.</span>
-        <button class="btn primary small" data-view-link="settings" data-tab="telegram">Открыть настройки площадок</button></div>`;
-    if (noPlat) { /* подсказка выше; список мест пока пуст */ }
-    else if (!d.rating) h += `<p class="muted small">Выберите рейтинг — здесь появится список мест.</p>`;
-    else {
-      h += `<div class="dlist">${will.map(row).join("")}${needs.map(row).join("")}${off.map(row).join("")}</div>`;
-      if (doneL.length) h += `<div class="dlist donel"><span class="muted small">Уже опубликовано</span>${doneL.map((x) => `<div class="drow dim">${C().pbadge(x.platform, { cls: "" })}
-        <span class="dn"><b translate="no">${esc(x.name.replace(/^[^·]+· /, ""))}</b><span>✓ ${esc(x.reason)}</span></span></div>`).join("")}</div>`;
-      if (skip.length) h += `<details class="more"><summary>Не уйдёт: ${skip.length}</summary><div class="dlist">${skip.map(row).join("")}</div></details>`;
-    }
-    if (p.not_configured.length && !noPlat) h += `<span class="muted small">Не подключены: ${esc(p.not_configured.join(", "))}. <a href="#" data-view-link="platforms" data-tab="telegram">Настроить</a></span>`;
-    if (errs.length) h += `<ul class="errs">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`;
-    h += `</div>`;
-    if (d.rating && will.some((x) => x.key.startsWith("telegram:") && x.key !== "telegram:group")) h += `<div class="side-sec" id="fcbox">${fcHtml()}</div>`;
-    h += `<div class="side-sec"><button class="btn small" data-pa="post-check" aria-expanded="${s.postPanel==='checks'}" aria-controls="post-tools" ${s.pubBusy==='features'?'disabled':''}>${s.pubBusy==='features'?'Проверяю…':window.I18N.key('post.check')}</button>
-      ${s.readiness && !s.readiness.ready || s.composition?.errors?.length?'<p class="err small" role="alert">Есть замечания — откройте проверку поста.</p>':''}
-      ${s.readiness?.ready?'<span class="ok small">Локальные проверки пройдены</span>':''}</div>`;
+    let h = `<div class="postside-actions side-sec"><div class="head"><h2>Публикация</h2>${will.length ? `<span class="muted small">${will.length} ${C().plural(will.length, "место", "места", "мест")}</span>` : ""}</div>`;
     const hard = (p.errors || []).filter((e) => !soft(e));
-    const can = !hard.length && (will.length || !d.rating) && !s.publishing;
-    h += `<div class="side-sec">`;
+    const can = !hard.length && (will.length || !d.rating) && !s.publishing && s.e6Change?.draft !== d;
     if (d.editing_schedule) {
       h += `<button class="btn primary big" data-pa="schedule-save" ${can && will.length ? "" : "disabled"}>Сохранить изменения в очереди</button>`;
     } else if (d.extend) {
@@ -859,13 +934,34 @@
       h += whenHtml() + `<div class="splitbtn"><button class="btn primary big" data-pa="schedule" ${ok ? "" : "disabled"}>${at ? `Запланировать на ${fmtWhen(at)}` : "Выберите время"}</button>
         <button class="btn big" data-set="when" data-val="now" data-tip="Не планировать — опубликовать сейчас" aria-label="Не планировать">${C().ICON.close}</button></div>`;
     } else {
-      h += `<div class="splitbtn"><button class="btn primary big" data-pa="publish" ${can ? "" : "disabled"}>${window.I18N.key('post.publish')}</button>
-        <button class="btn primary big" data-set="when" data-val="later" data-tip="Запланировать на время" aria-label="Запланировать" ${d.rating ? "" : "disabled"}>${C().ICON.clock}</button></div>
-        <button class="btn big" style="width:100%;margin-top:8px" data-pa="pipe-add" ${can && will.length && d.rating ? "" : "disabled"} data-tip="Положить пост в очередь: Crosspost сам выберет лучшее свободное время по вашей статистике и опубликует">В конвейер</button>`;
+      h += `<div class="splitbtn"><button class="btn primary big" data-pa="publish" ${can ? "" : "disabled"}>${will.length && will.every(x=>x.stash_options) ? 'Подготовить в Sta.sh' : window.I18N.key('post.publish')}</button>
+        <button class="btn primary big" data-set="when" data-val="later" data-tip="Запланировать на время" aria-label="Запланировать" ${d.rating ? "" : "disabled"}>${C().ICON.clock}</button></div>`;
     }
-    if (hard.some(e6wait) && hard.length === (p.errors || []).filter(e6wait).length) h += `<p class="small warnline">${BN() === "e6ai" ? "blep.art" : BN()} ждёт теги: заполните форму «Теги ${BN() === "e6ai" ? "blep.art" : BN()}» или выключите ${BN() === "e6ai" ? "blep.art" : BN()} для этого поста.</p>`;
+    const queueButton = !d.editing_schedule && !d.extend && s.when !== "later"
+      ? `<button class="btn small" data-pa="pipe-add" ${can && will.length && d.rating ? "" : "disabled"} data-tip="Положить пост в очередь: Crosspost сам выберет лучшее свободное время по вашей статистике и опубликует">В конвейер</button>` : "";
+    h += `<div class="postside-check">${queueButton}<button class="btn small" data-pa="post-check" aria-expanded="${s.postPanel==='checks'}" aria-controls="post-tools" ${s.pubBusy==='features'?'disabled':''}>${s.pubBusy==='features'?'Проверяю…':window.I18N.key('post.check')}</button>
+      ${s.readiness && !s.readiness.ready || s.composition?.errors?.length?'<p class="err small" role="alert">Есть замечания — откройте проверку поста.</p>':''}
+      ${s.readiness?.ready?'<span class="ok small">Локальные проверки пройдены</span>':''}</div>`;
+    if (hard.some(e6wait) && hard.length === (p.errors || []).filter(e6wait).length) h += `<p class="small warnline">${BL()} ждёт теги: заполните форму «Теги ${BL()}» или выключите ${BL()} для этого поста.</p>`;
     if (s.schedMsg) h += `<p class="ok small">${esc(s.schedMsg)}. <a href="#" data-view-link="history">Открыть публикации</a></p>`;
-    return h + `</div>`;
+    h += `</div><div class="postside-details side-sec">`;
+    if (noPlat) h += `<div class="nohint" role="note"><b>Некуда публиковать</b><span>Ни одна площадка не подключена или не включена. Добавьте площадки в настройках — и здесь появится список мест.</span>
+        <button class="btn primary small" data-view-link="settings" data-tab="telegram">Открыть настройки площадок</button></div>`;
+    if (noPlat) { /* подсказка выше; список мест пока пуст */ }
+    else if (!d.rating) h += `<p class="muted small">Выберите рейтинг — здесь появится список мест.</p>`;
+    else {
+      h += `<div class="dlist">${will.map(row).join("")}${needs.map(row).join("")}${off.map(row).join("")}</div>`;
+      if (doneL.length) h += `<div class="dlist donel"><span class="muted small">Уже обработано</span>${doneL.map((x) => `<div class="drow dim">${C().pbadge(x.platform, { cls: "" })}
+        <span class="dn"><b translate="no">${esc(x.name.replace(/^[^·]+· /, ""))}</b><span>✓ ${esc(x.reason)}</span></span></div>`).join("")}</div>`;
+      if (skip.length) h += `<details class="more"><summary>Не уйдёт: ${skip.length}</summary><div class="dlist">${skip.map(row).join("")}</div></details>`;
+    }
+    if (p.not_configured.length && !noPlat) h += `<span class="muted small">Не подключены: ${esc(p.not_configured.join(", "))}. <a href="#" data-view-link="platforms" data-tab="telegram">Настроить</a></span>`;
+    if (errs.length) h += `<ul class="errs">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`;
+    if (d.rating && will.some(x => x.key.startsWith("telegram:") && x.key !== "telegram:group")) {
+      h += `<details class="more postside-forecast" data-detail-key="post-forecast"
+        ${s.editorDetails?.["post-forecast"] !== false ? "open" : ""}><summary>Прогноз просмотров</summary><div id="fcbox">${fcHtml()}</div></details>`;
+    }
+    return h + "</div>";
   }
   // ----- когда публиковать -----
   const WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"], MON = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -917,25 +1013,28 @@
         x.state === "done" && /возможно|скорее всего|не удалось найти|не удалось.*ссылк/i.test(x.note || "");
       const state = ambiguous ? "uncertain" : ["queued", "running", "done", "error"].includes(x.state) ? x.state : "queued";
       const previous = previousSendStates.get(x.key);
-      const justSent = state === "done" && (previous === "running" || previous === "queued");
+      const justSent = x.outcome !== "prepared" && state === "done" && (previous === "running" || previous === "queued");
       const justFailed = state === "error" && (previous === "running" || previous === "queued");
       previousSendStates.set(x.key, state);
-      const label = {queued:"в очереди", running:"отправляется", done:"опубликовано", error:"отказ", uncertain:"результат не подтверждён"}[state];
+      const label = {queued:"в очереди", running:"отправляется", done:x.outcome === "prepared" ? "черновики готовы" : "опубликовано", error:"отказ", uncertain:"результат не подтверждён"}[state];
       const symbol = {done:"✓", error:"×", uncertain:"?"}[state] || "";
       const tip = `${x.name || x.platform || x.key}: ${label}`;
       return `<span data-send-key="${esc(x.key)}" class="send-dest ${state}${justSent ? ' just-sent' : ''}${justFailed ? ' just-failed' : ''}" role="img" aria-label="${esc(tip)}" data-tip="${esc(tip)}" title="${esc(tip)}">${C().pbadge(x.platform || (x.key || '').split(':')[0])}${symbol ? `<span class="send-dest-mark" aria-hidden="true">${symbol}</span>` : ''}</span>`;
     };
     const row = (x) => {
-      const [ic, lbl] = (x.state === "error" && x.outcome !== "not_sent" ? ["?", "возможно, опубликовано"] : STATE_ICON[x.state]) || ["?", x.state];
+      const unknownLabel = x.stash_options ? "Возможно, черновик уже создан в Sta.sh." : "Возможно, опубликовано.";
+      const [ic, lbl] = (x.outcome === "prepared" ? ["✓", "Черновики готовы"] : x.state === "error" && x.outcome !== "not_sent" ? ["?", unknownLabel] : STATE_ICON[x.state]) || ["?", x.state];
       const warn = x.note && /⚠/.test(x.note);
       return `<div class="prow ${x.state}"><span class="pic" title="${lbl}">${ic}</span>
         <div style="flex:1;min-width:0"><b translate="no">${esc(x.name)}</b><br>
           <span class="muted small">${esc((x.details || []).join(" · "))}</span>
           ${x.state === "running" ? `<div class="progress thin progress-active" role="progressbar" aria-label="${esc(x.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct(x.progress)}"><div style="width:${pct(x.progress)}%"></div></div>` : ""}
           ${x.state === "running" && x.message ? `<span class="small">${esc(x.message)} ${Math.round((x.progress || 0) * 100)}%</span>` : ""}
-          ${x.state === "error" ? `<br><span class="err small">${x.outcome !== "not_sent" ? "Возможно, опубликовано. " : ""}${esc(x.message)}</span>` : ""}
+          ${x.state === "error" ? `<br><span class="err small">${x.outcome !== "not_sent" ? esc(unknownLabel) + " " : ""}${esc(x.message)}</span>` : ""}
           ${(() => { const m = /снимок экрана: ([\w.-]+\.png)/.exec((x.message || "") + " " + (x.note || "")); return m ? `<figure class="shot"><img src="/bdebug/${encodeURIComponent(m[1])}?t=${tok()}" alt="Снимок экрана"><figcaption class="muted small">Так выглядела страница в момент ошибки — пришлите этот снимок, если непонятно, что пошло не так.</figcaption></figure>` : ""; })()}
-          ${x.note ? `<br><span class="small ${warn ? "warn" : "muted"}">${esc(x.note)}</span>` : ""}</div>
+          ${x.note ? `<br><span class="small ${warn ? "warn" : "muted"}">${esc(x.note)}</span>` : ""}
+          ${stashDraftLinks(x)}
+          ${x.stash_options && x.state === "error" && x.outcome !== "not_sent" ? '<a href="#" class="small" data-open="https://sta.sh/">Проверить черновики в Sta.sh</a>' : ""}</div>
         ${x.link && /^https?:/.test(x.link) ? `<a href="#" class="small" data-open="${esc(x.link)}">Открыть</a>` : ""}</div>`;
     };
     return `<div class="head"><div><h1 translate="no">${esc(st.title || "Публикация")}</h1>
@@ -958,6 +1057,14 @@
       ${journalHtml(st.pub_id,'progress')}`;
   }
 
+  function stashDraftLinks(destination) {
+    return Object.values(destination.stash_drafts || {}).map(item =>
+      /^https:\/\/sta\.sh\/0[a-z0-9]+$/.test(item.url)
+        ? `<div><a href="#" class="small" data-open="${esc(item.url)}">Открыть черновик в Sta.sh · ${esc(item.name)}</a></div>`
+        : ""
+    ).join("");
+  }
+
   // ---------------- История ----------------
   // короткая строка о фоновой отправке — в блоке «Запланировать» нового поста
   function workerHtml() {
@@ -970,6 +1077,46 @@
       <button class="btn small" data-pa="wk-start">Включить</button></div>`;
   }
   const MONS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  function sendNowButton(row) {
+    if (!["pending", "queued", "missed"].includes(row.state)) return "";
+    const busy = (row.state === "pending" && row.send_now) || S().sendingNow?.has(row.id);
+    return `<button class="btn small primary" data-pa="sched-now" data-id="${row.id}" ${busy ? "disabled" : ""}>
+      ${C().ICON.play} ${busy ? "Ожидает отправки" : "Опубликовать сейчас"}</button>`;
+  }
+
+  async function watchQueuedSend(sid) {
+    const s = S();
+    if (s.view !== "history" || !s.queueOpen) {
+      s.sendingNow?.delete(sid);
+      return;
+    }
+    try {
+      const scheduled = await C().api("post_scheduled");
+      const item = scheduled.find(row => row.id === sid);
+      if (s.view !== "history" || !s.queueOpen) {
+        s.sendingNow?.delete(sid);
+        return;
+      }
+      s.sched = scheduled;
+      if ((item?.state === "pending" && item.send_now) || item?.state === "running") {
+        if (s.pipe?.items) {
+          s.pipe.items = s.pipe.items.map(row => row.id === sid ? {...row, ...item} : row);
+        }
+        quietHistory();
+        setTimeout(() => watchQueuedSend(sid), 2500);
+        return;
+      }
+      s.sendingNow?.delete(sid);
+      s.pipe = await C().api("pipeline_state");
+      await Promise.all([loadHistoryPage(s.historyOffset || 0), loadCalendar()]);
+      quietHistory();
+    } catch (error) {
+      s.sendingNow?.delete(sid);
+      C().toast(error.message, "error");
+      quietHistory();
+    }
+  }
+
   function pipelineHtml() {
     const s = S(), P = s.pipe;
     if (!P) return "";
@@ -984,8 +1131,10 @@
       const when = r.state === "running" ? `<span class="small" style="color:var(--accent)">публикуется…</span>`
         : r.state === "editing" ? `<span class="warnline small">Редактируется — отправка приостановлена</span>` : r.state === "failed" ? `<span class="err small">не вышел: ${esc(r.error || "ошибка")}</span>`
         : r.state === "missed" ? `<span class="err small">пропущен — получит новое время</span>`
+        : r.send_now ? `<span class="muted small">Отправка при первой возможности</span>`
         : at ? `<span class="muted small">${esc(r.human)}</span>` : `<span class="muted small">${c.enabled ? "ищу свободное время…" : "ждёт включения конвейера"}</span>`;
-      const mv = s.pipeMove === r.id;
+      const canMove = ["queued", "pending", "missed"].includes(r.state);
+      const mv = canMove && s.pipeMove === r.id;
       const box = at ? `<div class="datebox"><b>${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}</b><span>${at.getDate()} ${MONS[at.getMonth()]}</span></div>` : `<div class="datebox"><b>—</b><span>очередь</span></div>`;
       return `<div class="sitem ${r.state === "missed" || r.state === "failed" ? "missed" : ""}">
         ${box}
@@ -997,9 +1146,10 @@
           ${mv ? `<div class="row" style="align-items:center;gap:8px;margin-top:4px"><input type="datetime-local" id="pmv-${r.id}" min="${localInput(new Date())}" value="${at ? localInput(at) : ""}"><button class="btn small primary" data-pa="pipe-pin" data-id="${r.id}">Закрепить</button>${r.pinned ? `<button class="btn small" data-pa="pipe-unpin" data-id="${r.id}">Снять закрепление</button>` : ""}<button class="btn small ghost" data-pa="pipe-pin-cancel">Отмена</button></div>` : ""}
         </div>
         ${r.state !== "running" ? `<div class="acts">${["pending","queued","missed","editing"].includes(r.state)?`<button class="btn small" data-pa="schedule-edit" data-id="${r.id}">Редактировать</button>`:""}
+          ${sendNowButton(r)}
           <button class="icon-btn" data-pa="pipe-up" data-id="${r.id}" data-tip="Выше в очереди" aria-label="Выше">↑</button>
           <button class="icon-btn" data-pa="pipe-down" data-id="${r.id}" data-tip="Ниже в очереди" aria-label="Ниже">↓</button>
-          <button class="btn small" data-pa="pipe-move" data-id="${r.id}">${ICON.cal} Время</button>
+          ${canMove ? `<button class="btn small" data-pa="pipe-move" data-id="${r.id}">${ICON.cal} Время</button>` : ""}
           <button class="icon-btn danger" data-pa="pipe-remove" data-id="${r.id}" data-tip="Убрать из конвейера" aria-label="Убрать">${ICON.trash}</button></div>` : ""}
       </div>`;
     };
@@ -1033,7 +1183,7 @@
           ${s.moving === r.id ? `<div class="row" style="align-items:center;gap:8px;margin-top:4px"><input type="datetime-local" id="mv-${r.id}" min="${localInput(new Date())}" value="${localInput(at)}"><button class="btn small primary" data-pa="sched-move" data-id="${r.id}">Сохранить</button><button class="btn small ghost" data-pa="sched-move-cancel">Отмена</button></div>` : ""}
         </div>
         ${r.state !== "running" ? `<div class="acts">${["pending","queued","missed","editing"].includes(r.state)?`<button class="btn small" data-pa="schedule-edit" data-id="${r.id}">Редактировать</button>`:""}
-          <button class="btn small primary" data-pa="sched-now" data-id="${r.id}">${ICON.play} Опубликовать сейчас</button>
+          ${sendNowButton(r)}
           ${s.moving === r.id ? "" : `<button class="btn small" data-pa="sched-move" data-id="${r.id}">${ICON.cal} Перенести</button>`}
           <button class="icon-btn danger" data-pa="sched-cancel" data-id="${r.id}" data-tip="Отменить публикацию" aria-label="Отменить публикацию">${ICON.trash}</button></div>` : ""}
       </div>`;
@@ -1041,7 +1191,7 @@
   }
   const destBadges = (dests) => `<div class="pbs">${dests.map((x) => {
     const st = x.state === "error" ? "err" : x.state === "done" ? "" : "wait";
-    const tip = `${x.name}: ${x.state === "done" ? "опубликовано" : x.state === "error" ? (x.outcome !== "not_sent" ? "возможно, опубликовано — " : "ошибка — ") + (x.message || "") : "не дошло"}`;
+    const tip = `${x.name}: ${x.state === "done" ? (x.outcome === "prepared" ? "черновики готовы" : "опубликовано") : x.state === "error" ? (x.outcome !== "not_sent" ? "возможно, опубликовано — " : "ошибка — ") + (x.message || "") : "не дошло"}`;
     return C().pbadge(x.platform || (x.key || "").split(":")[0], { cls: st, tip, link: x.state === "done" && /^https?:/.test(x.link || "") ? x.link : "" });
   }).join("")}</div>`;
   // единая шкала успеха: ×3+ супер-хит, ×2–3 хит, ×1,3–2 выше нормы, ниже ×0,77 — слабее
@@ -1069,8 +1219,12 @@
   async function loadCalendar(quiet) {
     const s = S(), ym = s.calYm || (s.calYm = curYm());
     s.cal = s.cal || {};
+    const pending = s.calendarRequests ||= {};
+    const request = pending[ym] = {};
+    const current = () => s.calendarRequests === pending && pending[ym] === request;
     try {
       const r = await C().api("calendar_month", { ym });
+      if (!current()) return;
       const prev = s.cal[ym];
       s.cal[ym] = r;
       if (!r._cache || !r._cache.stale || !prev || !prev._cache || prev._cache.at !== r._cache.at) s.calTries = 0;
@@ -1079,7 +1233,7 @@
         s.calTries = (s.calTries || 0) + 1;
         if (s.calTries <= 5) s.calPoll = setTimeout(async () => { if (s.view === "history") { await loadCalendar(true); quietHistory(); } }, 2000 * s.calTries);
       }
-    } catch (e) { s.cal[ym] = { error: e.message }; }
+    } catch (e) { if (current()) s.cal[ym] = { error: e.message }; }
     if (!quiet) return;
   }
   function quietHistory() {
@@ -1091,8 +1245,12 @@
   // все работы месяца по ключу — для карточки при наведении и шторки
   function calItems() {
     const c = (S().cal || {})[S().calYm];
-    const out = {};
-    if (c && c.days) Object.values(c.days).flat().forEach((it) => { out[it.key] = it; });
+    const out = Object.assign({}, S().mergeItems || {});
+    Object.values(S().cal || {}).forEach(month => Object.values(month.days || {}).flat().forEach(it => { out[it.key] = it; }));
+    (S().hist || []).forEach(row => {
+      const key=row.work?.key||"u"+row.id;
+      out[key]=row.work||{key,atoms:row.atoms||["u"+row.id]};
+    });
     return out;
   }
   const PLAT = { telegram: ["TG", "Telegram"], vk: ["ВК", "ВКонтакте"], bsky: ["Bs", "Bluesky"], e6ai: ["e6", "e6ai"], e621: ["621", "e621"], da: ["DA", "DeviantArt"] };
@@ -1108,9 +1266,11 @@
     const s = S(), sel = s.calSel || [];
     if (!s.calSelMode && !sel.length) return "";
     const items = calItems();
-    const multi = sel.length === 1 && items[sel[0]] && (items[sel[0]].atoms || []).length > 1;
+    const selected = sel.length === 1 ? items[sel[0]] : null;
+    const multi = selected && ((selected.pub_ids || []).length > 1 || (selected.atoms || []).filter(key => !/^u\d+$/.test(key)).length > 1);
     return `<div class="selbar"><span>${sel.length ? `Выбрано: ${sel.length}` : "Нажимайте на работы, чтобы выбрать"}</span><span class="spacer"></span>
-      <button class="btn small" data-pa="cal-merge" ${sel.length < 2 ? "disabled" : ""}>Объединить</button>
+      <button class="btn small" data-pa="cal-merge" ${sel.length < 2 ? "disabled" : ""}>Объединить выбранные</button>
+      <button class="btn small ghost" data-pa="cal-force-merge" ${sel.length < 2 ? "disabled" : ""}>Принудительно объединить</button>
       <button class="btn small ghost" data-pa="cal-split" ${multi ? "" : "disabled"}>Разъединить</button>
       <button class="btn small ghost" data-pa="cal-sel-off">Готово</button></div>`;
   }
@@ -1131,6 +1291,10 @@
         ${c && c.summary ? `<span class="muted small">${c.summary.posts} ${C().plural(c.summary.posts, "работа", "работы", "работ")}${c.summary.hits ? `, хитов: ${c.summary.hits}` : ""}${c.summary.typical ? `, обычно ${mult(c.summary.typical)}` : ""}</span>` : ""}</div>`;
     if (!c) return h + `<p class="muted">Загрузка…</p></section>`;
     if (c.error) return h + `<p class="err">${esc(c.error)}</p></section>`;
+    if (s.calendarUndo?.length) {
+      h += `<div class="row" role="status"><span class="muted small">Запись удалена из календаря.</span>
+        <button class="btn small ghost" data-pa="cal-restore" ${s.calendarVisibilityBusy ? "disabled" : ""}>Вернуть в календарь</button></div>`;
+    }
     h += selBarHtml() + suggestHtml(c);
     const start = new Date(c.start + "T00:00:00"), end = new Date(c.end + "T00:00:00");
     const rankOf = {};   // медали лидерам месяца
@@ -1246,12 +1410,12 @@
     const previous=s.histMode||C().store.get('histMode','calendar');
     const mode=s.histMode=['published','list'].includes(previous)?'published':'calendar';
     const nSched=(s.sched||[]).filter(r=>['pending','running','missed','editing','queued','failed'].includes(r.state)).length;
-    let h=`<div class="toolbar"><h1>Публикации</h1><span class="spacer"></span><button class="btn small ${s.queueOpen?'on':''}" data-pa="history-queue" aria-expanded="${!!s.queueOpen}" aria-controls="history-queue">Очередь${nSched?' · '+nSched:''}</button><div class="seg" role="tablist" aria-label="Вид публикаций">${[['calendar','history.calendar'],['published','history.list']].map(([key,label])=>`<button role="tab" aria-selected="${mode===key}" class="${mode===key?'on':''}" data-pa="history-tab" data-tab="${key}">${window.I18N.key(label)}</button>`).join('')}</div></div>`;
+    let h=`<div class="toolbar"><h1>Публикации</h1><button class="btn ${s.calSelMode ? "on" : ""}" data-pa="cal-sel" aria-pressed="${!!s.calSelMode}">Объединить посты</button><span class="spacer"></span><button class="btn small ${s.queueOpen?'on':''}" data-pa="history-queue" aria-expanded="${!!s.queueOpen}" aria-controls="history-queue">Очередь${nSched?' · '+nSched:''}</button><div class="seg" role="tablist" aria-label="Вид публикаций">${[['calendar','history.calendar'],['published','history.list']].map(([key,label])=>`<button role="tab" aria-selected="${mode===key}" class="${mode===key?'on':''}" data-pa="history-tab" data-tab="${key}">${window.I18N.key(label)}</button>`).join('')}</div></div>`;
     h+=`<div id="history-queue" ${s.queueOpen?'':'hidden'}>${s.queueOpen?`<section class="card"><div class="head"><h2>Очередь</h2><button class="btn small ghost" data-pa="history-queue">Свернуть очередь</button></div>${workerHtml()}${schedHtml()}${pipelineHtml()}${nSched?'':'<p class="muted">Очередь пуста. Подготовьте пост и выберите время публикации.</p>'}</section>`:''}</div>`;
     if(mode==='calendar'){
       h+=calendarHtml()+dayListHtml();
     }else{
-      h+=historySearchHtml();
+      h+=selBarHtml()+historySearchHtml();
       h+=`<div class="toolbar">${C().seg('hf',[['all','Все'],['hits','Хиты на странице']],s.hf==='hits'?'hits':'all')}<span class="spacer"></span><select class="sm" id="hsort" aria-label="Сортировка"><option value="date">Сначала новые</option><option value="index" ${s.hsort==='index'?'selected':''}>По индексу на странице</option></select></div>`;
       if (!rows) { C().$main.innerHTML = h + `<p class="muted">Загрузка…</p>`; return; }
       if (!rows.length) {
@@ -1260,15 +1424,17 @@
       }
       const sum = s.histSum || {};
       let list = rows.slice();
-      if (s.hf === "hits") list = list.filter((r) => (sum[String(r.id)] || {}).index >= C().LV().hit);
-      if (s.hsort === "index") list.sort((a, b) => ((sum[String(b.id)] || {}).index || 0) - ((sum[String(a.id)] || {}).index || 0));
+      if (s.hf === "hits") list = list.filter((r) => (r.work?.index ?? (sum[String(r.id)] || {}).index) >= C().LV().hit);
+      if (s.hsort === "index") list.sort((a, b) => (b.work?.index ?? (sum[String(b.id)] || {}).index ?? 0) - (a.work?.index ?? (sum[String(a.id)] || {}).index ?? 0));
       h += list.length ? `<div class="hlist">${list.map((r) => {
         const title = r.title || (r.text || "").split("\n")[0].slice(0, 80) || "Без названия";
-        const dt = new Date(r.created), x = sum[String(r.id)] || {};
-        return `<div class="hitem ${x.index >= C().LV().super ? "lead" : ""}" role="button" tabindex="0" data-pa="pstat" data-id="${r.id}" data-user-attrs="aria-label" aria-label="Статистика поста ${esc(title)}">
-          <span class="hthumb">${pubThumb(r)}${C().badges({ kind: pubKind(r), n: (r.files || []).length, rank: x.rank, scope: "за месяц", index: x.index, est: x.fresh, sm: true })}</span>
-          <div class="ht"><b translate="no">${esc(title)}</b><span>${dt.toLocaleDateString(LOC, { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
-          ${destBadges(r.dests)}${metricsHtml(r)}<span class="chev">${C().ICON.chev}</span></div>`;
+        const workKey=r.work?.key||"u"+r.id;
+        const dt = new Date(r.created), x = sum[String(r.id)] || {index:r.work?.index};
+        return `<div class="hitem ${x.index >= C().LV().super ? "lead" : ""}" role="button" tabindex="0" ${r.work ? `data-cw="${esc(workKey)}"` : `data-pa="pstat" data-id="${r.id}"`} data-user-attrs="aria-label" aria-label="Статистика поста ${esc(title)}">
+          ${s.calSelMode ? `<input type="checkbox" data-history-select="${esc(workKey)}" aria-label="Выбрать ${esc(title)}" ${(s.calSel||[]).includes(workKey)?"checked":""}>` : ""}
+          <span class="hthumb">${r.preview?`<img src="/mthumb/${encodeURIComponent(r.preview)}?t=${tok()}" alt="">`:pubThumb(r)}${C().badges({ kind: pubKind(r), n: (r.files || []).length, rank: x.rank, scope: "за месяц", index: x.index, est: x.fresh, sm: true })}</span>
+          <div class="ht"><b translate="no">${esc(title)}</b>${r.work?.manual?`<span class="pill">Объединено вручную</span>`:""}<span>${dt.toLocaleDateString(LOC, { day: "numeric", month: "short" })}, ${dt.toLocaleTimeString(LOC, { hour: "2-digit", minute: "2-digit" })} ${ratingPill(r.rating)}</span></div>
+          ${r.dests.length?destBadges(r.dests):`<span class="small">${esc((r.work?.channels||[]).join(", "))}</span>`}${r.dests.length?metricsHtml(r):`<span class="small">${r.work?.views==null?"нет замеров":C().num(r.work.views)+" просмотров"}</span>`}<span class="chev">${C().ICON.chev}</span></div>`;
       }).join("")}</div>` : `<p class="muted">Хитов пока нет — здесь будут посты лучше 90% постов канала (сейчас это ${String(C().LV().hit.toFixed(2)).replace(".", DEC)} к норме и выше).</p>`;
     }
     if (s.pubErr?.features) h += C().problemHtml(s.pubErr.features);
@@ -1285,6 +1451,7 @@
       img = it.preview ? `<img src="/mthumb/${encodeURIComponent(it.preview)}?t=${tok()}" alt="">` : `<span class="hthumb">${phHtml(it)}</span>`;
       big = it.preview ? `/media/${encodeURIComponent(it.preview)}?t=${tok()}` : "";
       sub = it.day ? `${it.day.slice(8)}.${it.day.slice(5, 7)}.${it.day.slice(0, 4)} ${it.time}` : "";
+      badges = (it.pub_ids||[]).map(pid=>`<button class="btn small" data-pa="pstat" data-id="${pid}">Публикация #${pid} · статистика и редактирование</button>`).join("");
     } else if (kind === "pub") {
       const r = (s.hist || []).find((x) => x.id === id);
       const d = (s.pstat || {})[key];
@@ -1307,6 +1474,7 @@
         <div class="dh">${img || `<div class="noimg"></div>`}
           <div style="min-width:0;display:flex;flex-direction:column;gap:6px"><b style="font-size:15px" translate="no">${esc(title || "Без названия")}</b>
             <span class="muted small">${sub}</span>${badges}
+            ${s.calendarDrawerItem?.atoms?.length ? `<button class="btn small ghost" data-pa="cal-hide" ${s.calendarVisibilityBusy ? "disabled" : ""}>Удалить из календаря</button>` : ""}
             ${(() => { const d = (s.pstat || {})[key] || {}; if (kind === "pub" || kind === "cal") return ""; const t = d.text && d.text.length > (title || "").length ? esc(d.text.slice(0, 140)) : ""; const hint = !d.preview && d.media !== "text" ? "Превью нет: файла не было в выгрузке. Сделайте экспорт канала с включёнными фото и видео и импортируйте снова — превью добавятся." : ""; return t || hint ? `<span class="muted small"><span translate="no">${t}</span>${t && hint ? "<br>" : ""}${hint}</span>` : ""; })()}</div>
           <button class="icon-btn" data-pa="pstat-close" aria-label="Закрыть">${C().ICON.close}</button></div>
         <div class="db">${String(key).startsWith("cal:") ? calStatHtml(String(key).slice(4)) : pstatHtml(key)}${kind === "pub" ? journalHtml(id,'history') : ""}</div></aside>`;
@@ -1432,9 +1600,10 @@
       });
     }
   }
-  async function openDrawer(key) {
-    const s = S(), api = C().api, [kind, id] = String(key).split(":");
+  async function openDrawer(key, calendarItem = null) {
+    const s = S(), api = tagApi, [kind, id] = String(key).split(":");
     hideHoverCard();
+    s.calendarDrawerItem = calendarItem;
     s.pstatOpen = key; s.journalOpen=null; s.pstatErr = ""; s.pstat = s.pstat || {}; C().render();
     if (kind === "cal") return;
     try { s.pstat[key] = kind === "pub" ? await api("pub_stats", { pub_id: +id }) : await api("post_detail", { post_id: +id }); }
@@ -1444,6 +1613,25 @@
 
   // ----- статистика поста -----
   const mult = (v) => "×" + Number(v).toFixed(2).replace(".", DEC);
+  function booruCheckpointsHtml(data) {
+    if (!data?.items?.length) return '';
+    const number = value => value == null ? '—' : C().num(value);
+    const phase = hours => hours === 168 ? '7 дней' : hours + ' ч';
+    const states = {waiting:'Ожидается',due:'Ожидается замер',missed:'Пропущен',unknown:'Дата поста пока не получена'};
+    const comparison = point => {
+      const c = point.comparison;
+      if (!c?.ready) return `<p class="muted small">Недостаточно истории для сравнения: ${c?.n || 0} из ${data.minimum} публикаций.</p>`;
+      return `<details class="more"><summary>К обычному результату: ${c.index == null ? 'медиана равна нулю' : mult(c.index)} · ${c.n} публикаций${c.preliminary ? ' · предварительно' : ''}</summary>
+        <p class="small">Обычная медиана: <b>${number(c.median)}</b> добавлений в избранное. Эта работа выше ${c.lower} из ${c.n} результатов, наравне с ${c.equal}.</p>
+        <p class="muted small">У средних 50% сравнимых публикаций: ${number(c.typical_low)}–${number(c.typical_high)}. Интервал неопределённости медианы (95%): ${number(c.median_low)}–${number(c.median_high)}.</p>
+        <p class="muted small">${esc(c.method)}. История за предыдущие ${c.window_days} дней. Это описание наблюдений, а не доказательство причины успеха.</p></details>`;
+    };
+    const item = (art,index) => `<details class="booru-checkpoint-art" ${data.items.length === 1 ? 'open' : ''}><summary>Изображение ${index+1} · пост ${art.post_id}</summary>
+      ${art.points.map(point => `<div class="booru-checkpoint"><div class="row"><b>≈ ${phase(point.hours)}</b><span>${point.state === 'measured' ? `В избранном: <b>${number(point.favs)}</b>` : states[point.state] || 'Нет данных'}</span></div>
+        ${point.state === 'measured' ? `<span class="muted small">Фактический возраст: ${Number(point.age_h).toFixed(1).replace('.',DEC)} ч · ${esc(new Date(point.taken_at).toLocaleString(LOC))}</span>${comparison(point)}` : ''}</div>`).join('')}
+      ${art.error ? `<p class="muted small">${esc(art.error)}</p>` : ''}</details>`;
+    return `<section class="booru-checkpoints"><h4>Избранное в одинаковом возрасте</h4><p class="muted small">Наблюдения через сутки, трое суток и неделю. Пропущенные замеры не восстанавливаются из сегодняшних цифр.</p>${data.items.map(item).join('')}</section>`;
+  }
   function growthSvg(st, fc, curve) {
     const pts = (st.series || []).filter((p) => p.h <= 192);
     const final = fc && fc.expected ? fc.expected : st.projected || null;
@@ -1484,11 +1672,23 @@
       if (v >= L.hit || (pc != null && pc >= 0.9)) h += `<div class="banner-hit ${v >= L.super ? "super" : ""}">${C().ICON.trophy}<span><b>${v >= L.super ? "Супер-хит" : v >= L.hit ? "Хит канала" : "Сильный пост"}</b>${pc != null ? ` — входит в топ-${Math.max(1, Math.round((1 - pc) * 100))}% публикаций канала` : ""}${top.index ? "" : ", пока по оценке первых часов"}</span>${mk(v, !top.index, "big")}</div>`;
       else if (v < 0.77) h += `<div class="banner-hit low"><span>Пост идёт слабее обычного для канала${pc != null ? ` — лучше ${Math.round(pc * 100)}% публикаций` : ""}</span>${mk(v, !top.index, "big")}</div>`;
     }
-    const shown = d.dests.filter((x) => x.stats || x.e6ai || x.nums || !x.why);   // площадки без цифр по своей природе (группа Telegram, Discord) не показываем
+    const shown = d.dests.filter((x) => x.stash_drafts || x.editable || x.stats || x.e6ai || x.booru_metrics || x.nums || x.stats_url || !x.why);   // ссылка на статистику доступна и без автоматического сбора
     if (!shown.length) h += `<p class="muted small">Площадки этого поста не отдают цифр — смотреть их можно только на самой площадке.</p>`;
     for (const x of shown) {
       const plat = x.platform || (x.key || "").split(":")[0];
-      h += `<div class="pdest"><div class="pdhead">${C().pbadge(plat)}<b translate="no">${esc(x.name)}</b>${x.link && /^https?:/.test(x.link) ? `<a href="#" data-open="${esc(x.link)}" class="small">открыть</a>` : ""}</div>`;
+      h += `<div class="pdest"><div class="pdhead">${C().pbadge(plat)}<b translate="no">${esc(x.name)}</b>${x.link && /^https?:/.test(x.link) ? `<a href="#" data-open="${esc(x.link)}" class="small">открыть</a>` : ""}${x.stats_url ? `<a href="#" data-open="${esc(x.stats_url)}" class="small">Статистика Reddit</a>` : ""}</div>`;
+      h += stashDraftLinks(x);
+      if(x.editable) h+=`<button class="btn small" data-pa="tg-edit" data-id="${x.source_pub_id||d.id}" data-key="${esc(x.key)}">Редактировать в Telegram</button>`;
+      const edit=s.tgEdit;
+      if(edit&&edit.pub_id===(x.source_pub_id||d.id)&&edit.key===x.key){
+        h+=`<div class="card"><h3>Изменить ${edit.kind==="text"?"текст":"подпись"} в Telegram</h3>
+          ${!edit.exact?'<p class="warnline">Старый пост: точная отправленная подпись не сохранена. Ниже текст из истории; проверьте подпись и ссылки перед заменой. Отдельное длинное сообщение этим действием не меняется.</p>':""}
+          <label for="tg-edit-text">Текст (поддерживается HTML Telegram)</label><textarea id="tg-edit-text" rows="7" ${edit.busy?"disabled":""}>${esc(edit.text)}</textarea>
+          <p class="muted small">Изменится только это сообщение в канале. Изображения и остальные площадки сохранятся.</p>
+          ${edit.error?`<p class="err">${esc(edit.error)}</p>`:""}
+          <button class="btn primary" data-pa="tg-edit-save" ${edit.busy?"disabled":""}>${edit.busy?"Сохраняю…":"Сохранить в Telegram"}</button>
+          <button class="btn" data-pa="tg-edit-cancel" ${edit.busy?"disabled":""}>Отмена</button></div>`;
+      }
       if (x.stats && x.stats.ok) {
         const st = x.stats, fc = x.forecast;
         if (x.verdict) h += `<p class="verdict">${esc(x.verdict)}</p>`;
@@ -1506,19 +1706,20 @@
         h += `<p class="muted small">${esc(x.stats.why)}</p>`;
       } else if (x.e6ai) {
         h += x.e6ai.error ? `<p class="muted small">${esc(x.e6ai.error)}</p>` : `<div class="pnums">
-          <div class="pnum"><span class="muted small">Score</span><b>${n(x.e6ai.score || 0)}</b></div>
-          <div class="pnum"><span class="muted small">В избранном</span><b>${n(x.e6ai.favs || 0)}</b></div>
-          <div class="pnum"><span class="muted small">Комментарии</span><b>${n(x.e6ai.comments || 0)}</b></div></div>`;
+          <div class="pnum"><span class="muted small">Score</span><b>${x.e6ai.score == null ? "—" : n(x.e6ai.score)}</b></div>
+          <div class="pnum"><span class="muted small">В избранном</span><b>${x.e6ai.favs == null ? "—" : n(x.e6ai.favs)}</b></div>
+          <div class="pnum"><span class="muted small">Комментарии</span><b>${x.e6ai.comments == null ? "—" : n(x.e6ai.comments)}</b></div></div>`;
         h += e6modHtml(x.e6mod);
       } else if (x.nums) {
         h += x.nums.error ? `<p class="muted small">${esc(x.nums.error)}</p>` :
           `<div class="pnums">${x.nums.cells.map(([l, v]) => `<div class="pnum"><span class="muted small">${esc(l)}</span><b>${typeof v === "number" ? n(v) : esc(v == null ? "0" : String(v))}</b></div>`).join("")}</div>${x.nums.note ? `<p class="muted small">${esc(x.nums.note)}</p>` : ""}`;
       } else if (x.why) h += `<p class="muted small">${esc(x.why)}</p>`;
+      if (x.booru_metrics) h += booruCheckpointsHtml(x.booru_metrics);
       h += `</div>`;
     }
     const busy = s.pstatBusy === id;
     h += `<div class="pfoot"><button class="btn small" data-pa="pstat-refresh" data-id="${esc(id)}" ${busy ? "disabled" : ""}>${C().ICON.refresh} ${busy ? "Обновляю…" : "Обновить цифры"}</button>
-      ${C().hint("Первые 7 дней цифры снимаются сами — через 1, 3, 6, 12 часов, сутки и дальше, пока работает фоновая отправка." + (S().worker && S().worker.track ? " " + S().worker.track : ""))}</div>`;
+      ${C().hint("Пока работает фоновая отправка и включён сбор статистики: Telegram измеряется в первые 7 дней; для blep.art, e621 и floofgens.net сохраняются контрольные точки примерно через 24, 72 и 168 часов." + (S().worker && S().worker.track ? " " + S().worker.track : ""))}</div>`;
     if (s.pstatErr) h += `<p class="err small">${esc(s.pstatErr)}</p>`;
     return h;
   }
@@ -1533,7 +1734,7 @@
     }
     const rem = [...new Set(checked.flatMap((x) => x.removed))], add = [...new Set(checked.flatMap((x) => x.added))];
     if (!rem.length && !add.length) return `<p class="ok small">Модераторы теги не правили.</p>`;
-    return `<div class="e6mod"><span class="small"><b>Модераторы поправили теги</b> ${C().hint("Убранное больше не отмечается само, добавленное предлагается охотнее. Персонажей и франшизы не запоминаю. Посмотреть и забыть — «Настройки» → " + (BN() === "e6ai" ? "blep.art" : BN()) + ".")}</span>
+    return `<div class="e6mod"><span class="small"><b>Модераторы поправили теги</b> ${C().hint("Убранное больше не отмечается само, добавленное предлагается охотнее. Персонажей и франшизы не запоминаю. Посмотреть и забыть — «Настройки» → " + (BL()) + ".")}</span>
       ${rem.length ? `<div class="chips"><span class="small muted">убрали</span>${tl(rem, "mrem")}</div>` : ""}
       ${add.length ? `<div class="chips"><span class="small muted">добавили</span>${tl(add, "madd")}</div>` : ""}</div>`;
   }
@@ -1541,12 +1742,12 @@
     const L = S().e6learn;
     if (!L) return `<section class="card setc"><div class="head"><h2>Правки модераторов</h2></div><p class="muted">Загрузка…</p></section>`;
     const chip = (t, k) => `<span class="chip ${k}">${esc(t.replace(/_/g, " "))}<button class="cx" data-pa="e6-forget" data-tag="${esc(t)}" aria-label="Забыть ${esc(t)}" data-tip="Забыть">×</button></span>`;
-    return `<section class="card setc"><div class="head"><h2>Теги: правки модераторов ${C().hint("Через сутки и через трое после загрузки Crosspost сверяет теги поста на " + (BN() === "e6ai" ? "blep.art" : BN()) + " с отправленными. Что модераторы убрали — больше не отмечается само (подсказка остаётся пунктиром). Что добавили дважды и больше — отмечается уже от 25% уверенности теггера. Персонажей, франшизы и мета-теги не запоминаю.")}</h2>
+    return `<section class="card setc"><div class="head"><h2>Теги: правки модераторов ${C().hint("Через сутки и через трое после загрузки Crosspost сверяет теги поста на " + (BL()) + " с отправленными. Что модераторы убрали — больше не отмечается само (подсказка остаётся пунктиром). Что добавили дважды и больше — отмечается уже от 25% уверенности теггера. Персонажей, франшизы и мета-теги не запоминаю.")}</h2>
         <button class="btn small ghost" data-pa="e6-checknow">Сверить сейчас</button></div>
       <div class="field"><span class="lbl">Не отмечаю сам — модераторы убирали</span><div class="chips">${L.removed.map((t) => chip(t, "mrem")).join("") || `<span class="muted small">пока ничего</span>`}</div></div>
       <div class="field"><span class="lbl">Отмечаю охотнее — модераторы добавляли</span><div class="chips">${L.added.map((t) => chip(t, "madd")).join("") || `<span class="muted small">пока ничего</span>`}</div></div>
-      <div class="field"><label for="e6never">Не предлагать совсем ${C().hint("Эти теги теггера не показываются даже пунктиром. Через пробел.")}</label>
-        <textarea id="e6never" rows="2" placeholder="ring_piercing one_eye_closed">${esc((L.never || []).join(" "))}</textarea></div>
+      <div class="field"><label for="e6never-${BN()}">Не предлагать совсем ${C().hint("Эти теги теггера не показываются даже пунктиром. Через пробел.")}</label>
+        <textarea id="e6never-${BN()}" rows="2" placeholder="ring_piercing one_eye_closed">${esc((L.never || []).join(" "))}</textarea></div>
       <div class="cardfoot"><button class="btn primary" data-pa="e6-never-save">Сохранить список</button>${L.removed.length || L.added.length ? `<button class="btn ghost" data-pa="e6-forget" data-tag="">Забыть всё выученное</button>` : ""}<span class="ok small">${esc(S().e6learnOk || "")}</span></div></section>`;
   }
 
@@ -1565,10 +1766,11 @@
         const logged = br ? v.browser_ok : p.vk_connected;
         if (!logged) return ["", "не подключено"];
         return [v.group_id ? "ok" : "warn", (v.group_name || (v.group_id ? "группа " + v.group_id : "группа не указана")) + (br ? ", через браузер" : ", через API")]; }
-      case "reddit": case "joyreactor": return p[sec].browser_ok ? [p[sec].enabled?"ok":"warn",p[sec].enabled?"через браузер · экспериментально":"отправка выключена"] : ["", "не подключено"];
+      case "x": return p.x.browser_ok ? ["ok", "вход сохранён · только проверка"] : ["", "не подключено"];
+      case "reddit": case "joyreactor": case "x": return p[sec].browser_ok ? [p[sec].enabled?"ok":"warn",p[sec].enabled?"через браузер · экспериментально":"отправка выключена"] : ["", "не подключено"];
       case "bluesky": { const b = p.bluesky_session || {}; return b.ok && p.bluesky.enabled ? ["ok", "@" + b.handle] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
-      case "deviantart": { const b = p.deviantart_session || {}; return b.ok && p.deviantart.enabled ? ["ok", b.username || "подключено"] : b.ok ? ["warn", "выключено"] : ["", "не подключено"]; }
-      case "e6ai": { const pre = p.e6ai.site_name === "e621" ? "e621 · " : ""; return p.e6ai.enabled && p.e6ai.has_key ? ["ok", pre + (p.e6ai.username || "подключено")] : ["", pre + "не подключено"]; }
+      case "deviantart": { const b = p.deviantart_session || {}, d=p.deviantart, paid=d.premium_download||d.subscriber_only, ready=b.ok; return ready && d.enabled ? ["ok", paid?"черновики Sta.sh":b.username || "подключено"] : ready ? ["warn", "выключено"] : ["", "не подключено"]; }
+      case "e6ai": case "e621": case "floofgens": { const cfg = p[sec]; return cfg.enabled && cfg.has_key ? ["ok", cfg.username || "подключено"] : ["", "не подключено"]; }
       case "hashtags": return p.hashtags.enabled ? ["ok", "включены"] : ["", "выключены"];
       case "signatures": { const on = TEXTP.filter((k) => { const v = (p.signatures.platforms || {})[k] || {}; return v.sfw || v.nsfw; });
         return [on.length ? "ok" : "", on.length ? on.map((k) => C().PLAT[k][0]).join(", ") : "не заданы"]; }
@@ -1587,8 +1789,8 @@
     const ok = (k) => s.pubOk && s.pubOk[k] ? `<p class="ok small">${esc(s.pubOk[k])}</p>` : "";
     const busy = (k) => s.pubBusy === k ? "disabled" : "";
     const hint = C().hint, ICON = C().ICON;
-    const segP = (attr, opts, cur) => `<div class="seg" role="radiogroup">${opts.map(([k, l]) =>
-      `<button role="radio" aria-checked="${k === cur}" class="${k === cur ? "on" : ""}" ${attr} data-val="${k}">${l}</button>`).join("")}</div>`;
+    const segP = (attr, opts, cur) => `<div class="seg" role="radiogroup">${opts.map(([k, l, disabled]) =>
+      `<button ${disabled ? "disabled" : ""} role="radio" aria-checked="${k === cur}" class="${k === cur ? "on" : ""}" ${attr} data-val="${k}">${l}</button>`).join("")}</div>`;
     const sel = (attr, opts, cur, label) => `<select class="sm" ${attr} aria-label="${esc(label)}">${opts.map(([k, l]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${l}</option>`).join("")}</select>`;
     const tgl = (attr, on, label, tip) => `<label class="tgl"><input type="checkbox" ${attr} ${on ? "checked" : ""}><span>${label}${tip ? " " + hint(tip) : ""}</span></label>`;
     const badge = (cls, text) => `<span class="badge ${cls}">${text}</span>`;
@@ -1596,10 +1798,11 @@
     const known = (s.pubKnown && s.pubKnown.chats) || [];
     const tg = p.telegram, dc = p.discord, vk = p.vk, sg = p.signatures, li = p.light;
     let h = "";
-    if(sec==="reddit"||sec==="joyreactor")h+=window.BrowserTargets.settingsHtml(sec);
+    if(sec==="reddit"||sec==="joyreactor"||sec==="x")h+=window.BrowserTargets.settingsHtml(sec);
 
     if (sec === "telegram") {
       h += `<section class="card setc"><div class="head"><h2>${C().pbadge("telegram")} Telegram</h2></div>${err("tg")}${ok("tg")}`;
+      h += `<p class="muted small">Подсказки каналов берутся из сохранённого списка. <button class="btn small ghost" data-pa="tg-known-refresh" ${busy("tg")}>Обновить список из Telegram</button></p>`;
       if (!tg.has_token || s.tgNewToken) {
         h += `<details class="how" ${tg.has_token ? "" : "open"}><summary>Как подключить бота</summary><ol class="steps">
             <li>Если бота ещё нет: напишите <a href="#" data-open="https://t.me/BotFather">@BotFather</a> и отправьте /newbot.</li>
@@ -1729,30 +1932,42 @@
       h += `</section>`;
     }
 
-    if (sec === "e6ai") {
-      const e6 = p.e6ai;
-      h += `<section class="card setc"><div class="head"><h2>${C().pbadge("e6ai")} ${BN() === "e6ai" ? "blep.art" : BN()} ${hint("Оригиналы без сжатия; теги — постоянные плюс подобранные теггером; рейтинг s / q / e по рейтингу поста; в источники — ссылки на этот пост в других местах. Публикуется последним.")}</h2>
-          ${e6.enabled && e6.has_key ? badge("ok", "✓ " + esc(e6.username)) : badge("off", "не подключено")}</div>${err("e6")}${ok("e6")}
+    if (BOORUS.includes(sec)) {
+      const e6 = p[sec];
+      h += `<section class="card setc"><div class="head"><h2>${C().pbadge(sec)} ${BL()} ${hint("Оригиналы без сжатия; теги — постоянные плюс подобранные теггером; рейтинг s / q / e по рейтингу поста; в источники — ссылки на этот пост в других местах. Публикуется последним.")}</h2>
+          ${e6.enabled && e6.has_key ? badge("ok", "✓ " + esc(e6.username)) : badge("off", "не подключено")}</div>${err("e6:"+sec)}${ok("e6:"+sec)}
         ${BN() === "e6ai" && !e6.has_key ? `<div class="callout warn">e6ai закрылся. Перед отправкой на blep.art укажите новый API-ключ blep.art и нажмите «Проверить и сохранить». Старый ключ не используется.</div>` : ""}
-        <div class="row" style="align-items:center;gap:12px"><span class="small">Куда загружать ${hint("Формат загрузки blep.art и e621 похож, поэтому форма тегов, теггер, проверка, правки модераторов и цифры работают одинаково. Аккаунт, API-ключ, постоянные теги и база тегов у каждого сайта свои — при переключении подставляются сами.")}</span>
-          ${segP(`data-pa="e6-site"`, [["e6ai", "blep.art"], ["e621", "e621"]], BN())}</div>
         ${BN() === "e621" ? `<div class="callout warn"><p><b>На e621 ИИ-арт запрещён правилами сайта</b> (кроме узких исключений вроде фонов) — для ИИ-работ есть blep.art. Такие загрузки удалят, а аккаунт могут заблокировать. Загружайте на e621 только работы, которые подходят под его правила. Проверьте и постоянные теги: <code>ai_generated</code> на e621 сразу пометит работу как ИИ.</p></div>` : ""}
-        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 200px"><label for="e6user">Имя пользователя на ${BN() === "e6ai" ? "blep.art" : BN()}</label><input id="e6user" value="${esc(e6.username)}" placeholder="AnotherNeko"></div>
-          <div class="field" style="flex:2 1 260px"><label for="e6key">API-ключ ${hint("На " + (BN() === "e6ai" ? "blep.art" : BN()) + ": Account → Manage API Access.")}</label><input id="e6key" type="password" placeholder="${e6.has_key ? "сохранён" : ""}"></div>
-          <button class="btn" data-pa="e6-save" ${busy("e6")}>Проверить и сохранить</button></div>
+        <div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 200px"><label for="e6user-${BN()}">Имя пользователя на ${BL()}</label><input id="e6user-${BN()}" value="${esc(e6.username)}" placeholder="AnotherNeko"></div>
+          <div class="field" style="flex:2 1 260px"><label for="e6key-${BN()}">API-ключ ${hint("На " + (BL()) + ": Account → Manage API Access.")}</label><input id="e6key-${BN()}" type="password" placeholder="${e6.has_key ? "сохранён" : ""}"></div>
+          <button class="btn" data-pa="e6-save" ${busy("e6:"+sec)}>Проверить и сохранить</button></div>
 </section>
         <section class="card setc"><div class="head"><h2>Теги и описание</h2></div>
-          <div class="field"><label for="e6const">Постоянные теги для ${BN() === "e6ai" ? "blep.art" : BN()} ${hint(BN() === "e621" ? "Добавляются к каждой загрузке на e621: тег художника (artist), инструмент и т.п. У blep.art свои постоянные теги." : "Добавляются к каждой загрузке: ваш director-тег, инструмент и т.п. У e621 свои постоянные теги.")}</label>
-            <input id="e6const" value="${esc((e6.constant_tags || []).join(" "))}" placeholder="director_name stable_diffusion"></div>
-          <div class="row" style="align-items:center"><div class="field" style="flex:0 1 220px"><label for="e6pre">Отмечать теги теггера от, % ${hint("Сразу отмечаются теги не ниже 50% уверенности, даже если здесь меньше. Мелкие детали — пирсинг, украшения, татуировки — не отмечаются никогда: теггер их часто путает.")}</label><input id="e6pre" type="number" min="20" max="95" value="${Math.round(e6.preselect * 100)}"></div>
-            <div class="tgls" style="flex:1 1 360px"><label class="tgl"><input type="checkbox" id="e6src" ${e6.with_sources ? "checked" : ""}><span>Ссылки на пост — в источники</span></label>
-              <label class="tgl"><input type="checkbox" id="e6desc" ${e6.with_description ? "checked" : ""}><span>Текст поста — в описание</span></label></div></div>
+          <div class="field"><label for="e6const-${BN()}">Постоянные теги для ${BL()} ${hint(BN() === "e621" ? "Добавляются к каждой загрузке на e621: тег художника (artist), инструмент и т.п. У blep.art свои постоянные теги." : "Добавляются к каждой загрузке: ваш director-тег, инструмент и т.п. У e621 свои постоянные теги.")}</label>
+            <input id="e6const-${BN()}" value="${esc((e6.constant_tags || []).join(" "))}" placeholder="${BN() === 'e6ai' ? 'director_name stable_diffusion' : 'artist_name'}"></div>
+          <div class="row" style="align-items:center"><div class="field" style="flex:0 1 220px"><label for="e6pre-${BN()}">Отмечать теги теггера от, % ${hint("Сразу отмечаются теги не ниже 50% уверенности, даже если здесь меньше. Мелкие детали — пирсинг, украшения, татуировки — не отмечаются никогда: теггер их часто путает.")}</label><input id="e6pre-${BN()}" type="number" min="20" max="95" value="${Math.round(e6.preselect * 100)}"></div>
+            <div class="tgls" style="flex:1 1 360px"><label class="tgl"><input type="checkbox" id="e6src-${BN()}" ${e6.with_sources ? "checked" : ""}><span>Добавлять ссылки в источники</span></label>
+              <label class="tgl"><input type="checkbox" id="e6desc-${BN()}" ${e6.with_description ? "checked" : ""}><span>Текст поста — в описание</span></label></div></div>
+          <details class="more" data-detail-key="sources-${BN()}"><summary>Площадки-источники</summary>
+            <fieldset class="source-choice-group"><legend>Куда должна вести ссылка?</legend>
+              <div class="source-link-options">
+                <label class="source-link-choice"><input type="radio" name="e6link-${BN()}" id="e6link-${BN()}-post" value="post" ${e6.source_link_mode !== 'resource' ? 'checked' : ''}><span><strong>На пост с изображением</strong><small>Откроется конкретная публикация</small><code>t.me/channel/123</code></span></label>
+                <label class="source-link-choice"><input type="radio" name="e6link-${BN()}" id="e6link-${BN()}-resource" value="resource" ${e6.source_link_mode === 'resource' ? 'checked' : ''}><span><strong>На канал или профиль</strong><small>Откроется страница автора или сообщества</small><code>t.me/channel</code></span></label>
+              </div>
+              <p class="muted small">Если в ссылке на пост нет автора, будет указан сайт целиком.</p>
+            </fieldset>
+            <fieldset class="source-choice-group"><legend>С каких площадок брать ссылки?</legend>
+              <div class="source-platform-options">${porder().filter(k => k !== BN() && C().PLAT[k]).map(k => `<label class="source-platform-choice"><input type="checkbox" id="e6source-${BN()}-${k}" ${(e6.source_platforms || {})[k] !== false ? "checked" : ""}>${C().pbadge(k)}<span>${esc(C().PLAT[k][2])}</span></label>`).join("")}</div>
+            </fieldset>
+            <p class="muted small">Добавляются только публичные ссылки на уже опубликованные посты.</p>
+          </details>
           <div class="cardfoot"><button class="btn primary" data-pa="e6-opts">Сохранить</button></div></section>
         <p class="muted small">Теггер, база тегов и правки модераторов — в разделе <a href="#" data-view-link="settings" data-tab="tags">«Теги»</a>.</p>`;
     }
 
 
-    if (sec === "tags") {   // теггер — для хэштегов и e6ai / e621; база тегов и правки модераторов — для e6ai / e621
+    if (sec === "tags") {
+      h += booruTabs();   // теггер — для хэштегов и e6ai / e621; база тегов и правки модераторов — для e6ai / e621
       const tgr = s.tagger || {}, tjob = tgr.job, trun = tjob && tjob.state === "running";
       const mods = (s.info && s.info.modules) || {};
       h += mods.tagger === false ? `<section class="card setc"><div class="head"><h2>Подбор тегов выключен</h2></div>
@@ -1780,20 +1995,20 @@
         })() + `
           ${trun ? `<div class="callout"><p>${esc(tjob.message || "Устанавливаю…")}</p><div class="progress thin" style="flex:1 1 100%"><div style="width:${Math.round((tjob.progress || 0) * 100)}%"></div></div></div>` : ""}
           ${tjob && tjob.state === "error" ? `<pre class="err small" style="white-space:pre-wrap">${esc(tjob.error)}</pre>` : ""}</section>`;
-      h += mods.e6ai === false ? `<p class="muted small">База тегов и правки модераторов нужны для загрузки на blep.art / e621 — площадка выключена.</p>`
+      h += BOORUS.every(k => mods[k] === false) ? `<p class="muted small">База тегов и правки модераторов нужны для загрузки на blep.art / e621 / floofgens.net — площадка выключена.</p>`
         : `${e6dbCard()}${e6learnCard()}`;
     }
 
     if (sec === "collect") {   // сбор статистики: что собираем, новости, прогноз, ВК через браузер
       const mods = (s.info && s.info.modules) || {}, on = (k) => mods[k] !== false;
       const vol = (s.info.settings || {}).news_volume || "normal";
-      h += `<section class="card setc"><div class="head"><h2>Сбор статистики ${hint("Замеры просмотров свежих постов Telegram, цифры с сайтов (Bluesky, DeviantArt, blep.art / e621, ВК), сверка правок модераторов. Работает и при закрытом окне, если включена фоновая отправка.")}</h2></div>
+      h += `<section class="card setc"><div class="head"><h2>Сбор статистики ${hint("Замеры просмотров свежих постов Telegram, цифры с сайтов (Bluesky, DeviantArt, blep.art / e621 / floofgens.net, ВК), сверка правок модераторов. Работает и при закрытом окне, если включена фоновая отправка.")}</h2></div>
           <div class="modlist">${tgl(`data-mod="collect"`, on("collect"), "<b>Собирать цифры</b> <span class=\"muted small\">замеры просмотров, цифры с сайтов, сверка правок модераторов</span>")}
             ${tgl(`data-mod="news"`, on("news"), "<b>Новости по свежим артам</b> <span class=\"muted small\">колокольчик вверху: хиты, всплески реакций, комментарии</span>")}
             ${tgl(`data-mod="forecast"`, on("forecast"), "<b>Прогноз</b> <span class=\"muted small\">ожидаемые просмотры и лучшее время на экране поста</span>")}</div>
           ${on("news") ? `<div class="row" style="align-items:center;gap:12px"><span class="small">Сколько новостей</span>
             <span class="seg sm">${[["few", "Мало"], ["normal", "Средне"], ["many", "Много"]].map(([k, l]) => `<button class="${k === vol ? "on" : ""}" data-nvol="${k}" aria-pressed="${k === vol}">${l}</button>`).join("")}</span></div>` : ""}
-          <p class="muted small">Цифры Bluesky, DeviantArt и blep.art / e621 берутся по входу, который настроен у площадки, — отдельно здесь ничего не нужно. Каналы Telegram — в разделе <a href="#" data-view-link="settings" data-tab="import">«Telegram» → «Статистика»</a>.</p></section>`;
+          <p class="muted small">Цифры Bluesky, DeviantArt и blep.art / e621 / floofgens.net берутся по входу, который настроен у площадки, — отдельно здесь ничего не нужно. Каналы Telegram — в разделе <a href="#" data-view-link="settings" data-tab="import">«Telegram» → «Статистика»</a>.</p></section>`;
       if (on("vk")) {
         const vkJob = s.info.vk_stats_job, vkRun = (vkJob && vkJob.state === "running") || (s.info.vk_job && s.info.vk_job.state === "running");
         h += `<section class="card setc"><div class="head"><h2>${C().pbadge("vk")} ВКонтакте</h2></div>${err("vk")}
@@ -1814,7 +2029,7 @@
 
     if (sec === "hashtags") {
       const ht = p.hashtags;
-      h += `<section class="card setc"><div class="head"><h2>Хэштеги ${hint("Хэштег рейтинга, персонажи и франшизы из тегов " + (BN() === "e6ai" ? "blep.art" : BN()) + ", виды, которые нашёл теггер (#fox, #cat — без общих вроде #mammal), и постоянные. Помогают найти работу поиском в Telegram, Discord и ВК.")}</h2>${ok("ht")}</div>
+      h += `<section class="card setc"><div class="head"><h2>Хэштеги ${hint("Хэштег рейтинга, персонажи и франшизы из тегов " + (BL()) + ", виды, которые нашёл теггер (#fox, #cat — без общих вроде #mammal), и постоянные. Помогают найти работу поиском в Telegram, Discord и ВК.")}</h2>${ok("ht")}</div>
         ${tgl(`id="htOn"`, ht.enabled, "Добавлять хэштеги к постам")}
         <div class="row" style="align-items:flex-end">
           <div class="field" style="flex:1 1 130px"><label for="htS">Для SFW</label><input id="htS" value="${esc(ht.rating_tags.sfw)}" placeholder="sfw"></div>
@@ -1823,7 +2038,7 @@
           <div class="field" style="flex:1 1 110px"><label for="htN">Видов, не больше</label><input id="htN" type="number" min="0" max="10" value="${ht.max_species}"></div></div>
         <div class="field"><label for="htC">Постоянные хэштеги</label><input id="htC" value="${esc((ht.constant || []).join(" "))}" placeholder="aiart furryart"></div>
         <div class="row" style="align-items:center"><div class="field"><span class="lbl">Где в посте</span>${segP(`data-pa="ht-pos"`, [["start", "Первой строкой"], ["end", "В конце"]], ht.position)}</div>
-          <div class="tgls" style="flex:1 1 300px">${byOrder([["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt (в описании)"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"]]).map(([k, l]) => `<label class="tgl"><input type="checkbox" id="htU-${k}" ${ht.use[k] !== false ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
+          <div class="tgls" style="flex:1 1 300px">${byOrder([["telegram", "Telegram"], ["discord", "Discord"], ["vk", "ВКонтакте"], ["bluesky", "Bluesky"], ["deviantart", "DeviantArt (в описании)"], ["reddit", "Reddit"], ["joyreactor", "JoyReactor"], ["x", "X"]]).map(([k, l]) => `<label class="tgl"><input type="checkbox" id="htU-${k}" ${ht.use[k] !== false ? "checked" : ""}><span>${l}</span></label>`).join("")}</div></div>
         <div class="cardfoot"><button class="btn primary" data-pa="ht-save">Сохранить</button></div></section>`;
     }
 
@@ -1831,7 +2046,7 @@
       const sp = sg.platforms || {};
       const SIGP = [["telegram", "Telegram", "Ссылка становится кликабельным словом."], ["discord", "Discord", "Ссылка становится кликабельным словом, без карточек-превью."], ["vk", "ВКонтакте", "ВК не прячет ссылку под слово — получится «Текст: https://…»."],
         ["bluesky", "Bluesky", "Ссылка становится кликабельным словом. Весь пост Bluesky — до 300 символов, подпись лучше короткая."],
-        ["deviantart", "DeviantArt", "Уходит в описание работы как «Текст: https://…»."], ["reddit", "Reddit", "Подпись добавляется в текст поста."], ["joyreactor", "JoyReactor", "Подпись добавляется в текст поста."]];
+        ["deviantart", "DeviantArt", "Уходит в описание работы как «Текст: https://…»."], ["reddit", "Reddit", "Подпись добавляется в текст поста."], ["joyreactor", "JoyReactor", "Подпись добавляется в текст поста."], ["x", "X", "Подпись входит в лимит 280 символов."]];
       h += `<section class="card setc"><div class="head"><h2>Подписи ${hint("Дописываются в конец поста. Ссылка под словом: [Больше артов](https://t.me/канал). Обычная ссылка тоже работает.")}</h2>${ok("sig")}</div>
         ${byOrder(SIGP).map(([k, l, how]) => { const v = sp[k] || {}, en = v.en || {}, enFilled = !!((en.sfw || "").trim() || (en.nsfw || "").trim()); return `<div class="sigblk">
           <div class="sighead">${C().pbadge(k)}<label class="tgl"><input type="checkbox" id="siguse-${k}" ${sg.use[k] !== false ? "checked" : ""}><span><b>${l}</b> ${hint(how)}</span></label>
@@ -1883,9 +2098,11 @@
     if (sec === "files") h += filesHtml(err, ok, busy, tgl, hint) + backupsHtml();
     if (sec === "media") h += mediaHtml();
     if (sec === "bluesky") h += blueskyHtml(err, ok, busy);
-    if (sec === "deviantart") h += daHtml(err, ok, busy);
+    if (sec === "deviantart") h += daHtml(err, ok, busy, segP);
     if (LANGP.some(([key])=>key===sec)) {
-      h += `<section class="card setc"><h2>Текст публикации</h2>${tgl(`data-platform-texts-setting="${sec}"`, p.platform_texts_enabled?.[sec]===true, "Отдельные заголовок и текст для этой площадки")}
+      h += `<section class="card setc"><h2>Текст публикации</h2><div class="field"><label>Язык публикации</label><div class="seg" role="group" aria-label="Язык публикации">
+          ${[["main","Русский"],["both","Оба"],["en","Английский"]].map(([value,label])=>`<button type="button" data-platform-language="${sec}" data-language="${value}" class="${(p.text_lang?.[sec]||"main")===value?"on":""}" aria-pressed="${(p.text_lang?.[sec]||"main")===value}">${label}</button>`).join("")}</div></div>
+        <p class="muted small">Для двух языков включите функцию перевода и заполните английский вариант поста. Заголовки объединяются через « / », описания — через пустую строку. Подпись и хэштеги добавляются один раз. Отдельный текст площадки заменяет итоговый текст. Пустой перевод не добавляется.</p>${tgl(`data-platform-texts-setting="${sec}"`, p.platform_texts_enabled?.[sec]===true, "Отдельные заголовок и текст для этой площадки")}
         <p class="muted small">Добавляет поля в редактор поста. Если выключено, используется основной или английский вариант, в том числе для постов в очереди. Сохранённые отдельные тексты не удаляются.</p></section>`;
     }
     return h;
@@ -1912,9 +2129,9 @@
     }
     return h + `</section>`;
   }
-  function daHtml(err, ok, busy) {
+  function daHtml(err, ok, busy, segP) {
     const s = S(), p = s.pub, d = p.deviantart, ss = p.deviantart_session || {}, hint = C().hint;
-    let h = `<section class="card setc"><div class="head"><h2>${C().pbadge("deviantart")} DeviantArt ${hint("Официальный API DeviantArt. Каждая картинка — отдельная работа. Эротика уходит как Mature (moderate, nudity); откровенное правила DeviantArt запрещают — такие посты сюда не уходят. Видео DeviantArt не принимает.")}</h2>
+    let h = `<section class="card setc"><div class="head"><h2>${C().pbadge("deviantart")} DeviantArt ${hint("Обычные публикации — через API; платные работы подготавливаются в Sta.sh. Каждая картинка — отдельная работа. Эротика уходит как Mature (moderate, nudity); откровенное правила DeviantArt запрещают — такие посты сюда не уходят. Видео DeviantArt не принимает.")}</h2>
       ${ss.ok ? `<span class="badge ok">✓ ${esc(ss.username || "подключено")}</span>` : `<span class="badge off">не подключено</span>`}</div>${err("da")}${ok("da")}`;
     if (!ss.ok) {
       h += `<ol class="steps"><li>Откройте <a href="#" data-open="https://www.deviantart.com/developers/apps">deviantart.com/developers/apps</a> → <b>Register Application</b>.</li>
@@ -1944,6 +2161,19 @@
         <div class="cardfoot"><button class="btn primary" data-pa="da-save">Сохранить</button><button class="btn ghost" data-pa="da-logout">Выйти</button>
           <span class="muted small">Вход действует 3 месяца, потом DeviantArt попросит войти заново.</span></div>`;
     }
+    if(!ss.ok)h+=`<div class="tgls"><label class="tgl"><input type="checkbox" id="daon" ${d.enabled?'checked':''}><span>Публиковать на DeviantArt</span></label>
+      <label class="tgl"><input type="checkbox" id="daai" ${d.is_ai_generated!==false?'checked':''}><span>Отмечать как созданное ИИ</span></label>
+      <label class="tgl"><input type="checkbox" id="danoai" ${d.noai!==false?'checked':''}><span>Запретить использовать для обучения ИИ</span></label></div>`;
+    const paid=d.premium_download||d.subscriber_only;
+    h+=`<div class="field"><span class="lbl">Режим публикации DeviantArt</span>${segP('data-pa="da-access-mode"',[["ordinary","Обычная · API"],["paid","Подготовить в Sta.sh"]],paid?'paid':'ordinary')}</div>
+      ${!paid?'<p class="muted small">Обычная публикация через OAuth API. Цена и отдельный браузерный вход не нужны.</p>':''}`;
+    h += `<details class="more" data-detail-key="da-access-defaults" ${!paid?'hidden':''} ${s.editorDetails?.['da-access-defaults']?'open':''}><summary>Продажи и подписки — параметры по умолчанию</summary>
+      <p class="muted small">CrossPost загрузит черновики через OAuth API. Откройте их в Sta.sh, проверьте параметры и опубликуйте вручную. Для Premium Download прикрепите исходный файл и задайте цену в редакторе DeviantArt.</p>
+      <label class="tgl"><input type="checkbox" id="dapremium" ${d.premium_download?'checked':''}><span>Платное скачивание оригинала по умолчанию</span></label>
+      <div class="field"><label for="daprice">Цена скачивания, USD (только для Premium Download)</label><input id="daprice" ${!d.premium_download?'disabled':''} inputmode="decimal" maxlength="10" value="${esc(d.premium_price_usd||'')}" placeholder="Укажите цену"></div>
+      <label class="tgl"><input type="checkbox" id="dasubscriber" ${d.subscriber_only?'checked':''}><span>Публиковать для подписчиков по умолчанию</span></label>
+      <div class="field"><label for="datiers">Тиры по умолчанию — по одному названию на строку</label><textarea id="datiers" rows="4" placeholder="Название уровня подписки">${esc((d.subscriber_tiers||[]).join('\n'))}</textarea></div>
+      <p class="muted small">Цена и названия тиров необязательны. CrossPost покажет их как напоминание при подготовке.</p></details>`;
     return h + `</section>`;
   }
   function filesHtml(err, ok, busy, tgl, hint) {
@@ -1985,13 +2215,94 @@
         ${row("telegram", "GIF и MP4 — как есть. Ужимается, если больше 50 МБ (при связи MTProto лимит 2 ГБ). Видео не в H.264 (HEVC, MOV, WebM) перекодируется, иначе Telegram не покажет его в ленте.")}
         ${row("discord", "Как есть, если влезает в лимит сервера из настроек Discord. Иначе ужимается в MP4; тяжёлый GIF тоже становится MP4: в разы легче.")}
         ${row("vk", "Видео — видеозаписью группы, GIF — документом, проигрывается в ленте. Без переделки: ВК перекодирует сам. Только при входе по API.")}
-        ${row("e6ai", "GIF, MP4 и WebM — как есть. Если " + (BN() === "e6ai" ? "blep.art" : BN()) + " не примет формат (или это MOV), файл перекодируется в WebM и загрузится снова. Тег animated добавляется сам.")}
+        ${row("e6ai", "GIF, MP4 и WebM — как есть. Если " + (BL()) + " не примет формат (или это MOV), файл перекодируется в WebM и загрузится снова. Тег animated добавляется сам.")}
       </div></section>`;
     return h;
   }
 
   // ---------------- файлы ----------------
   let upAbort = null, upStopped = false;   // отмена загрузки: прерывает текущий файл и не берёт следующие
+  let fileUndo = null;
+  const galleryState = (id = "") => ({ id, scroll: document.querySelector(".gallery")?.scrollLeft || 0 });
+  function restoreGalleryState(state) {
+    requestAnimationFrame(() => {
+      const gallery = document.querySelector(".gallery"); if (gallery) gallery.scrollLeft = state?.scroll || 0;
+      if (state?.id) document.querySelector(`.gt[data-file-id="${state.id}"]`)?.focus({preventScroll:true});
+    });
+  }
+  function renderFiles(state) { C().render(); restoreGalleryState(state); }
+  function finishFileUndo() {
+    if (!fileUndo) return;
+    clearTimeout(fileUndo.timer);
+    if (fileUndo.cleanup) fileUndo.cleanup();
+    fileUndo = null;
+  }
+  function offerFileUndo(text, undo, cleanup = null) {
+    finishFileUndo();
+    const token = {cleanup};
+    token.timer = setTimeout(() => { if (fileUndo === token) { if (cleanup) cleanup(); fileUndo = null; } }, 9000);
+    fileUndo = token;
+    C().toast(text, "info", {label:"Отменить действие", run:async()=>{
+      if (fileUndo !== token) return;
+      clearTimeout(token.timer); fileUndo = null; await undo();
+    }});
+  }
+  function moveToIndex(files, id, index) {
+    const from = files.findIndex(f => f.id === id);
+    if (from < 0) return files.slice();
+    const target = Math.max(0, Math.min(files.length - 1, index));
+    const boundary = target + (from < target ? 1 : 0);
+    return window.PostState.reorderFiles(files, from, boundary);
+  }
+  async function moveFile(from, insertAt, label = "Порядок изображений изменён") {
+    const d = draft(), f = d.files[from]; if (!f) return;
+    const oldIndex = from, state = galleryState(f.id), next = window.PostState.reorderFiles(d.files, from, insertAt);
+    if (next.every((item, i) => item === d.files[i])) return;
+    d.files = next; saveDraft(); await refreshPlan(); renderFiles(state);
+    offerFileUndo(label, async()=>{
+      const view = galleryState(f.id); d.files = moveToIndex(d.files, f.id, oldIndex);
+      saveDraft(); await refreshPlan(); renderFiles(view);
+    });
+  }
+  function detachFileData(d, id) {
+    const data = {mark:d.marks?.[id], alt:d.alts?.[id], sites:{}};
+    for (const site of BOORUS) {
+      const post=d.booru_posts?.[site]; if(!post)continue;
+      data.sites[site]={tags:post.tags?.[id],meta:post.meta?.[id]};
+      if(post.tags)delete post.tags[id];if(post.meta)delete post.meta[id];
+    }
+    if(d.marks)delete d.marks[id];if(d.alts)delete d.alts[id];
+    return data;
+  }
+  function attachFileData(d,id,data){
+    if(data.mark!==undefined)(d.marks||(d.marks={}))[id]=data.mark;
+    if(data.alt!==undefined)(d.alts||(d.alts={}))[id]=data.alt;
+    for(const [site,values] of Object.entries(data.sites||{})){
+      const post=(d.booru_posts||(d.booru_posts={}))[site]||=( {tags:{},meta:{}} );post.tags||={};post.meta||={};
+      if(values.tags!==undefined)post.tags[id]=values.tags;if(values.meta!==undefined)post.meta[id]=values.meta;
+    }
+    draft();
+  }
+  async function removeFileAt(index) {
+    const d=draft(),f=d.files[index];if(!f)return;
+    const state=galleryState(d.files[index+1]?.id||d.files[index-1]?.id||""),data=detachFileData(d,f.id);
+    d.files.splice(index,1);saveDraft();await refreshPlan();renderFiles(state);
+    offerFileUndo(`«${f.name}» убрано из поста`,async()=>{
+      const view=galleryState(f.id);d.files.splice(Math.min(index,d.files.length),0,f);attachFileData(d,f.id,data);
+      saveDraft();await refreshPlan();renderFiles(view);
+    },()=>C().api("post_remove_file",{file_id:f.id}).catch(()=>{}));
+  }
+  async function digestFile(file) {
+    if (!window.crypto?.subtle || file.size > 128 * 1024 * 1024) return "";
+    try { const bytes=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());return [...new Uint8Array(bytes)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+    catch (_) { return ""; }
+  }
+  async function fileInfo(file, digest="") {
+    digest=digest||await digestFile(file);
+    const r=await fetch("/upload?name="+encodeURIComponent(file.name||"paste.png"),{method:"POST",headers:{"X-Token":window.API_TOKEN,"Content-Type":"application/octet-stream"},body:file,signal:upAbort.signal});
+    const j=await r.json();if(!j.ok)throw new Error(j.error);const info=j.result;
+    return {id:info.id,name:info.name,kind:info.kind,width:info.width,height:info.height,size:info.size,duration:info.duration||null,format:info.format||"",digest:info.digest||digest,sourceModified:file.lastModified||0};
+  }
   async function uploadFiles(list) {
     const s = S(), d = draft();
     const files = Array.from(list || []);
@@ -2002,12 +2313,11 @@
       if (upStopped) { s.uploading -= 1; continue; }
       try {
         upAbort = new AbortController();
-        const r = await fetch("/upload?name=" + encodeURIComponent(f.name || "paste.png"), {
-          method: "POST", headers: { "X-Token": window.API_TOKEN, "Content-Type": "application/octet-stream" }, body: f, signal: upAbort.signal });
-        const j = await r.json();
-        if (!j.ok) throw new Error(j.error);
-        const info = j.result;
-        d.files.push({ id: info.id, name: info.name, kind: info.kind, width: info.width, height: info.height, size: info.size, duration: info.duration || null, format: info.format || "" });
+        const digest=await digestFile(f), duplicate=d.files.find(x=>(digest&&x.digest===digest)||(!digest&&x.name===f.name&&x.size===f.size&&x.sourceModified===(f.lastModified||0)));
+        if(duplicate){C().toast(`«${f.name}» уже добавлен в этот пост`,"info");bad++;s.uploading-=1;continue;}
+        const info = await fileInfo(f,digest), uploadedDuplicate=d.files.find(x=>info.digest&&x.digest===info.digest);
+        if(uploadedDuplicate){C().api("post_remove_file",{file_id:info.id}).catch(()=>{});C().toast(`«${f.name}» уже добавлен в этот пост`,"info");bad++;s.uploading-=1;continue;}
+        d.files.push(info);
         if (multiOn()) { const g = guessVersion(info.name) || s.nextMark; if (g) { d.marks = d.marks || {}; d.marks[info.id] = g; } }
       } catch (e) {
         if (e.name === "AbortError") bad++;   // отменили сами — это не ошибка
@@ -2021,6 +2331,32 @@
     else if (added > 0) C().toast(added === 1 ? "Файл добавлен" : `Добавлено файлов: ${added}`, "ok");
     if (multiOn()) autoDetect(false);
     saveDraft(); await refreshPlan(); C().render(); pollPrep(); loadTags(true);
+  }
+  async function replaceFileAt(index,file){
+    const d=draft(),old=d.files[index];if(!old||!file)return;
+    const digest=await digestFile(file),duplicate=d.files.find((x,i)=>i!==index&&digest&&x.digest===digest);
+    if(duplicate){C().toast(`«${file.name}» уже добавлен в этот пост`,"info");return;}
+    const state=galleryState(old.id);let completed=false;S().uploading=(S().uploading||0)+1;C().render();
+    try{
+      upAbort=new AbortController();const fresh=await fileInfo(file,digest),data=detachFileData(d,old.id),mark=data.mark;
+      if(mark!==undefined)(d.marks||(d.marks={}))[fresh.id]=mark;
+      d.files.splice(index,1,fresh);saveDraft();await refreshPlan();S().uploading=Math.max(0,(S().uploading||1)-1);completed=true;renderFiles({id:fresh.id,scroll:state.scroll});pollPrep();loadTags(true);
+      offerFileUndo(`«${old.name}» заменено`,async()=>{
+        const at=d.files.findIndex(x=>x.id===fresh.id);if(at<0)return;
+        d.files.splice(at,1,old);detachFileData(d,fresh.id);attachFileData(d,old.id,data);
+        saveDraft();await refreshPlan();renderFiles({id:old.id,scroll:state.scroll});
+        C().api("post_remove_file",{file_id:fresh.id}).catch(()=>{});
+      },()=>C().api("post_remove_file",{file_id:old.id}).catch(()=>{}));
+    }catch(e){C().toast(`${file.name}: ${e.message}`,"error");}
+    finally{if(!completed){S().uploading=Math.max(0,(S().uploading||1)-1);renderFiles(state);}upAbort=null;}
+  }
+  function closeFileMenu(){document.querySelector(".filectx")?.remove();}
+  function openFileMenu(event,tile){
+    closeFileMenu();const d=draft(),i=+tile.dataset.gi,f=d.files[i];if(!f)return;
+    const menu=document.createElement("div");menu.className="filectx";menu.dataset.fileMenu="";
+    const versions=multiOn()?`<hr><button data-pa="file-mark" data-id="${f.id}" data-val="all">Для всех площадок</button><button data-pa="file-mark" data-id="${f.id}" data-val="ru">Русская версия</button><button data-pa="file-mark" data-id="${f.id}" data-val="en">English version</button><button data-pa="file-mark" data-id="${f.id}" data-val="clean">Без текста</button>`:"";
+    menu.innerHTML=`<button data-pa="file-view" data-id="${f.id}">Открыть просмотр</button><label>Заменить файл…<input type="file" hidden data-file-replace="${i}" accept="${ACCEPT}"></label><button data-pa="file-first" data-id="${f.id}" ${i===0?'disabled':''}>Переместить в начало <small>Alt+Home</small></button><button data-pa="file-last" data-id="${f.id}" ${i===d.files.length-1?'disabled':''}>Переместить в конец <small>Alt+End</small></button>${versions}<hr><button class="danger" data-pa="rmfile" data-i="${i}">Убрать из поста <small>Delete</small></button>`;
+    document.body.appendChild(menu);const box=menu.getBoundingClientRect();menu.style.left=Math.max(10,Math.min(event.clientX,innerWidth-box.width-10))+"px";menu.style.top=Math.max(10,Math.min(event.clientY,innerHeight-box.height-10))+"px";menu.querySelector("button:not([disabled])")?.focus();
   }
   async function pollPrep() {
     const s = S(), ids = draft().files.filter((f) => f.kind === "image").map((f) => f.id);
@@ -2054,7 +2390,31 @@
   }
 
   // ---------------- события ----------------
+  document.addEventListener("input", e => {if(e.target.id==="tg-edit-text"&&S().tgEdit)S().tgEdit.text=e.target.value;});
   async function onClick(e) {
+    const pick=e.target.closest("[data-history-select]");
+    if(pick){
+      e.stopPropagation();
+      const s=S(),key=pick.dataset.historySelect,it=calItems()[key],sel=s.calSel||(s.calSel=[]),i=sel.indexOf(key);
+      if(i>=0)sel.splice(i,1);else sel.push(key);
+      (s.mergeItems||(s.mergeItems={}))[key]=it;
+      C().render();return true;
+    }
+    const language = e.target.closest("button[data-platform-language]");
+    if (language) {
+      const s = S(), platform = language.dataset.platformLanguage, value = language.dataset.language;
+      if ((s.pub.text_lang?.[platform] || "main") === value) return true;
+      const buttons = language.parentElement.querySelectorAll("button");
+      buttons.forEach(button => { button.disabled = true; });
+      try {
+        s.pub = await C().api("pub_save", {section: "text_lang", changes: {[platform]: value}});
+        s.reviewKey = null;
+        await refreshPlan();
+      } catch (err) { alert(err.message); }
+      finally { buttons.forEach(button => { button.disabled = false; }); }
+      C().render();
+      return true;
+    }
     const ws = e.target.closest('[data-set="when"]');
     if (ws) {
       const s0 = S();
@@ -2083,15 +2443,22 @@
     const cw = e.target.closest("[data-cw]");
     if (cw) {   // работа в календаре → шторка: публикация из Crosspost или пост из импорта
       e.preventDefault();
-      const it = calItems()[cw.dataset.cw];
       const s1 = S();
+      const fromCalendar = s1.view === "history" && s1.histMode === "calendar";
+      const month = s1.cal?.[s1.calYm];
+      const it = fromCalendar
+        ? Object.values(month?.days || {}).flat().find(work => work.key === cw.dataset.cw)
+        : calItems()[cw.dataset.cw];
       if (it && (s1.calSelMode || e.ctrlKey || e.metaKey || e.shiftKey)) {   // выбор работ для объединения
         const sel = s1.calSel || (s1.calSel = []), i = sel.indexOf(it.key);
         if (i >= 0) sel.splice(i, 1); else sel.push(it.key);
+        (s1.mergeItems || (s1.mergeItems = {}))[it.key] = it;
         C().render(); return true;
       }
-      if (it && (it.pub_id || it.post_id)) await openDrawer(it.pub_id ? "pub:" + it.pub_id : "post:" + it.post_id);
-      else if (it) await openDrawer("cal:" + it.key);
+      if (it) {
+        const key = it.pub_id ? "pub:" + it.pub_id : it.post_id ? "post:" + it.post_id : "cal:" + it.key;
+        await openDrawer(key, fromCalendar ? it : null);
+      }
       return true;
     }
     const hs = e.target.closest('[data-set="hf"],[data-set="histMode"]');
@@ -2111,7 +2478,7 @@
     }
     const a = e.target.closest("[data-pa]");
     if (!a) return false;
-    const s = S(), api = C().api, act = a.dataset.pa;
+    const s = S(), api = tagApi, act = a.dataset.pa;
     if (a.tagName === "INPUT" || a.tagName === "SELECT") return act === "toggle" ? false : true;   // их обрабатывает onChange
     e.preventDefault();
     const d = draft();
@@ -2122,7 +2489,7 @@
     };
     // значения полей запоминаем сразу: перерисовка (guard) пересоздаёт поля ввода
     const snap = {};
-    document.querySelectorAll("#main input, #main textarea, #main select").forEach((el) => { if (el.id) snap[el.id] = el.type === "checkbox" ? el.checked : el.value; });
+    document.querySelectorAll("#main input, #main textarea, #main select").forEach((el) => { if (el.id) snap[el.id] = ["checkbox","radio"].includes(el.type) ? el.checked : el.value; });
     const val = (id) => String(snap[id] == null ? "" : snap[id]).trim();
     const saveSec = async (sec, ch) => { s.pub = await api("pub_save", { section: sec, changes: ch }); };
     const backupFile = document.getElementById("backup-file")?.files[0];
@@ -2254,7 +2621,7 @@
       case "backup-restore":
         if (!confirm("Заменить историю, очередь и настройки этой копией после перезапуска? Текущие данные будут сохранены в отдельную резервную копию. Фоновая отправка должна быть выключена.")) return true;
         await guard("backup", async () => { await api("backup_restore", {bid:a.dataset.id}); s.backupState = await api("backup_status"); }); return true;
-      case "e6t": e6toggle(a.dataset.id, a.dataset.row, a.dataset.tag); await e6changed(true); return true;
+      case "e6t": e6toggle(a.dataset.id, a.dataset.row, a.dataset.tag); await e6changed(true, true); return true;
       case "e6ok": {
         const F = (s.e6form || {})[a.dataset.id];
         e6meta(a.dataset.id).ok = a.dataset.un ? "" : (F ? F.check.sig : "");
@@ -2266,6 +2633,12 @@
         s.pub = await api("pub_save", { section: "bluesky", changes: { enabled: !!snap.bson, include_title: !!snap.bstitle, alt_from_title: !!snap.bsalt,
           rating: val("bsrating") || "all", langs: val("bslang").split(/[\s,]+/).filter(Boolean).slice(0, 3) } });
         s.pubOk.bs = "Сохранено"; }); return true;
+      case "da-access-mode": await guard('da',async()=>{
+        const paid=a.dataset.val==='paid';
+        if(paid && (s.pub.deviantart.premium_download||s.pub.deviantart.subscriber_only))return;
+        s.pub=await api('pub_save',{section:'deviantart',changes:paid?{premium_download:true}:{premium_download:false,subscriber_only:false}});
+        s.pubErr.da='';s.reviewKey=null;s.readiness=null;s.composition=null;
+      });return true;
       case "da-login": await guard("da", async () => {
         await api("pub_da_login", { client_id: val("daid"), client_secret: val("dasecret") });
         s.daWaiting = true;
@@ -2291,7 +2664,7 @@
         if (!a.dataset.tag && !confirm("Забыть всё, чему научились по правкам модераторов?")) return true;
         s.e6learn = await api("e6_forget", { tag: a.dataset.tag || "" }); C().render(); return true;
       }
-      case "e6-never-save": s.e6learn = await api("e6_never", { tags: val("e6never").split(/[\s,]+/).filter(Boolean) }); s.e6learnOk = "Сохранено"; C().render(); return true;
+      case "e6-never-save": s.e6learn = await api("e6_never", { tags: val("e6never-" + BN()).split(/[\s,]+/).filter(Boolean) }); s.e6learnOk = "Сохранено"; C().render(); return true;
       case "e6-checknow": { a.disabled = true; try { const r = await api("e6_check_now"); s.e6learnOk = r.checked ? `Сверено постов: ${r.checked}` : "Сверять пока нечего — посты сверяются через сутки после загрузки"; } catch (err) { s.e6learnOk = err.message; }
         s.e6learn = await api("e6_learned"); C().render(); return true; }
       case "media-install": {
@@ -2302,6 +2675,19 @@
           if (s.mediaSt.job && s.mediaSt.job.state === "running") setTimeout(poll, 1000);
         };
         poll(); return true;
+      }
+      case "booru-copy-tags": {
+        const source = val('booru-copy-source'), target = val('booru-copy-target') || BN();
+        const mode = snap['booru-copy-mode'] ? 'replace' : 'merge', file = val('booru-copy-file') || 'all';
+        const names = {e6ai:'blep.art',e621:'e621',floofgens:'floofgens.net'};
+        const result = window.PostState.copyBooruTags(d, source, target, {mode,file});
+        if (!result.copied) { C().toast('Нет выбранных тегов для копирования', 'warn'); return true; }
+        if (mode === 'replace' && !confirm(`Заменить теги в ${names[target]} для выбранных файлов? Теги исходного сайта сохранятся.`)) return true;
+        d.booru_posts = result.posts;
+        draft(); // Rebind the active site's editor aliases to the copied slot.
+        await e6changed(true);
+        C().toast(`Теги скопированы в ${names[target]}. Обработано файлов: ${result.copied}, пропущено: ${result.skipped}.`, 'ok');
+        return true;
       }
       case "e6copy": {
         const src = a.dataset.id, m = e6meta(src);
@@ -2321,8 +2707,12 @@
         };
         poll(); return true;
       }
-      case "e6need": { const el = document.getElementById("e6card"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return true; }
+      case "e6need": { await selectBooruTags(a.dataset.site || BN()); const el = document.getElementById("e6card"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return true; }
       case "e6run": await loadTags(true, true); return true;
+      case "file-view": s.viewFile=a.dataset.id;closeFileMenu();C().render();return true;
+      case "file-first": {const i=d.files.findIndex(f=>f.id===a.dataset.id);closeFileMenu();await moveFile(i,0,"Изображение перемещено в начало");return true;}
+      case "file-last": {const i=d.files.findIndex(f=>f.id===a.dataset.id);closeFileMenu();await moveFile(i,d.files.length,"Изображение перемещено в конец");return true;}
+      case "file-mark": {const id=a.dataset.id;d.marks=d.marks||{};if(a.dataset.val==='all')delete d.marks[id];else d.marks[id]=a.dataset.val;closeFileMenu();saveDraft();await refreshPlan();renderFiles(galleryState(id));return true;}
       case "view-close": s.viewFile = null; C().render(); return true;
       case "view-prev": viewStep(-1); return true;
       case "view-next": viewStep(1); return true;
@@ -2344,11 +2734,11 @@
         window.VidEditor.open({ file: f, api, tok: window.API_TOKEN, toast: (t, k) => C().toast(t, k), onDone: vedDone });
         return true;
       }
-      case "rmfile": { const [f] = d.files.splice(+a.dataset.i, 1); if (f && d.e6tags) delete d.e6tags[f.id]; if (f && d.e6meta) delete d.e6meta[f.id]; if (f && d.marks) delete d.marks[f.id]; saveDraft(); if (f) api("post_remove_file", { file_id: f.id }).catch(() => {}); await refreshPlan(); C().render(); return true; }
+      case "rmfile": closeFileMenu();await removeFileAt(+a.dataset.i);return true;
       case "clear":
         if (!confirm("Очистить пост?")) return true;
         d.files.forEach((f) => api("post_remove_file", { file_id: f.id }).catch(() => {}));
-        s.draft = { _saved:d._saved, editing_schedule:d.editing_schedule, files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
+        s.draft = { _saved:d._saved, editing_schedule:d.editing_schedule, files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
       case "wk-start": a.disabled = true; try { s.worker = await api("worker_start"); } catch (err) { alert(err.message); } C().loadWorker(); C().render(); return true;
       case "wk-stop": if (!confirm("Выключить фоновую отправку? Запланированные посты будут выходить, только пока открыто окно Crosspost.")) return true;
         s.worker = await api("worker_stop"); setTimeout(async () => { s.worker = await api("worker_status"); C().render(); }, 16000); C().render(); return true;
@@ -2384,12 +2774,55 @@
       case "cal-day-clear": s.calDay = null; C().render(); return true;
       case "cal-sel": s.calSelMode = !s.calSelMode; if (!s.calSelMode) s.calSel = []; C().render(); return true;
       case "cal-sel-off": s.calSelMode = false; s.calSel = []; C().render(); return true;
-      case "cal-merge": case "cal-split": {
+      case "tg-edit": {
+        try{s.tgEdit=await api("post_edit_prepare",{pub_id:+a.dataset.id,key:a.dataset.key});}
+        catch(err){alert(err.message);}C().render();return true;
+      }
+      case "tg-edit-cancel": s.tgEdit=null;C().render();return true;
+      case "tg-edit-save": {
+        const edit=s.tgEdit;if(!edit||edit.busy)return true;
+        edit.busy=true;edit.error="";C().render();
+        try {
+          await api("post_edit_apply",{pub_id:edit.pub_id,key:edit.key,text:edit.text,revision:edit.revision});
+          s.tgEdit=null;C().toast("Текст обновлён в Telegram","ok");
+        }catch(err){edit.error=err.message;}
+        finally{edit.busy=false;}
+        C().render();return true;
+      }
+      case "cal-hide": case "cal-restore": {
+        const hiding = act === "cal-hide";
+        const atoms = hiding ? s.calendarDrawerItem?.atoms : s.calendarUndo;
+        if (!atoms?.length || s.calendarVisibilityBusy) return true;
+        if (hiding && !confirm("Удалить эту карточку из календаря CrossPost? История отправки сохранится. У объединённой карточки будут скрыты все её записи.")) return true;
+        s.calendarVisibilityBusy = true;
+        try {
+          const changed = await api(hiding ? "cal_hide" : "cal_restore", {atoms});
+          s.calendarUndo = hiding ? changed : null;
+          s.calendarDrawerItem = null;
+          s.pstatOpen = null;
+          s.calSel = [];
+          s.mergeItems = {};
+          s.cal = {};
+          s.calendarRequests = {};
+          s.statsCalendar = null;
+          clearTimeout(s.calPoll);
+          await loadCalendar();
+        } catch (err) {
+          C().toast(err.message, "error");
+        } finally {
+          s.calendarVisibilityBusy = false;
+          C().render();
+        }
+        return true;
+      }
+      case "cal-merge": case "cal-force-merge": case "cal-split": {
         const items = calItems(), atoms = [...new Set((s.calSel || []).flatMap((k) => (items[k] || {}).atoms || []))];
         try {
-          await api(act === "cal-merge" ? "cal_merge" : "cal_split", { atoms });
-          s.calSel = []; s.calSelMode = false; s.cal = {};
-          await loadCalendar(); C().render();
+          const force=act==="cal-force-merge";
+          if(force&&!confirm("Объединить выбранные посты независимо от дат, площадок и похожести? Это изменит группировку истории и статистики. Исходные посты останутся на площадках; группу можно разъединить."))return true;
+          await api(act === "cal-split" ? "cal_split" : "cal_merge", act==="cal-split"?{atoms}:{atoms,force});
+          s.calSel = []; s.calSelMode = false; s.cal = {}; s.mergeItems={};s.pstat={};s.statsCalendar=null;
+          await loadHistoryPage(0); await loadCalendar(); C().render();
         } catch (err) { (C().toast ? C().toast(err.message, "err") : alert(err.message)); }
         return true;
       }
@@ -2416,7 +2849,7 @@
           if(r.worker)s.worker=r.worker;
           s.schedMsg = `Запланировано: ${r.human}`;
           // новый пост; файлы НЕ удаляем — они нужны запланированной публикации
-          s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
+          s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} };
           saveDraft(); s.when = "now"; s.whenAt = null; await refreshPlan();
         } catch (err) { alert(err.message); }
         s.publishing = false; C().render(); return true;
@@ -2428,7 +2861,7 @@
           const result=await api("pipeline_add", checked);
           if(result.worker)s.worker=result.worker;
           s.schedMsg=result.notice;
-          s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} };
+          s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} };
           saveDraft(); s.when = "now"; s.whenAt = null; await refreshPlan();
         } catch (err) { alert(err.message); }
         s.publishing = false; C().render(); return true;
@@ -2448,7 +2881,23 @@
         C().render(); return true;
       }
       case "sched-cancel": if (!confirm("Отменить запланированный пост?")) return true; s.sched = await api("post_schedule_cancel", { sid: +a.dataset.id }); C().render(); return true;
-      case "sched-now": s.sched = await api("post_schedule_now", { sid: +a.dataset.id }); C().render(); setTimeout(async () => { s.sched = await api("post_scheduled"); s.hist = await api("post_history"); C().render(); }, 3000); return true;
+      case "sched-now": {
+        const sid = +a.dataset.id;
+        const sending = s.sendingNow ||= new Set();
+        if (sending.has(sid) || !confirm("Опубликовать этот пост сейчас? Если уже идёт отправка, пост начнёт публиковаться после неё.")) return true;
+        sending.add(sid);
+        C().render();
+        try {
+          s.sched = await api("post_schedule_now", {sid});
+          C().render();
+          await watchQueuedSend(sid);
+        } catch (error) {
+          sending.delete(sid);
+          C().toast(error.message, "error");
+          C().render();
+        }
+        return true;
+      }
       case "sched-move": {
         const el = document.getElementById("mv-" + a.dataset.id);
         if (!el || !el.value) { s.moving = +a.dataset.id; C().render(); return true; }
@@ -2524,7 +2973,7 @@
         { const st = await api("post_state"); s.pubState = st.state; s.pubJob = st.job; }
         s.view = "post"; s.postMode = "progress"; await C().loadInfo(); C().startPoll(); C().render(); return true;
       case "retry": await api("post_retry"); { const st = await api("post_state"); s.pubState = st.state; s.pubJob = st.job; } await C().loadInfo(); C().startPoll(); C().render(); return true;
-      case "newpost": s.postMode = "edit"; s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: ["e6ai"], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
+      case "newpost": s.postMode = "edit"; s.draft = { files: [], title: "", text: "", rating: null, signature: true, exclude: [...BOORUS], hashtags: null, e6tags: {}, e6meta: {} }; saveDraft(); await refreshPlan(); C().render(); return true;
       case "backedit": s.postMode = "edit"; await refreshPlan(); C().render(); return true;
       // --- настройки Telegram
       case "tg-token": await guard("tg", async () => { s.pub = await api("pub_tg_bot", { token: val("bottok"), transport: "auto" }); s.tgNewToken = false; s.pubOk.tg = "Бот подключён: @" + s.pub.telegram.bot_name + (s.pub.note ? ". " + s.pub.note : ""); }); return true;
@@ -2566,6 +3015,7 @@
         if (s.pubKnown && s.pubKnown.authorized) { try { s.topics = await api("pub_tg_topics", { chat_id: info.id }); } catch (e) { s.topics = null; } }
       }); return true;
       case "tg-groupdel": await saveSec("telegram", { group: { id: "", title: "", sfw_topic: 0, nsfw_topic: 0, sfw_topic_title: "", nsfw_topic_title: "" } }); s.topics = null; C().render(); return true;
+      case "tg-known-refresh": await guard("tg", async () => { s.pubKnown = await api("pub_tg_known", {refresh:true}); }); return true;
       case "tg-topics": await guard("tg", async () => { s.topics = await api("pub_tg_topics", { chat_id: s.pub.telegram.group.id }); }); return true;
       case "tg-topicsave": await guard("tg", async () => {
         const g = {};
@@ -2592,16 +3042,16 @@
       case "vk-finish": await guard("vk", async () => { s.pub = await api("pub_vk_finish", { url: val("vkurl") }); s.vkStarted = false; s.pubOk.vk = "Вход выполнен. Теперь укажите группу."; }); return true;
       case "vk-group": await guard("vk", async () => { s.pub = await api("pub_vk_group", { group_id: val("vkgroup").replace(/^.*vk\.com\//, "") }); s.pubOk.vk = `Группа «${s.pub.vk.group_name}» сохранена` + (s.pub.vk_group_check && s.pub.vk_group_check.is_admin === false ? " — но VK говорит, что вы в ней не админ и не редактор: публикация не пройдёт" : ""); }); return true;
       case "vk-logout": s.pub = await api("pub_vk_logout"); C().render(); return true;
-      case "e6-save": await guard("e6", async () => {
-        s.pub = await api("pub_e6ai", { username: val("e6user"), api_key: val("e6key") });
+      case "e6-save": await guard("e6:" + BN(), async () => {
+        s.pub = await api("pub_e6ai", { site:BN(), username: val("e6user-" + BN()), api_key: val("e6key-" + BN()) });
         const c = s.pub.e6ai_check || {};
-        s.pubOk.e6 = `Вход на ${BN() === "e6ai" ? "blep.art" : BN()} работает: ${c.name || ""}` + (c.upload_limit != null ? ` · лимит загрузок: ${c.upload_limit}` : "");
+        s.pubOk["e6:" + BN()] = `Вход на ${BL()} работает: ${c.name || ""}` + (c.upload_limit != null ? ` · лимит загрузок: ${c.upload_limit}` : "");
       }); return true;
-      case "e6-opts": await guard("e6", async () => {
-        const pre = Math.min(95, Math.max(20, +val("e6pre") || 35)) / 100;
-        s.pub = await api("pub_save", { section: "e6ai", changes: { constant_tags: val("e6const").split(/[\s,]+/).filter(Boolean).map((t) => t.toLowerCase()),
-          preselect: pre, with_sources: !!snap.e6src, with_description: !!snap.e6desc } });
-        s.pubOk.e6 = "Сохранено";
+      case "e6-opts": await guard("e6:" + BN(), async () => {
+        const pre = Math.min(95, Math.max(20, +val("e6pre-" + BN()) || 35)) / 100;
+        s.pub = await api("pub_save", { section: BN(), changes: { constant_tags: val("e6const-" + BN()).split(/[\s,]+/).filter(Boolean).map((t) => t.toLowerCase()),
+          preselect: pre, source_link_mode: snap["e6link-" + BN() + "-resource"] ? "resource" : "post", source_platforms: Object.fromEntries(porder().filter(k => k !== BN() && C().PLAT[k]).map(k => [k, !!snap["e6source-" + BN() + "-" + k]])), with_sources: !!snap["e6src-" + BN()], with_description: !!snap["e6desc-" + BN()] } });
+        s.pubOk["e6:" + BN()] = "Сохранено";
       }); return true;
       case "tag-check": await guard("e6", async () => { s.tagger = await api("tagger_check"); C().render(); }); return true;
       case "tag-unload": s.tagger = await api("tagger_unload"); C().render(); return true;
@@ -2620,12 +3070,7 @@
       case "vk-method": s.pub = await api("pub_vk_method", { method: a.dataset.val }); C().render(); return true;
       case "vk-blogin": await guard("vk", async () => { await api("pub_vk_browser_login"); s.vkWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
       case "vk-bgroup": await guard("vk", async () => { s.pub = await api("pub_vk_browser_group", { group: val("vkbgroup") }); s.pubOk.vk = "Группа сохранена. Сделайте пробный прогон."; }); return true;
-      case "e6-site": {
-        s.pub = await api("pub_e6_site", { site: a.dataset.val });
-        s.e6db = null; s.e6form = {}; s.e6preds = {};
-        try { s.e6db = await api("e6db_status"); } catch (err) { /* без базы тоже работаем */ }
-        await refreshPlan(); C().render(); return true;
-      }
+      case "booru-tags": await selectBooruTags(a.dataset.site); return true;
       case "vk-stats": await guard("vk", async () => { await api("pub_vk_stats", { url: val("vkstats") }); s.vkStatsWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
       case "vk-recon": await guard("vk", async () => { await api("pub_vk_recon", { url: val("vkstats") }); s.vkWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
       case "vk-dry": await guard("vk", async () => { await api("pub_vk_dry", { kind: a.dataset.kind || "images" }); s.vkWaiting = true; await C().loadInfo(); C().startPoll(); }); return true;
@@ -2686,7 +3131,25 @@
   }
 
   async function onChange(e) {
-    const t = e.target, s = S(), api = C().api;
+
+    const t = e.target, s = S(), api = tagApi;
+    if (['source','target','file','replace'].includes(t.dataset.booruCopyField)) {
+      s.booruCopyPrefs ||= {};
+      s.booruCopyPrefs[BN()] = {...s.booruCopyPrefs[BN()], ...(t.dataset.booruCopyField==='replace'?{mode:t.checked?'replace':'merge'}:{[t.dataset.booruCopyField]:t.value})};
+      if(t.dataset.booruCopyField==='target'){
+        // The target changes the available source list and requires a render.
+        // Keep the compact panel open so the next control does not disappear.
+        s.editorDetails ||= {};
+        s.editorDetails['booru-copy']=true;
+        C().render();
+      }
+      return true;
+    }
+    if(t.dataset.redditCustomFlair){
+      const d=draft();d.reddit_flairs=d.reddit_flairs||{};const value=t.value.trim();
+      if(value)d.reddit_flairs[t.dataset.redditCustomFlair]=value;else delete d.reddit_flairs[t.dataset.redditCustomFlair];
+      saveDraft();await refreshPlan();C().render();return true;
+    }
     if(t.dataset.redditFlair){
       const d=draft();d.reddit_flairs=d.reddit_flairs||{};
       if(t.value==='__auto')delete d.reddit_flairs[t.dataset.redditFlair];else d.reddit_flairs[t.dataset.redditFlair]=t.value;
@@ -2724,8 +3187,8 @@
       d.exclude = d.exclude.filter((x) => x !== k);
       if (!t.checked) d.exclude.push(k);
       saveDraft(); await refreshPlan(); paintSide();
-      if (k === "e6ai" && t.checked) { await loadTags(true); if (s.view === "post") C().render(); }   // включили — подбираем теги
-      else if (k === "e6ai") { s.e6form = {}; if (s.view === "post") C().render(); }
+      if (BOORUS.includes(k) && t.checked) await selectBooruTags(k,true);
+      else if (BOORUS.includes(k)) { s.e6form = {}; if (s.view === "post") C().render(); }
       return true;
     }
     if (t.dataset.dfield === "multi") {
@@ -2826,20 +3289,29 @@
   });
   document.addEventListener("dragstart", (e) => {
     const g = e.target.closest && e.target.closest(".gt");
-    if (!g || !onPost()) return;
-    S().dragI = +g.dataset.gi; g.classList.add("dragging");
+    if (!g || !onPost() || e.target.closest("button")) { if (g) e.preventDefault(); return; }
+    S().dragI = +g.dataset.gi; S().dragInsert = null; g.classList.add("dragging");
     e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "cp-reorder");
+    const ghost=g.cloneNode(true);ghost.className="gt dragghost";ghost.removeAttribute("tabindex");document.body.appendChild(ghost);S().dragGhost=ghost;
+    try{e.dataTransfer.setDragImage(ghost,75,60);}catch(_){/* browser default remains */}
   });
   document.addEventListener("dragend", () => {
-    S().dragI = null;
-    document.querySelectorAll(".gt.dragging,.gt.dropbefore").forEach((el) => el.classList.remove("dragging", "dropbefore"));
+    S().dragI = S().dragInsert = null;
+    S().dragGhost?.remove();S().dragGhost=null;
+    document.querySelectorAll(".gt.dragging,.gt.dropbefore,.gt.dropafter").forEach((el) => el.classList.remove("dragging", "dropbefore", "dropafter"));
   });
   document.addEventListener("dragover", (e) => {
     if (!onPost()) return;
     e.preventDefault();
     if (S().dragI != null) {
-      document.querySelectorAll(".gt.dropbefore").forEach((el) => el.classList.remove("dropbefore"));
-      const g = e.target.closest && e.target.closest(".gt"); if (g) g.classList.add("dropbefore");
+      e.dataTransfer.dropEffect = "move";
+      document.querySelectorAll(".gt.dropbefore,.gt.dropafter").forEach((el) => el.classList.remove("dropbefore", "dropafter"));
+      const g = e.target.closest && e.target.closest(".gt");
+      if (g) {
+        const box = g.getBoundingClientRect(), after = e.clientX >= box.left + box.width / 2;
+        S().dragInsert = +g.dataset.gi + (after ? 1 : 0);
+        g.classList.add(after ? "dropafter" : "dropbefore");
+      } else S().dragInsert = draft().files.length;
       return;
     }
     const z = document.getElementById("drop"); if (z) z.classList.add("over");
@@ -2850,12 +3322,10 @@
     e.preventDefault(); const z = document.getElementById("drop"); if (z) z.classList.remove("over");
     const s = S();
     if (s.dragI != null) {
-      const from = s.dragI; s.dragI = null;
-      const g = e.target.closest && e.target.closest(".gt"), d = draft();
-      let to = g ? +g.dataset.gi : d.files.length;
-      const [f] = d.files.splice(from, 1);
-      if (to > from) to -= 1;
-      d.files.splice(to, 0, f); saveDraft(); await refreshPlan(); C().render(); return;
+      const from = s.dragI, d = draft(), insertAt = s.dragInsert == null ? d.files.length : s.dragInsert;
+      s.dragI = s.dragInsert = null;
+      s.dragGhost?.remove();s.dragGhost=null;
+      await moveFile(from,insertAt);return;
     }
     uploadFiles(e.dataTransfer && e.dataTransfer.files);
   });
@@ -2863,6 +3333,26 @@
     if (!onPost() || !e.clipboardData) return;
     const files = Array.from(e.clipboardData.files || []);
     if (files.length) { e.preventDefault(); uploadFiles(files); }
+  });
+  document.addEventListener("contextmenu",(e)=>{
+    const tile=e.target.closest&&e.target.closest(".gt");if(!tile||!onPost())return;
+    e.preventDefault();openFileMenu(e,tile);
+  });
+  document.addEventListener("pointerdown",e=>{if(!e.target.closest?.(".filectx"))closeFileMenu();},true);
+  document.addEventListener("change",e=>{
+    const input=e.target.closest?.("[data-file-replace]");if(!input||!input.files?.[0])return;
+    const index=+input.dataset.fileReplace,file=input.files[0];closeFileMenu();replaceFileAt(index,file);
+  });
+  document.addEventListener("keydown",async e=>{
+    if(e.key==="Escape"){closeFileMenu();return;}
+    const tile=e.target.closest?.(".gt");if(!tile||!onPost()||multiOn()&&S().brush)return;
+    const i=+tile.dataset.gi,d=draft();
+    if(e.key==="Delete"){e.preventDefault();await removeFileAt(i);return;}
+    if(!e.altKey)return;
+    if(e.key==="ArrowLeft"&&i>0){e.preventDefault();await moveFile(i,i-1);}
+    else if(e.key==="ArrowRight"&&i<d.files.length-1){e.preventDefault();await moveFile(i,i+2);}
+    else if(e.key==="Home"&&i>0){e.preventDefault();await moveFile(i,0,"Изображение перемещено в начало");}
+    else if(e.key==="End"&&i<d.files.length-1){e.preventDefault();await moveFile(i,d.files.length,"Изображение перемещено в конец");}
   });
 
   window.Pub = { insightsHtml, loadInsights, order: porder, byOrder, setOrder: async (o) => { S().pub = await C().api("pub_save", { section: "platform_order", changes: o }); await refreshPlan(); }, bpInit, drawerHtml, loadTags, load, tick, renderPost, renderHistory, settingsHtml, platStatus, onClick, onChange, openDrawer };

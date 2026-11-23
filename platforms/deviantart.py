@@ -20,7 +20,7 @@ import webbrowser
 
 import requests
 
-from core.common import PlatformError, load_token, save_token
+from core.common import PlatformError, PublicationUnknown, load_token, save_token
 
 NAME = "DeviantArt"
 MAX_IMAGES = 10
@@ -180,10 +180,14 @@ def _b(v) -> str:
     return "true" if v else "false"
 
 
-def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=None) -> list[str]:
-    """files — [(name, data, mime)]. Возвращает ссылки на работы."""
+def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=None, confirmed=None, already=None) -> list[dict]:
+    """Send works via OAuth, or return Sta.sh drafts for paid preparation."""
     if rating == "explicit":
         raise PlatformError("DeviantArt не принимает откровенный контент")
+    from app.publish.da_access import requested
+    prepare_only = requested(c)
+    if prepare_only:
+        already = dict(already or {})
     from core import retry
     tok = _token(c)
     auth = {"Authorization": f"Bearer {tok}"}
@@ -192,14 +196,41 @@ def publish(c: dict, files, title: str, text: str, tags, rating: str, progress=N
     urls = []
     for i, (name, data, mime) in enumerate(files):
         t = base if len(files) == 1 else f"{base[:TITLE_MAX - 8]} ({i + 1}/{len(files)})"
+        key = str(i)
+        if prepare_only and key in already:
+            urls.append(already[key])
+            continue
         sub = {"title": t[:TITLE_MAX], "artist_comments": text or "",
                "is_ai_generated": _b(c.get("is_ai_generated", True)), "noai": _b(c.get("noai", True))}
         if tags:
             sub["tags[]"] = tags
-        j = _json(retry.post(f"{API}/stash/submit", idempotent=True, what="DeviantArt: загрузка", data=sub,
-                             files={"file": (name, data, mime)}, headers=auth, timeout=600), "загрузка")
+        try:
+            response = retry.post(f"{API}/stash/submit", idempotent=not prepare_only,
+                                  what="DeviantArt: загрузка в Sta.sh", data=sub,
+                                  files={"file": (name, data, mime)}, headers=auth, timeout=600)
+        except PublicationUnknown as error:
+            if not prepare_only:
+                raise
+            raise PublicationUnknown("Не удалось подтвердить создание черновика. Проверьте Sta.sh перед повтором.") from error
+        j = _json(response, "загрузка")
         if not j.get("itemid"):
             raise PlatformError(f"DeviantArt (загрузка): {j}")
+        if prepare_only:
+            item_id = int(j["itemid"])
+            if item_id <= 0:
+                raise PlatformError("DeviantArt не вернул корректный номер черновика Sta.sh")
+            digits = ""
+            while item_id:
+                item_id, remainder = divmod(item_id, 36)
+                digits = "0123456789abcdefghijklmnopqrstuvwxyz"[remainder] + digits
+            item = {"url": "https://sta.sh/0" + digits, "id": "", "name": name}
+            urls.append(item)
+            already[key] = item
+            if confirmed:
+                confirmed(dict(already))
+            if progress:
+                progress((i + 1) / len(files))
+            continue
         if progress:
             progress((i + 0.6) / len(files))
         mature = rating == "erotic"
@@ -236,3 +267,38 @@ def stats(c: dict, ids: list[str]) -> dict:
         for k in out:
             out[k] += int(st.get(k) or 0)
     return out
+
+
+
+def resolve_ids(c, links):
+    """Resolve exact work URLs through documented OAuth gallery responses.
+
+    Bounded to the newest 48 works per account; never guess a UUID from a
+    numeric status ID, unrelated page metadata or another work's response.
+    """
+    import uuid
+    def canonical(value):
+        p=urllib.parse.urlparse(value)
+        if p.scheme!='https' or p.hostname not in ('www.deviantart.com','deviantart.com'):
+            return ''
+        return p.path.rstrip('/') if re.fullmatch(r'/[A-Za-z0-9_-]+/art/[^/]+-\d+/?',p.path) else ''
+    wanted={canonical(link):link for link in links if canonical(link)}
+    if not wanted:return {}
+    auth={'Authorization':'Bearer '+_token(c)}
+    found={}
+    for username in dict.fromkeys(path.split('/')[1] for path in wanted):
+        offset=0
+        for _ in range(2):
+            response=requests.get(f'{API}/gallery/all',params={'username':username,'limit':24,'offset':offset},headers=auth,timeout=(5,10),allow_redirects=False)
+            data=_json(response,'поиск номера работы')
+            for item in data.get('results',[]):
+                path=canonical(item.get('url') or '')
+                if path not in wanted:continue
+                try:value=str(uuid.UUID(str(item.get('deviationid'))))
+                except (ValueError,TypeError,AttributeError):continue
+                found[wanted[path]]=value
+            if all(wanted[path] in found for path in wanted if path.split('/')[1]==username):break
+            next_offset=data.get('next_offset')
+            if not data.get('has_more') or type(next_offset) is not int or next_offset<=offset:break
+            offset=next_offset
+    return found

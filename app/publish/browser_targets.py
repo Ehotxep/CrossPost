@@ -1,7 +1,11 @@
 """Local preparation rules for experimental browser destinations; no network calls."""
+import re
 from core.common import NotPublishedError
 
-SUBREDDITS = ('FurAI', 'aiyiff')
+SUBREDDITS = ('FurAI', 'aiyiff')  # defaults, not an allowlist
+
+def valid_community(name):
+    return isinstance(name, str) and bool(re.fullmatch(r'[A-Za-z0-9_]{3,21}', name)) and name.lower() not in ('__proto__', 'constructor', 'prototype')
 FLAIRS = {
     'FurAI': ('SFW', 'NSFW', 'Request', 'Discussion', 'Guide/Advice', 'Animation'),
     'aiyiff': ('Discussion', 'News', 'Female', 'Male', 'Straight', 'Gay', 'Lesbian',
@@ -22,7 +26,7 @@ def validate_changes(platform, changes):
     import copy
     allowed = {'enabled', 'show_window'}
     allowed |= ({'communities', 'flair_rules'} if platform == 'reddit' else
-                {'constant_tags', 'ai_tags', 'rating_tags', 'tag_aliases'})
+                {'constant_tags', 'ai_tags', 'rating_tags', 'tag_aliases'} if platform=='joyreactor' else set())
     if not isinstance(changes, dict) or set(changes) - allowed:
         raise ValueError('Неизвестные настройки браузерной площадки')
     out = copy.deepcopy(changes)
@@ -30,8 +34,8 @@ def validate_changes(platform, changes):
         if key in out and not isinstance(out[key], bool):
             raise ValueError('Переключатель должен быть логическим значением')
     if 'communities' in out:
-        if not isinstance(out['communities'], dict) or set(out['communities']) - set(SUBREDDITS):
-            raise ValueError('Поддерживаются только r/FurAI и r/aiyiff')
+        if not isinstance(out['communities'], dict) or len(out['communities']) > 100 or any(not valid_community(name) for name in out['communities']):
+            raise ValueError('Некорректное имя сообщества Reddit')
         if any(not isinstance(on, bool) for on in out['communities'].values()):
             raise ValueError('Неверный выбор сообщества')
     if 'flair_rules' in out:
@@ -87,16 +91,18 @@ def image_tags(draft, file_ids):
 
 
 def reddit_flair(cfg, draft, community, file_ids):
-    if community not in SUBREDDITS:
-        raise NotPublishedError('Неизвестное сообщество Reddit')
+    if not valid_community(community):
+        raise NotPublishedError('Некорректное имя сообщества Reddit')
     overrides = draft.get('reddit_flairs') or {}
     if community in overrides:
         flair = overrides[community]
-        if flair not in FLAIRS[community] and not (community == 'aiyiff' and flair == ''):
+        if not isinstance(flair, str) or len(flair) > 100 or any(c in flair for c in '\n\r'):
             raise NotPublishedError('Неверный flair Reddit')
         return flair
-    if community == 'FurAI':
+    if community.lower() == 'furai':
         return 'SFW' if draft.get('rating') == 'sfw' else 'NSFW'
+    if community.lower() != 'aiyiff':
+        return ''
     tags = image_tags(draft, file_ids)
     matches = [r for r in cfg['reddit']['flair_rules']
                if {t.lower().replace(' ', '_') for t in r['all']} <= tags
@@ -122,3 +128,20 @@ def joy_tags(cfg, draft, file_ids):
     result += [aliases[t] for t in sorted(image_tags(draft, file_ids)) if t in aliases]
     # Unknown booru tags are not blindly sent to a site with its own vocabulary.
     return list(dict.fromkeys(t.strip() for t in result if t.strip()))
+
+
+
+def x_length(text):
+    """Conservative Twitter weighting: t.co URLs, double-width Unicode/emoji.
+
+    Compound emoji are counted by codepoint, so some valid edge cases are
+    rejected rather than silently truncated or posted over the normal limit.
+    """
+    count=0
+    for part in re.split(r'(https?://[^\s<>]+)',text):
+        if re.fullmatch(r'https?://[^\s<>]+',part):
+            count+=23;continue
+        for ch in part:
+            n=ord(ch)
+            count+=1 if n<=0x10ff or 0x2000<=n<=0x200d or 0x2010<=n<=0x201f or 0x2032<=n<=0x2037 else 2
+    return count

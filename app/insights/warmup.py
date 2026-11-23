@@ -42,15 +42,24 @@ def summary_compute():
     import app.publish.runner  # noqa: F401
     rows = db.query("SELECT id, created FROM publications ORDER BY id DESC LIMIT 300")
     out = post_stats.summary([r["id"] for r in rows])
-    # место в «Лидерах месяца» (1–3) — для медалей в списке «Истории»
-    for ym in sorted({str(r["created"])[:7] for r in rows}):
+    # Group the history once; rebuilding every month repeats the same full scan.
+    if rows and out:
+        from app.insights import calendar
         try:
-            data = cache.get(calendar_name(ym), calendar_compute(ym), calendar_key(), max_age=1800)["data"]
-        except Exception:
-            continue
-        for i, it in enumerate((data.get("leaders") or [])[:3]):
-            if it.get("pub_id") and str(it["pub_id"]) in out:
-                out[str(it["pub_id"])]["rank"] = i + 1
+            data = calendar.month(datetime.now().strftime("%Y-%m"), all_history=True)
+        except Exception:  # medals must not hide available statistics
+            return out
+        months = {str(r["created"])[:7] for r in rows}
+        by_month = {}
+        for items in data["days"].values():
+            for it in items:
+                ym = it["day"][:7]
+                if ym in months and it["index"] is not None:
+                    by_month.setdefault(ym, []).append(it)
+        for items in by_month.values():
+            for i, it in enumerate(sorted(items, key=lambda x: -x["index"])[:3]):
+                if it.get("pub_id") and str(it["pub_id"]) in out:
+                    out[str(it["pub_id"])]["rank"] = i + 1
     return out
 
 
@@ -63,13 +72,17 @@ def calendar_compute(ym: str):
     return lambda: calendar.month(ym)
 
 
+def _schedule_key():
+    rows = db.query("SELECT id, run_at, state, revision, title, dests FROM scheduled WHERE state IN ('pending','running','missed') ORDER BY id")
+    return [list(row.values()) for row in rows]
+
+
 def calendar_key():
     import app.publish.runner  # noqa: F401
     from app.publish import schedule  # noqa: F401  (таблица scheduled)
     p = db.query("SELECT COUNT(*) AS n, MAX(id) AS m FROM publications")[0]
-    s = db.query("SELECT COUNT(*) AS n, MAX(run_at) AS r, GROUP_CONCAT(state) AS st FROM scheduled WHERE state IN ('pending','running','missed')")[0]
     from app.insights import calendar as K, ext_posts
-    return (stats._data_key(), p["n"], p["m"], s["n"], s["r"], s["st"], ext_posts.data_key(), K.rules_key())
+    return (stats._data_key(), p["n"], p["m"], _schedule_key(), ext_posts.data_key(), K.rules_key())
 
 
 _seen: dict = {}   # имя экрана → (грубый ключ, когда пересчитан)
@@ -84,8 +97,7 @@ def coarse_key():
     n = db.query("SELECT COUNT(*) AS n FROM posts")[0]["n"]
     c = db.query("SELECT GROUP_CONCAT(chat_id || rating || selected) AS s FROM channels")[0]["s"]
     p = db.query("SELECT COUNT(*) AS n, MAX(id) AS m FROM publications")[0]
-    s = db.query("SELECT COUNT(*) AS n, MAX(run_at) AS r, GROUP_CONCAT(state) AS st FROM scheduled WHERE state IN ('pending','running','missed')")[0]
-    return (n, c, p["n"], p["m"], s["n"], s["r"], s["st"], datetime.now().strftime("%Y%m%d"))
+    return (n, c, p["n"], p["m"], _schedule_key(), datetime.now().strftime("%Y%m%d"))
 
 
 def _warm(name, compute, key, coarse, max_age: float = 6 * 3600) -> int:

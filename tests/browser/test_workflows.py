@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from PIL import Image
 import requests
 from playwright.sync_api import sync_playwright
+from diagnostics import close_page, watch_page
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,6 +31,9 @@ settings.update('modules',{'collect':False,'news':False,'tagger':False,'forecast
 settings.update('discord',{'enabled':True,'webhooks':[{'name':'Новый пост','url':'https://example.invalid/hook'}]})
 updates.check_async=lambda:None
 runner.D.post=lambda *args,**kwargs:[]
+runner.E6.check=lambda cfg:{'name':cfg['username']}
+from app.publish import social_web
+social_web.login=lambda platform,report:report(progress=1,message='Fixture browser login')
 with db.tx() as c:
  for i in range(65):
   c.execute('INSERT INTO publications(created,title,text,files,dests,draft) VALUES (?,?,?,?,?,?)',('2026-01-01T12:00:00+00:00','Новый пост' if i==0 else 'Post '+str(i),'','[]',json.dumps([{'key':'discord:0','platform':'discord','name':'Discord','state':'done'}]),'{}'))
@@ -68,13 +72,571 @@ main()
         cls.process.stdout.close()
         cls.tmp.cleanup()
 
+    def new_page(self, **kwargs):
+        return watch_page(self.browser.new_page(**kwargs))
+
     def api(self, name, **args):
         result = self.session.post(self.base+'/api/'+name, headers=self.headers, json=args, timeout=30).json()
         self.assertTrue(result['ok'], result)
         return result['result']
 
+    def test_statistics_show_primary_data_before_slow_optional_panels(self):
+        page = self.new_page()
+        held = []
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("CP.S.tgCh=[{chat_id:'test',title:'Test',selected:true,posts:100}];CP.S.stats=null")
+            page.route('**/api/insights_overview', lambda route: held.append(route))
+            page.route('**/api/calendar_month', lambda route: held.append(route))
+            page.route('**/api/stats_overview', lambda route: route.fulfill(
+                content_type='application/json', body=json.dumps({'ok':True,'result':{'error':'Primary statistics ready'}})))
+            page.locator('#nav [data-view="stats"]').click()
+            page.get_by_text('Primary statistics ready', exact=True).wait_for()
+            page.wait_for_function('CP.S.statsLoading===false')
+            self.assertEqual(len(held), 2)
+            page.locator('#nav [data-view="post"]').click()
+            for route in held:
+                route.fulfill(content_type='application/json', body=json.dumps({'ok':True,'result':{}}))
+            held.clear()
+            page.wait_for_timeout(100)
+            self.assertEqual(page.evaluate('CP.S.view'), 'post')
+        finally:
+            for route in held:
+                route.abort()
+            close_page(page, self.id())
+
+    def test_history_fetches_summary_only_once_per_open(self):
+        page = self.new_page()
+        calls = []
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.on('request', lambda request: calls.append(request.url) if request.url.endswith('/api/pub_stats_summary') else None)
+            page.evaluate("async()=>{CP.S.view='history';await Pub.load('history');CP.render()}")
+            self.assertEqual(len(calls), 1)
+        finally:
+            close_page(page, self.id())
+
+    def test_performance_report_collects_view_and_request_timings_without_post_content(self):
+        page = self.new_page()
+        captured = []
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.locator('#nav [data-view="history"]').click()
+            page.wait_for_function("CP.S.hist && !document.querySelector('#nav .busy')")
+            page.wait_for_timeout(250)
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='diag';await Pub.load('settings');CP.render()}")
+            page.locator('[data-action="perf-report"]').wait_for()
+            def report(route):
+                captured.append(route.request.post_data_json)
+                route.fulfill(content_type='application/json',body=json.dumps({'ok':True,'result':{'file':'test-report.json'}}))
+            page.route('**/api/perf_report',report)
+            page.locator('[data-action="perf-report"]').click()
+            page.wait_for_function("!document.querySelector('[data-action=perf-report].busy')")
+            self.assertEqual(len(captured),1)
+            rows=captured[0]['client']
+            self.assertTrue(any(r['kind']=='api' and r['name']=='post_history_search' for r in rows))
+            self.assertTrue(any(r['kind']=='render' and r['name']=='history' for r in rows))
+            self.assertTrue(any(r['kind']=='navigation' and r['name']=='history' for r in rows))
+            self.assertTrue(all(set(r)<= {'kind','name','ms','ok','view','id','pending'} for r in rows))
+            self.assertNotIn('Post 1',json.dumps(rows))
+            self.assertNotIn('API_TOKEN',json.dumps(rows))
+            page.get_by_role('heading',name='Самые медленные запросы за сеанс').wait_for()
+        finally:
+            close_page(page, self.id())
+
+    def test_unrelated_settings_do_not_probe_telegram_and_silent_probe_is_deduplicated(self):
+        page=self.new_page()
+        held=[]
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("CP.S.platSec='diag'")
+            page.route('**/api/tg_status',lambda route:held.append(route))
+            page.locator('#nav [data-view="settings"]').click()
+            page.locator('[data-action="perf-report"]').wait_for()
+            self.assertEqual(len(held),0)
+            with page.expect_request('**/api/tg_status'):
+                page.locator('.platnav [data-psec="telegram"]').click()
+            page.wait_for_function("CP.S.tg && !document.querySelector('#nav .busy')")
+            self.assertEqual(len(held),1)
+            page.locator('.platnav [data-psec="diag"]').click()
+            page.locator('.platnav [data-psec="telegram"]').click()
+            page.wait_for_timeout(100)
+            self.assertEqual(len(held),1)
+            held.pop().fulfill(content_type='application/json',body=json.dumps({'ok':True,'result':{'authorized':False}}))
+        finally:
+            for route in held:route.abort()
+            close_page(page,self.id())
+
+    def test_telegram_suggestions_refresh_is_explicit_and_does_not_trap_navigation(self):
+        page=self.new_page()
+        held=[]
+        calls=[]
+        try:
+            def known(route):
+                args=route.request.post_data_json
+                calls.append(args)
+                if args.get('refresh'):
+                    held.append(route)
+                else:
+                    route.fulfill(content_type='application/json',body=json.dumps({'ok':True,'result':{'authorized':False,'chats':[]}}))
+            page.route('**/api/pub_tg_known',known)
+            page.goto(self.base,wait_until='networkidle')
+            page.locator('#nav [data-view="settings"]').click()
+            page.wait_for_function('CP.S.pubKnown!=null')
+            self.assertFalse(any(args.get('refresh') for args in calls))
+            page.locator('.platnav [data-psec="telegram"]').click()
+            page.locator('[data-pa="tg-known-refresh"]').click()
+            page.wait_for_function("document.querySelector('[data-pa=tg-known-refresh]').disabled")
+            self.assertEqual(len(held),1)
+            page.locator('#nav [data-view="post"]').click()
+            page.locator('#ptitle').wait_for()
+            held.pop().fulfill(content_type='application/json',body=json.dumps({'ok':True,'result':{'authorized':True,'chats':[]}}))
+            page.wait_for_function('CP.S.pubKnown.authorized===true')
+            self.assertEqual(page.evaluate('CP.S.view'),'post')
+        finally:
+            for route in held:route.abort()
+            close_page(page,self.id())
+
+    def test_booru_sites_have_independent_settings_and_post_switches(self):
+        page = self.new_page()
+        try:
+            for site in ('e621','floofgens'):
+                self.api('modules_set',key=site,on=True)
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("async()=>{await CP.loadInfo();CP.S.view='settings';CP.S.platSec='floofgens';await Pub.load('settings');CP.render()}")
+            self.assertEqual(page.locator('[data-pa="e6-site"]').count(), 0)
+            page.locator('#e6user-floofgens').fill('FloofTest')
+            page.locator('#e6key-floofgens').fill('floof-test-secret')
+            page.locator('[data-pa="e6-save"]').click()
+            page.wait_for_function("CP.S.pub.floofgens.has_key && CP.S.pub.floofgens.username === 'FloofTest'")
+            page.locator('#e6const-floofgens').fill('floof_tag')
+            page.locator('details[data-detail-key="sources-floofgens"] summary').click()
+            page.locator('#e6source-floofgens-telegram').uncheck()
+            page.locator('#e6source-floofgens-vk').uncheck()
+            page.locator('#e6link-floofgens-resource').check()
+
+            page.locator('.platnav [data-psec="e621"]').click()
+            page.locator('#e6user-e621').wait_for()
+            page.locator('details[data-detail-key="sources-e621"] summary').click()
+            self.assertTrue(page.locator('#e6source-e621-telegram').is_checked())
+            self.assertTrue(page.locator('#e6source-e621-vk').is_checked())
+            self.assertFalse(page.locator('#e6link-e621-resource').is_checked())
+            self.assertEqual(self.api('pub_settings')['floofgens']['source_platforms'], {'telegram':False,'vk':False})
+
+            self.assertEqual(page.locator('#e6user-e621').input_value(), '')
+            self.assertFalse(self.api('pub_settings')['e621']['has_key'])
+            self.assertEqual(self.api('pub_settings')['floofgens']['constant_tags'], ['floof_tag'])
+            page.locator('.callout.warn').filter(has_text='На e621 ИИ-арт запрещён').wait_for()
+            page.locator('#e6user-e621').fill('DrawingTest')
+            page.locator('#e6key-e621').fill('e621-test-secret')
+            page.locator('[data-pa="e6-save"]').click()
+            page.wait_for_function("CP.S.pub.e621.has_key && CP.S.pub.e621.username === 'DrawingTest'")
+            page.locator('#e6const-e621').fill('drawing_tag')
+            page.locator('.platnav [data-psec="floofgens"]').click()
+            page.locator('#e6user-floofgens').wait_for()
+            self.assertEqual(page.locator('#e6user-floofgens').input_value(), 'FloofTest')
+            self.assertEqual(page.locator('#e6const-floofgens').input_value(), 'floof_tag')
+            self.assertFalse(page.locator('#e6source-floofgens-telegram').is_checked())
+            self.assertFalse(page.locator('#e6source-floofgens-vk').is_checked())
+
+            self.assertEqual(self.api('pub_settings')['e621']['constant_tags'], ['drawing_tag'])
+            page.evaluate("async()=>{CP.S.view='post';CP.S.draft={files:[],title:'Drawing',text:'',rating:'sfw',exclude:[],booru_posts:{}};await Pub.load('post');CP.render()}")
+            floof=page.locator('[data-pa="toggle"][data-key="floofgens"]')
+            drawing=page.locator('[data-pa="toggle"][data-key="e621"]')
+            self.assertTrue(floof.is_checked())
+            self.assertTrue(drawing.is_checked())
+            drawing.uncheck()
+            page.wait_for_function("CP.S.draft.exclude.includes('e621')")
+            self.assertTrue(floof.is_checked())
+            self.assertFalse(page.locator('[data-pa="toggle"][data-key="e621"]').is_checked())
+            buffer=io.BytesIO()
+            Image.new('RGB',(32,32),'#567890').save(buffer,format='PNG')
+            image=self.session.post(self.base+'/upload?name=booru.png',headers=self.headers,data=buffer.getvalue()).json()['result']
+            page.evaluate("""async image=>{CP.S.view='post';CP.S.booruTagSite='floofgens';CP.S.draft={files:[image],title:'Drawing',text:'',rating:'sfw',exclude:[],
+                booru_posts:{floofgens:{tags:{[image.id]:['female']},meta:{}},e621:{tags:{[image.id]:['male']},meta:{}}}};
+                await Pub.load('post');CP.render();} """,image)
+            page.locator('#e6card [data-pa="e6t"][data-tag="female"].on').wait_for()
+            page.locator('[data-pa="booru-tags"][data-site="e621"]').click()
+            male=page.locator('#e6card [data-pa="e6t"][data-tag="male"].on')
+            male.wait_for();male.click()
+            page.wait_for_function("id=>!CP.S.draft.booru_posts.e621.tags[id].includes('male')",arg=image['id'])
+            self.assertEqual(page.evaluate("id=>CP.S.draft.booru_posts.floofgens.tags[id]",image['id']),['female'])
+            page.locator('[data-pa="booru-tags"][data-site="floofgens"]').click()
+            page.locator('#e6card [data-pa="e6t"][data-tag="female"].on').wait_for()
+            page.reload(wait_until='networkidle')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='e621';await Pub.load('settings');CP.render()}")
+            self.assertEqual(page.locator('#e6user-e621').input_value(), 'DrawingTest')
+            self.assertEqual(page.locator('#e6const-e621').input_value(), 'drawing_tag')
+            self.assertTrue(page.locator('#e6source-e621-vk').is_checked())
+            page.locator('.platnav [data-psec="e6ai"]').click()
+            page.locator('#e6source-e6ai-vk').wait_for(state='attached')
+            self.assertTrue(page.locator('#e6source-e6ai-vk').is_checked())
+            self.assertTrue(page.locator('#e6source-e6ai-telegram').is_checked())
+            page.locator('.platnav [data-psec="floofgens"]').click()
+            page.locator('#e6source-floofgens-vk').wait_for(state='attached')
+            self.assertTrue(page.locator('#e6link-floofgens-resource').is_checked())
+            self.assertEqual(self.api('pub_settings')['floofgens']['source_link_mode'],'resource')
+            source_panel=page.locator('details[data-detail-key="sources-floofgens"]')
+            if not source_panel.evaluate("el=>el.open"):
+                source_panel.locator("summary").click()
+            page.locator('#e6link-floofgens-post').check()
+            page.locator('#e6link-floofgens-resource').check()
+            self.assertTrue(page.evaluate('SettingsAutosave.flush()'))
+            self.assertEqual(page.evaluate('CP.S.pub.floofgens.source_link_mode'),'resource')
+            self.assertEqual(page.locator('input[name="e6link-floofgens"]:checked').count(),1)
+            page.set_viewport_size({'width':390,'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
+
+            self.assertFalse(page.locator('#e6source-floofgens-vk').is_checked())
+            self.assertFalse(page.locator('#e6source-floofgens-telegram').is_checked())
+
+        finally:
+            for site in ('e621','floofgens'):
+                self.api('pub_save',section=site,changes={'enabled':False})
+                self.api('modules_set',key=site,on=False)
+            close_page(page, self.id())
+
+    def test_platform_catalog_search_hides_disabled_platform_and_preserves_settings(self):
+        page = self.new_page()
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("async()=>{await CP.loadInfo();CP.S.view='settings';CP.S.platSec='features';await Pub.load('settings');CP.render()}")
+            page.locator('[data-platform-catalog]').click()
+            search = page.get_by_role('searchbox', name='Поиск площадок', exact=True)
+            search.fill('reddit')
+            self.assertTrue(page.locator('#platform-picker [data-mod="reddit"]').is_visible())
+            self.assertFalse(page.locator('#platform-picker [data-mod="telegram"]').is_visible())
+            page.locator('#platform-picker [data-mod="reddit"]').uncheck()
+            page.wait_for_function("CP.S.pub.modules.reddit === false")
+            page.locator('.platnav [data-psec="reddit"]').wait_for(state='detached')
+            self.assertEqual(page.locator('.platnav [data-psec="reddit"]').count(), 0)
+            self.assertEqual(page.locator('[data-platform-remove="reddit"]').count(), 0)
+            page.reload(wait_until='networkidle')
+            page.locator('#nav [data-view="settings"]').click()
+            page.wait_for_function("CP.S.pub && CP.S.pub.modules.reddit === false")
+            page.locator('.platnav [data-psec="reddit"]').wait_for(state='detached')
+            self.assertEqual(page.locator('.platnav [data-psec="reddit"]').count(), 0)
+            page.locator('[data-platform-catalog]').click()
+            page.get_by_role('searchbox', name='Поиск площадок', exact=True).fill('reddit')
+            page.locator('#platform-picker [data-mod="reddit"]').check()
+            page.wait_for_function("CP.S.pub.modules.reddit === true")
+            page.locator('.platnav [data-psec="reddit"]').wait_for(state='visible')
+            self.assertTrue(page.locator('.platnav [data-psec="reddit"]').is_visible())
+        finally:
+            close_page(page, self.id())
+
+    def test_late_initial_tags_and_replaced_video_keep_site_data_separate(self):
+        page = self.new_page()
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.wait_for_function('window.CP?.S.pub && CP.S.draft')
+            page.evaluate("""() => {
+                const s = CP.S;
+                s.info.modules.tagger = true;
+                s.view = 'post'; s.booruTagSite = 'floofgens'; s.mediaSt = {ready:true};
+                for (const site of ['floofgens','e621']) {
+                    s.pub[site].enabled = true; s.pub.modules[site] = true;
+                }
+                s.draft = {files:[{id:'old', name:'test.gif', kind:'gif', size:12}],
+                    rating:'sfw', exclude:['e6ai'], marks:{old:'en'}, alts:{old:'Alt'},
+                    booru_posts:{floofgens:{tags:{},meta:{}}, e621:{tags:{},meta:{}}}};
+                CP.render();
+                const api = CP.api;
+                CP.api = async (name,args) => {
+                    if (name === 'tagger_status') return {ready:true};
+                    if (name === 'e6db_status') return {ready:true};
+                    if (name === 'post_tags') return {old:[['wolf',0.9]]};
+                    if (name === 'e6_initial') return new Promise(resolve => {window.finishInitial = resolve});
+                    if (name === 'post_remove_file') return true;
+                    if (name === 'post_plan') return s.plan;
+                    return api(name,args);
+                };
+                window.initialJob = Pub.loadTags(false, true);
+            }""")
+            page.wait_for_function("typeof window.finishInitial === 'function'")
+            page.evaluate("""async () => {
+                CP.S.booruTagSite = 'e621'; CP.render();
+                window.finishInitial({old:['wolf']}); await window.initialJob;
+            }""")
+            self.assertEqual(page.evaluate("CP.S.draft.booru_posts.e621.tags"), {})
+            page.evaluate("""() => {
+                for (const [name, slot] of Object.entries(CP.S.draft.booru_posts)) {
+                    slot.tags.old = [name]; slot.meta.old = {parent:name};
+                }
+                VidEditor.open = options => {window.finishEdit = options.onDone};
+            }""")
+            page.locator('[data-pa="ved-open"]').click()
+            page.evaluate("() => window.finishEdit({file:{id:'new',kind:'gif',size:8,name:'edited.gif'}},{src:'old'})")
+            draft = page.evaluate('CP.S.draft')
+            for site, slot in draft['booru_posts'].items():
+                self.assertEqual(slot, {'tags':{'new':[site]}, 'meta':{'new':{'parent':site}}})
+            self.assertEqual(draft['alts'], {'new':'Alt'})
+            self.assertEqual(draft['marks'], {'new':'en'})
+        finally:
+            close_page(page, self.id())
+
+    def test_required_booru_tags_update_while_validation_is_pending(self):
+        config_path = Path(self.tmp.name) / 'publish.json'
+        original_config = config_path.read_bytes()
+        page = self.new_page()
+        held = []
+        try:
+            self.api('modules_set', key='floofgens', on=True)
+            self.api('pub_e6ai', site='floofgens', username='flooffixture', api_key='fixture-key')
+            buffer = io.BytesIO()
+            Image.new('RGB', (32, 32), 'blue').save(buffer, format='PNG')
+            image = self.session.post(self.base+'/upload?name=required-tags.png', headers=self.headers,
+                                      data=buffer.getvalue()).json()['result']
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("""async image => {
+                CP.S.view = 'post'; CP.S.booruTagSite = 'floofgens';
+                CP.S.draft = {files:[image], title:'Required tags', text:'', rating:'sfw',
+                    exclude:['e6ai','e621'], booru_posts:{}};
+                await Pub.load('post'); CP.render();
+                const api = CP.api;
+                window.tagResponses = 0;
+                CP.api = (name, args) => name === 'e6_form'
+                    ? api(name, args).finally(() => window.tagResponses++) : api(name, args);
+            }""", image)
+            page.route('**/api/e6_form', lambda route: held.append(route))
+            solo = page.locator('#e6card button[data-tag="solo"]')
+            duo = page.locator('#e6card button[data-tag="duo"]')
+            solo.click()
+            page.locator('#e6card button[data-tag="solo"].on').wait_for(timeout=1000)
+            page.get_by_text('Проверяю теги…', exact=True).wait_for(timeout=1000)
+            self.assertEqual(page.locator('#e6card [data-pa="e6ok"]').count(), 0)
+            duo.click()
+            page.locator('#e6card button[data-tag="duo"].on').wait_for(timeout=1000)
+            self.assertNotIn('on', solo.get_attribute('class').split())
+            self.assertEqual(len(held), 2)
+            self.assertEqual(held[1].request.post_data_json['items'][0]['tags'], ['duo'])
+            latest = held.pop()
+            latest.fulfill(response=latest.fetch())
+            page.get_by_text('Проверяю теги…', exact=True).wait_for(state='detached')
+            first = held.pop()
+            first.fulfill(response=first.fetch())
+            page.wait_for_function('window.tagResponses === 2')
+            self.assertEqual(page.evaluate('id => CP.S.e6form[id].tags', image['id']), ['duo'])
+            self.assertIn('on', duo.get_attribute('class').split())
+        finally:
+            for route in held:
+                route.abort()
+            close_page(page, self.id())
+            config_path.write_bytes(original_config)
+
+    def test_all_booru_switches_create_tag_panel_and_link_opens_correct_site(self):
+        old=self.api('pub_settings')
+        config_path=Path(self.tmp.name)/'publish.json'
+        original_config=config_path.read_bytes()
+        page=self.new_page(viewport={'width':1360,'height':1000})
+        sites=('e6ai','e621','floofgens')
+        try:
+            for site in sites:
+                self.api('modules_set',key=site,on=True)
+                self.api('pub_e6ai',site=site,username=site+'fixture',api_key='fixture-key')
+            buffer=io.BytesIO();Image.new('RGB',(32,32),'blue').save(buffer,format='PNG')
+            image=self.session.post(self.base+'/upload?name=booru-panel.png',headers=self.headers,data=buffer.getvalue()).json()['result']
+            page.goto(self.base,wait_until='networkidle')
+            for site in sites:
+                page.evaluate("""async image=>{CP.S.view='post';CP.S.draft={files:[image],title:'Tags',text:'',rating:'sfw',signature:false,
+                  exclude:['e6ai','e621','floofgens'],booru_posts:{}};await Pub.load('post');CP.render()}""",image)
+                self.assertEqual(page.locator('#e6card').count(),0)
+                page.locator(f'[data-pa="toggle"][data-key="{site}"]').check()
+                page.locator('#e6card').wait_for()
+                page.wait_for_function('site=>CP.S.booruTagSite===site',arg=site)
+                link=page.locator(f'[data-pa="e6need"][data-site="{site}"]')
+                link.wait_for()
+                page.evaluate("document.getElementById('e6card').remove()")
+                link.click()
+                page.locator('#e6card').wait_for()
+                self.assertEqual(page.evaluate('CP.S.booruTagSite'),site)
+            # Copy to an excluded destination without enabling publication there.
+            page.evaluate("""id=>{CP.S.draft.booru_posts.e6ai={tags:{[id]:['wolf','solo']},meta:{}};CP.render()}""",image['id'])
+            copy_panel=page.locator('[data-booru-copy-panel]')
+            if not copy_panel.evaluate('el=>el.open'):
+                copy_panel.locator('summary').click()
+            page.locator('#booru-copy-target').select_option('e621')
+            page.locator('#booru-copy-source').select_option('e6ai')
+            page.locator('[data-pa="booru-copy-tags"]').click()
+            page.wait_for_function('id=>CP.S.draft.booru_posts.e621?.tags[id]?.includes("wolf")',arg=image['id'])
+            self.assertTrue(page.evaluate('CP.S.draft.exclude.includes("e621")'))
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e6ai.tags[id]',image['id']),['wolf','solo'])
+            page.set_viewport_size({'width':390,'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
+        finally:
+            close_page(page,self.id())
+            restore=config_path.with_suffix('.restore')
+            restore.write_bytes(original_config);restore.replace(config_path)
+
+    def test_x_settings_login_and_real_queue_plan(self):
+        page=self.new_page()
+        path=Path(self.tmp.name)/'publish.json';original=path.read_bytes()
+        try:
+            self.api('pub_save',section='modules',changes={'x':True})
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='x';await Pub.load('settings');CP.render()}")
+            page.locator('#bt-x-enabled').check()
+            page.wait_for_function('CP.S.pub.x.enabled===true')
+            page.locator('[data-social-action=login][data-platform=x]').click()
+            page.wait_for_function('CP.S.pub.x.browser_ok && !CP.S.socialWaiting.x')
+            self.assertNotIn('Настоящая публикация в X пока не подключена',page.locator('main').inner_text())
+            import io
+            from PIL import Image
+            data=io.BytesIO();Image.new('RGB',(80,60),'blue').save(data,format='PNG')
+            image=self.session.post(self.base+'/upload?name=x-test.png',headers=self.headers,data=data.getvalue()).json()['result']
+            plan=self.api('post_plan',draft={'files':[image['id']],'title':'Test','text':'Body','rating':'sfw','signature':False,'hashtags':[],'tagger':False})
+            self.assertTrue(next(d for d in plan['dests'] if d['key']=='x')['will'])
+        finally:
+            close_page(page,self.id())
+            restore=path.with_suffix('.restore');restore.write_bytes(original);restore.replace(path)
+
+    def test_deviantart_ordinary_mode_does_not_require_browser_or_price(self):
+        page=self.new_page()
+        path=Path(self.tmp.name)/'publish.json';original=path.read_bytes()
+        try:
+            self.api('pub_save',section='deviantart',changes={'premium_download':False,'subscriber_only':False,'premium_price_usd':'','browser_ok':False})
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='deviantart';await Pub.load('settings');CP.render()}")
+            self.assertFalse(page.locator('#daprice').is_visible())
+            self.assertFalse(page.locator('[data-pa=da-browser-login]').is_visible())
+            self.assertIn('Цена и отдельный браузерный вход не нужны',page.locator('main').inner_text())
+            page.locator('[data-pa=da-access-mode][data-val=paid]').click()
+            page.locator('details[data-detail-key="da-access-defaults"] summary').click()
+            page.locator('#dasubscriber').check()
+            page.wait_for_function('CP.S.pub.deviantart.subscriber_only')
+            page.locator('#dapremium').uncheck()
+            page.wait_for_function('!CP.S.pub.deviantart.premium_download')
+            self.assertTrue(page.locator('#daprice').is_disabled())
+            page.locator('#dapremium').check()
+            page.wait_for_function('CP.S.pub.deviantart.premium_download')
+            page.locator('#daprice').fill('invalid-price')
+            page.locator('#daprice').blur()
+            page.locator('#settings-save-error').wait_for()
+            page.locator('[data-pa=da-access-mode][data-val=ordinary]').click()
+            page.wait_for_function('!CP.S.pub.deviantart.subscriber_only && !CP.S.pub.deviantart.premium_download')
+            self.assertFalse(page.locator('[data-pa=da-browser-login]').is_visible())
+            self.assertFalse(json.loads((Path(self.tmp.name)/'ui.json').read_text()).get('settingsPending',{}).get('jobs'))
+            page.reload(wait_until='networkidle')
+            self.assertEqual(page.locator('#settings-save-error').count(),0)
+            page.evaluate("""() => {
+                CP.S.view = 'post'; CP.S.postMode = 'progress';
+                CP.S.pubState = {title:'Test',rating:'sfw',dests:[
+                    {key:'deviantart',name:'DeviantArt',state:'done',outcome:'prepared',
+                     stash_drafts:{0:{url:'https://sta.sh/011',name:'Art.jpg'}}}
+                ]};
+                CP.render();
+            }""")
+            self.assertTrue(page.locator('[data-open="https://sta.sh/011"]').is_visible())
+            self.assertIn('черновики готовы', page.locator('[data-send-key="deviantart"]').get_attribute('aria-label'))
+
+        finally:
+            close_page(page,self.id())
+            restore=path.with_suffix('.restore');restore.write_bytes(original);restore.replace(path)
+
+    def test_deviantart_paid_defaults_autosave_and_survive_reload(self):
+        page=self.new_page()
+        old=self.api('pub_settings')['deviantart']
+        fields=('premium_download','premium_price_usd','subscriber_only','subscriber_tiers')
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='deviantart';CP.store.set('view','settings');CP.store.set('platSec','deviantart');await Pub.load('settings');CP.render()}")
+            page.locator('[data-pa=da-access-mode][data-val=paid]').click()
+            page.locator('details[data-detail-key="da-access-defaults"] summary').click()
+            page.locator('#daprice').fill('5,50')
+            page.locator('#datiers').fill('Tip Jar\nBig Tip Jar')
+            page.locator('#dapremium').check()
+            page.locator('#dasubscriber').check()
+            self.assertTrue(page.evaluate('SettingsAutosave.flush()'))
+            saved=self.api('pub_settings')['deviantart']
+            self.assertEqual(saved['premium_price_usd'],'5.50')
+            self.assertEqual(saved['subscriber_tiers'],['Tip Jar','Big Tip Jar'])
+            self.assertTrue(saved['premium_download'])
+            page.reload(wait_until='domcontentloaded')
+            page.locator('#ptitle').wait_for()
+            page.locator('#nav [data-view="settings"]').click()
+            page.locator('.platnav [data-psec="deviantart"]').click()
+            page.locator('#daprice').wait_for(state='attached')
+            self.assertEqual(page.locator('#daprice').input_value(),'5.50')
+            self.assertTrue(page.locator('#dapremium').is_checked())
+            panel=page.locator('details[data-detail-key="da-access-defaults"]')
+            if not panel.evaluate('el=>el.open'):panel.locator('summary').click()
+            self.assertIn('CrossPost загрузит черновики через OAuth API',panel.inner_text())
+        finally:
+            close_page(page,self.id())
+            self.api('pub_save',section='deviantart',changes={k:old[k] for k in fields})
+
+    def test_copy_tags_between_booru_sites_preserves_source_and_requires_review(self):
+        old = self.api('pub_settings')
+        page = self.new_page(viewport={'width':1360,'height':1000})
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        try:
+            for site in ('e6ai','e621','floofgens'):
+                self.api('modules_set', key=site, on=True)
+                self.api('pub_e6ai', site=site, username=site+'fixture', api_key='fixture-key')
+            images = []
+            for name, color in [('copy-a.png','blue'),('copy-b.png','red')]:
+                buffer = io.BytesIO()
+                Image.new('RGB',(32,32),color).save(buffer,format='PNG')
+                images.append(self.session.post(self.base+'/upload?name='+name,headers=self.headers,data=buffer.getvalue()).json()['result'])
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("""async images => {
+                const a=images[0].id,b=images[1].id;
+                CP.S.booruTagSite='e621';CP.S.draft={files:images,title:'Copy fixture',text:'Keep text',rating:'sfw',exclude:[],
+                    booru_posts:{e6ai:{tags:{[a]:['female','wolf'],[b]:[]},meta:{[a]:{ok:'source-confirmation'}}},
+                    e621:{tags:{[a]:['solo','armor'],[b]:['forest']},meta:{[a]:{ok:'target-confirmation',parent:'42',nochar:true,nocont:true}}},
+                    floofgens:{tags:{[a]:['male'],[b]:['desert']},meta:{}}}};
+                await Pub.load('post');CP.render();
+            }""",images)
+            panel = page.locator('#e6card [data-booru-copy-panel]')
+            self.assertTrue(panel.is_visible())
+            if not panel.evaluate('el=>el.open'):
+                panel.locator('summary').click()
+            page.locator('#booru-copy-source').select_option('e6ai')
+            page.locator('[data-pa="booru-copy-tags"]').click()
+            page.wait_for_function("id=>CP.S.draft.booru_posts.e621.tags[id].includes('wolf')",arg=images[0]['id'])
+            a,b=images[0]['id'],images[1]['id']
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',a),['solo','armor','female','wolf'])
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.meta[id].ok',a),'')
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.meta[id].parent',a),'42')
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e6ai.meta[id].ok',a),'source-confirmation')
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',b),['forest'])
+            page.locator('#booru-copy-source').select_option('floofgens')
+            page.locator('#booru-copy-file').select_option(a)
+            page.locator('#booru-copy-mode').check()
+            page.once('dialog',lambda dialog:dialog.dismiss())
+            page.locator('[data-pa="booru-copy-tags"]').click()
+            self.assertIn('wolf',page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',a))
+            page.once('dialog',lambda dialog:dialog.accept())
+            # Anonymous drafts are saved with a debounce. Verify server persistence
+            # before reloading, rather than racing the beforeunload keepalive request.
+            page.locator('[data-pa="booru-copy-tags"]').click()
+            for _ in range(200):
+                state_path = Path(self.tmp.name)/'ui.json'
+                persisted = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
+                if (persisted.get('draft') or {}).get('booru_posts',{}).get('e621',{}).get('tags',{}).get(a) == ['male']:
+                    break
+                page.wait_for_timeout(50)
+            else:
+                self.fail('Copied tags did not reach the saved draft before reload')
+            page.wait_for_function("id=>JSON.stringify(CP.S.draft.booru_posts.e621.tags[id])==='[\"male\"]'",arg=a)
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',b),['forest'])
+            self.assertEqual(page.evaluate('CP.S.draft.text'),'Keep text')
+            page.set_viewport_size({'width':390,'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
+            page.reload(wait_until='domcontentloaded')
+            page.wait_for_function('id=>window.CP?.S.draft?.booru_posts?.e621?.tags?.[id]',arg=a)
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e621.tags[id]',a),['male'])
+            self.assertEqual(page.evaluate('id=>CP.S.draft.booru_posts.e6ai.tags[id]',a),['female','wolf'])
+            self.assertFalse(errors,errors)
+        finally:
+            for site in ('e6ai','e621','floofgens'):
+                self.api('pub_save',section=site,changes={'enabled':old[site]['enabled']})
+                self.api('modules_set',key=site,on=old['modules'].get(site,True))
+            close_page(page,self.id())
+
     def test_error_motion_sorting_and_line_chart_respect_reduced_motion(self):
-        page=self.browser.new_page(reduced_motion='no-preference')
+        page=self.new_page(reduced_motion='no-preference')
         try:
             page.goto(self.base,wait_until='networkidle')
             page.evaluate("""()=>{
@@ -106,11 +668,102 @@ main()
             page.evaluate('testSeries[0].points[1].v=300;Charts.lineChart(testChart,testSeries)')
             self.assertEqual(page.evaluate("testChart.querySelector('path').getAnimations().length"),0)
         finally:
-            page.close()
+            close_page(page, self.id())
 
+    def test_multiplatform_post_opens_full_statistics_without_manual_merge_label(self):
+        page=self.new_page()
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("""async()=>{
+                CP.S.view='history';CP.S.histMode='published';CP.S.historyFilters={};
+                await Pub.load('history');
+                const row=CP.S.hist[0];row.work.manual=false;
+                row.work.parts.push({plat:'bsky',label:'Bluesky'});
+                window.expectedPub='pub:'+row.work.pub_id;CP.render();
+            }""")
+            self.assertNotIn('Объединено',page.locator('.hitem').first.inner_text())
+            page.locator('.hitem').first.click()
+            page.wait_for_function("()=>CP.S.pstatOpen===window.expectedPub")
+            self.assertEqual(page.get_by_role('dialog',name='Статистика поста').count(),1)
+        finally:
+            close_page(page, self.id())
+
+    def test_calendar_removal_persists_and_can_be_restored(self):
+        page = self.new_page()
+        page.on("dialog", lambda dialog: dialog.accept())
+        atoms = []
+        try:
+            page.goto(self.base, wait_until="networkidle")
+            page.evaluate("""async()=>{
+                CP.S.view='history'; CP.S.histMode='calendar'; CP.S.calYm='2026-01';
+                CP.store.set('view','history'); CP.store.set('histMode','calendar');
+                await Pub.load('history'); CP.render();
+            }""")
+            card = page.locator('.cw').first
+            key = card.get_attribute('data-cw')
+            atoms = page.evaluate("key=>Object.values(CP.S.cal['2026-01'].days).flat().find(item=>item.key===key).atoms", key)
+            card.click()
+            page.get_by_role("button", name="Удалить из календаря", exact=True).click()
+            page.locator(f'.cw[data-cw="{key}"]').wait_for(state='hidden')
+            page.get_by_role("button", name="Вернуть в календарь", exact=True).wait_for()
+            result = self.api("calendar_month", ym="2026-01")
+            self.assertFalse(any(set(item['atoms']) & set(atoms) for rows in result['days'].values() for item in rows))
+            page.get_by_role("button", name="Вернуть в календарь", exact=True).click()
+            page.locator(f'.cw[data-cw="{key}"]').wait_for()
+        finally:
+            if atoms:
+                self.api("cal_restore", atoms=atoms)
+            close_page(page, self.id())
+
+    def test_list_merge_and_split_are_visible_and_persistent(self):
+        page = self.new_page()
+        page.on("dialog", lambda dialog: dialog.accept())
+        atoms = []
+        try:
+            page.goto(self.base, wait_until="networkidle")
+            page.evaluate("async()=>{CP.S.view='history';CP.S.histMode='published';CP.S.historyFilters={};CP.S.historyOffset=0;await Pub.load('history');CP.render()}")
+            initial = self.api("post_history_search")["total"]
+            page.get_by_role("button", name="Объединить посты", exact=True).click()
+            boxes = page.locator("[data-history-select]")
+            atoms = page.evaluate("()=>CP.S.hist.slice(0,2).flatMap(r=>r.atoms)")
+            boxes.nth(0).check()
+            boxes.nth(1).check()
+            page.get_by_role("button", name="Принудительно объединить", exact=True).click()
+            page.wait_for_function("count=>CP.S.historyPage.total===count", arg=initial-1)
+            self.assertEqual(self.api("post_history_search")["total"], initial-1)
+            page.get_by_role("button", name="Объединить посты", exact=True).click()
+            page.locator(".hitem").filter(has_text="Объединено вручную").locator("input[type=checkbox]").check()
+            page.get_by_role("button", name="Разъединить", exact=True).click()
+            page.wait_for_function("count=>CP.S.historyPage.total===count", arg=initial)
+        finally:
+            if atoms:
+                self.api("cal_split", atoms=atoms)
+            close_page(page, self.id())
+
+    def test_telegram_editor_sends_only_selected_destination(self):
+        page = self.new_page()
+        saved = []
+        def reply(route, value):
+            route.fulfill(content_type="application/json", body=json.dumps({"ok":True,"result":value}))
+        page.route("**/api/pub_stats", lambda r: reply(r, {"id":1,"dests":[{"key":"telegram:test","platform":"telegram","name":"Test channel","editable":True,"source_pub_id":1}]}))
+        page.route("**/api/post_edit_prepare", lambda r: reply(r, {"pub_id":1,"key":"telegram:test","kind":"caption","text":"Old caption","exact":True,"revision":"revision"}))
+        def save(route):
+            saved.append(route.request.post_data_json)
+            reply(route, {})
+        page.route("**/api/post_edit_apply", save)
+        try:
+            page.goto(self.base, wait_until="networkidle")
+            page.evaluate("async()=>{CP.S.view='history';await Pub.load('history');await Pub.openDrawer('pub:1')}")
+            page.get_by_role("button", name="Редактировать в Telegram", exact=True).click()
+            page.locator("#tg-edit-text").fill("Updated caption")
+            page.get_by_role("button", name="Сохранить в Telegram", exact=True).click()
+            page.wait_for_function("()=>CP.S.tgEdit===null")
+            self.assertEqual(saved, [{"pub_id":1,"key":"telegram:test","text":"Updated caption","revision":"revision"}])
+        finally:
+            close_page(page, self.id())
 
     def test_missing_publication_dependency_shows_original_error_without_error_loop(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         try:
             page.route("**/static/post-state.js", lambda route: route.abort())
             page.goto(self.base)
@@ -122,160 +775,133 @@ main()
             self.assertEqual(page.locator("#acts").inner_text(), "")
             self.assertEqual(page.get_by_role("button", name="Перезагрузить интерфейс").count(), 1)
         finally:
-            page.close()
+            close_page(page, self.id())
 
-
-    def test_translation_columns_stay_aligned_with_many_platforms(self):
-        page = self.browser.new_page(viewport={'width':1100, 'height':900})
-        try:
-            page.goto(self.base, wait_until='domcontentloaded')
-            page.wait_for_function('window.CP?.S.info && CP.S.pub')
-            page.evaluate("""() => {
-                CP.S.view = 'post'; CP.S.postMode = 'edit';
-                CP.S.pub.modules.translation = true;
-                for (const key of Object.keys(CP.S.pub.text_lang)) CP.S.pub.text_lang[key] = 'en';
-                CP.render();
-            }""")
-            page.wait_for_function("""() => {
-                const ids = ['ptitle', 'ptitle_en', 'ptext', 'ptext_en'];
-                const fields = ids.map(id => document.getElementById(id));
-                if (fields.some(el => !el || !el.getClientRects().length)) return false;
-                const y = fields.map(el => el.getBoundingClientRect().top);
-                return Math.abs(y[0] - y[1]) <= 1 && Math.abs(y[2] - y[3]) <= 1;
-            }""")
-            self.assertGreater(page.locator('[data-pa="tlang"]').count(), 4)
-            page.set_viewport_size({'width':390, 'height':844})
-            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
-        finally:
-            page.close()
-
-
-    def test_view_transition_runs_only_on_navigation_and_respects_reduced_motion(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
-        try:
-            page.goto(self.base, wait_until='domcontentloaded')
-            page.wait_for_function('window.CP?.S.info && CP.S.pub')
-            page.evaluate("""() => {
-                CP.render();
-                window.viewAnimations = 0;
-                const main = document.querySelector('#main');
-                const original = main.animate.bind(main);
-                main.animate = (...args) => { window.viewAnimations++; return original(...args); };
-                CP.S.view = 'settings'; CP.S.platSec = 'app'; CP.render();
-            }""")
-            self.assertEqual(page.evaluate('window.viewAnimations'), 1)
-            page.evaluate('CP.render()')
-            self.assertEqual(page.evaluate('window.viewAnimations'), 1)
-            page.emulate_media(reduced_motion='reduce')
-            page.evaluate("CP.S.view='post'; CP.render()")
-            self.assertEqual(page.evaluate('window.viewAnimations'), 1)
-            self.assertTrue(page.locator('#ptitle').is_visible())
-        finally:
-            page.close()
-
-
-    def test_interface_motion_respects_reduced_motion_preference(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
-        try:
-            page.goto(self.base, wait_until='domcontentloaded')
-            page.wait_for_function('window.CP?.S.info && CP.S.pub')
-            page.evaluate("CP.toast('Motion test', 'info')")
-            toast = page.locator('.toast').last
-            self.assertEqual(toast.evaluate("el => getComputedStyle(el).animationName"), 'toast-enter')
-            page.emulate_media(reduced_motion='reduce')
-            self.assertEqual(toast.evaluate("el => getComputedStyle(el).animationName"), 'none')
-            self.assertEqual(page.locator('#nav button').first.evaluate("el => getComputedStyle(el).transitionDuration"), '0s')
-            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='app';await Pub.load('settings');CP.render()}")
-            toggle = page.locator('.tgl input[type=checkbox]').first
-            self.assertEqual(toggle.evaluate("el => getComputedStyle(el, '::after').transitionDuration"), '0s')
-        finally:
-            page.close()
-
-
-    def test_publication_animation_tracks_real_progress_and_reduced_motion(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
+    def test_forecast_evidence_handles_weak_missing_and_old_validation(self):
+        page = self.new_page(viewport={'width': 1360, 'height': 1000})
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
         try:
             page.goto(self.base, wait_until='networkidle')
             page.wait_for_function('window.CP?.S.info && CP.S.pub')
             page.evaluate("""() => {
-                CP.S.view = 'post'; CP.S.postMode = 'progress';
-                CP.S.pubState = {title:'Test',rating:'sfw',dests:[
-                    {key:'discord:0',name:'Discord',state:'running',progress:.42,details:[]},
-                    {key:'vk',name:'VK',state:'done',details:[]},
-                    {key:'reddit:foo',platform:'reddit',name:'Reddit · foo',state:'error',outcome:'unknown',details:[]},
-                    {key:'reddit:bar',platform:'reddit',name:'Reddit · bar',state:'error',outcome:'not_sent',details:[]},
-                    {key:'telegram:1',platform:'telegram',name:'Telegram · one',state:'queued',details:[]},
-                    {key:'telegram:2',platform:'telegram',name:'Telegram · two',state:'done',note:'скорее всего, вышла, но ссылку найти не удалось',details:[]}
-                ]};
-                CP.S.pubJob = {state:'running',progress:.38}; CP.render();
-            }""")
-            overall = page.locator('[role=progressbar][aria-label="Публикация"]')
-            row = page.locator('[role=progressbar][aria-label="Discord"]')
-            self.assertEqual(page.locator('.send-dest').count(), 6)
-            self.assertEqual(page.locator('.send-dest.done').count(), 1)
-            self.assertEqual(page.locator('.send-dest.uncertain').count(), 2)
-            self.assertEqual(page.locator('.send-dest.error').count(), 1)
-            self.assertIn('VK: опубликовано', page.locator('.send-dest.done').get_attribute('aria-label'))
-            self.assertEqual(overall.get_attribute('aria-valuenow'), '38')
-            self.assertEqual(row.get_attribute('aria-valuenow'), '42')
-            self.assertEqual(overall.locator('div').evaluate("el=>el.style.width"), '38%')
-            self.assertEqual(row.locator('div').evaluate("el=>getComputedStyle(el,'::after').animationName"), 'progress-glint')
-            self.assertEqual(page.locator('.prow.done .pic').first.evaluate("el=>getComputedStyle(el).animationName"), 'none')
-            page.emulate_media(reduced_motion='reduce')
-            self.assertEqual(row.locator('div').evaluate("el=>getComputedStyle(el,'::after').animationName"), 'none')
-            self.assertEqual(page.locator('.prow.running .pic').evaluate("el=>getComputedStyle(el).animationName"), 'none')
-            page.evaluate("CP.S.pubJob={state:'done'};CP.render()")
-            self.assertEqual(page.locator('.send-dest.done').count(), 1)
-            self.assertEqual(page.locator('.send-dest.uncertain').count(), 2)
-        finally:
-            page.close()
-
-
-    def test_sending_celebrates_only_new_confirmed_success(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
-        try:
-            page.goto(self.base, wait_until='networkidle')
-            page.evaluate("""() => {
-                CP.S.view='post'; CP.S.postMode='progress';
-                CP.S.pubState={pub_id:987,title:'Test',rating:'sfw',dests:[
-                    {key:'discord:0',platform:'discord',name:'Discord',state:'running',details:[]},
-                    {key:'vk',platform:'vk',name:'VK',state:'done',details:[]},
-                    {key:'reddit:r',platform:'reddit',name:'Reddit',state:'running',details:[]}
-                ]}; CP.S.pubJob={state:'running',progress:.42}; CP.render();
-            }""")
-            self.assertEqual(page.locator('.send-flight').get_attribute('style'), 'left:42%')
-            self.assertEqual(page.locator('.send-dest.just-sent').count(), 0)
-            page.evaluate("""() => {
-                CP.S.pubState.dests[0].state='done';
-                CP.S.pubState.dests[2].state='error';CP.S.pubState.dests[2].outcome='unknown';
+                window.qualityFixture = {level:'low',text:'На более поздних постах модель не точнее обычного результата канала',n:90,n_tagged:60,
+                    validation:{ready:true,n:32,minimum:10,windows:[{}],start:'2025-04-01',end:'2025-05-01',skill:-.2,typical_err:1.8,baseline_typical_err:1.5}};
+                CP.S.view='post'; CP.S.draft.rating='sfw';
+                CP.S.plan={configured:['telegram:0'],errors:[],not_configured:[],dests:[{key:'telegram:0',platform:'telegram',name:'Telegram test',will:true,details:[]}]};
+                CP.S.fc={items:[{ok:true,channel:'Fixture',expected:120,low:80,high:170,unit:'просмотров',index:1.2,base:100,p_hit:.4,percentile:null,
+                    tags_known:true,quality:qualityFixture,factors:[],best_times:[{gain:1.2,at:'2027-01-01'}]}]};
                 CP.render();
             }""")
-            self.assertEqual(page.locator('.send-dest.just-sent').count(), 1)
-            self.assertIn('Discord', page.locator('.send-dest.just-sent').get_attribute('aria-label'))
-            self.assertEqual(page.locator('.send-dest.uncertain.just-sent').count(), 0)
-            self.assertEqual(page.locator('.send-dest.just-sent').evaluate("el=>getComputedStyle(el,'::before').animationName"), 'sent-ring')
-            page.emulate_media(reduced_motion='reduce')
-            self.assertEqual(page.locator('.send-dest.just-sent').evaluate("el=>getComputedStyle(el,'::before').animationName"), 'none')
-            self.assertEqual(page.locator('.send-flight svg').evaluate("el=>getComputedStyle(el).animationName"), 'none')
-            page.evaluate('CP.render()')
-            self.assertEqual(page.locator('.send-dest.just-sent').count(), 0)
+            quality = page.locator('#fcbox .forecast-quality')
+            self.assertEqual(quality.get_attribute('data-quality'), 'low')
+            self.assertEqual(page.locator('#fcbox .besttime').count(), 0)
+            self.assertNotIn('шанс', page.locator('#fcbox').inner_text())
+            quality.locator('summary').click()
+            self.assertIn('32 / минимум 10', quality.inner_text())
+            self.assertIn('×1.80 / ×1.50', quality.inner_text())
+            page.set_viewport_size({'width':390,'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
+            page.evaluate("""() => {
+                qualityFixture.validation={ready:false,n:0,minimum:10,windows:[],skill:null};
+                document.querySelector('#fcbox').innerHTML=Charts.forecastQuality(qualityFixture);
+            }""")
+            self.assertIn('Преимущество не оценено', page.locator('#fcbox').inner_text())
+            self.assertNotIn('NaN', page.locator('#fcbox').inner_text())
+            page.evaluate("document.querySelector('#fcbox').innerHTML=Charts.forecastQuality({level:'good'})")
+            self.assertIn('прежней методике', page.locator('#fcbox').inner_text())
+            self.assertFalse(errors, errors)
         finally:
-            page.close()
+            close_page(page, self.id())
 
-
-    def test_history_hover_motion_respects_reduced_motion(self):
-        page = self.browser.new_page(reduced_motion='no-preference')
+    def test_booru_checkpoint_comparison_and_missing_measurements_are_clear(self):
+        page=self.new_page(viewport={'width':1480,'height':1000})
         try:
-            page.set_content('<div class="hitem" style="width:400px;height:60px"><span>Post</span><span class="chev">›</span></div>')
-            page.add_style_tag(path=str(ROOT/'app/web/style.css'))
-            page.locator('.hitem').hover()
-            page.wait_for_function("getComputedStyle(document.querySelector('.hitem .chev')).transform !== 'none'")
-            page.emulate_media(reduced_motion='reduce')
-            self.assertEqual(page.locator('.hitem .chev').evaluate("el=>getComputedStyle(el).transform"), 'none')
-            self.assertEqual(page.locator('.hitem .chev').evaluate("el=>getComputedStyle(el).transitionDuration"), '0s')
+            page.goto(self.base,wait_until='networkidle')
+            page.evaluate("""async()=>{
+                CP.S.view='history';CP.S.histMode='published';await Pub.load('history');
+                window.checkpointData={items:[{post_id:42,link:'https://floofgens.net/posts/42',verified:true,error:null,points:[
+                    {hours:24,state:'measured',favs:12,age_h:24.5,taken_at:'2026-11-14T00:00:00Z',comparison:{ready:false,n:2,minimum:10}},
+                    {hours:72,state:'missed'},{hours:168,state:'waiting'}]}],minimum:10};
+                CP.S.pstatOpen='pub:900';CP.S.pstat={...CP.S.pstat,'pub:900':{id:900,title:'Checkpoint test',created:'2026-11-13T00:00:00Z',rating:'sfw',files:[],
+                    dests:[{key:'floofgens',name:'floofgens.net',platform:'floofgens',state:'done',link:'https://floofgens.net/posts/42',why:'Сбор статистики выключен',booru_metrics:checkpointData}]}};
+                CP.render();
+            }""")
+            box=page.locator('.drawer .booru-checkpoints')
+            box.get_by_role('heading',name='Избранное в одинаковом возрасте').wait_for()
+            self.assertIn('В избранном: 12',box.inner_text())
+            self.assertIn('Пропущен',box.inner_text())
+            self.assertIn('Ожидается',box.inner_text())
+            self.assertIn('2 из 10',box.inner_text())
+            page.evaluate("""()=>{checkpointData.items[0].points[0].comparison={ready:true,n:12,minimum:10,window_days:180,median:6,index:2,
+                median_low:4,median_high:8,typical_low:2,typical_high:10,lower:10,equal:1,preliminary:true,method:'Та же площадка, автор, рейтинг и тип файла'};CP.render()}""")
+            box.locator('.more summary').click()
+            self.assertIn('выше 10 из 12',box.inner_text())
+            self.assertIn('наравне с 1',box.inner_text())
+            self.assertIn('95%',box.inner_text())
+            self.assertIn('не доказательство причины',box.inner_text())
+            self.assertGreater(box.bounding_box()['width'],200)
         finally:
-            page.close()
+            close_page(page, self.id())
 
+    def test_publish_controls_stay_visible_while_destinations_scroll(self):
+        page = self.new_page(viewport={'width':1200, 'height':660})
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.wait_for_function('window.CP?.S.pub')
+            page.evaluate("""() => {
+                const s = CP.S;
+                s.view = 'post'; s.postMode = 'edit'; s.draft = {...s.draft, rating:'sfw'};
+                s.plan = {...s.plan, errors:[], configured:['telegram'], not_configured:[],
+                    dests: Array.from({length:24}, (_,i)=>({key:'telegram:'+i,platform:'telegram',
+                        name:'Channel '+i,will:true,can_toggle:true,details:['Image and text']}))};
+                CP.render();
+            }""")
+            pane = page.locator('.postside-details')
+            publish = page.locator('#pubside [data-pa=publish]')
+            initial = publish.bounding_box()
+            self.assertLess(initial['y'] + initial['height'], 660)
+            self.assertTrue(pane.evaluate('element => element.scrollHeight > element.clientHeight'))
+            pane.evaluate('element => {element.scrollTop = element.scrollHeight;}')
+            self.assertGreater(pane.evaluate('element => element.scrollTop'), 0)
+            self.assertEqual(publish.bounding_box()['y'], initial['y'])
+            forecast = page.locator('.postside-forecast')
+            self.assertTrue(forecast.evaluate('element => element.open'))
+            forecast.locator('summary').first.click()
+            page.wait_for_function("CP.S.editorDetails?.['post-forecast'] === false")
+            page.evaluate('CP.render()')
+            self.assertFalse(forecast.evaluate('element => element.open'))
+        finally:
+            close_page(page, self.id())
+
+    def test_paused_pipeline_row_offers_publish_now(self):
+        page = self.new_page()
+        page.on('dialog', lambda dialog: dialog.accept())
+        row = {'id':901,'state':'queued','queue':1,'title':'Queued artwork','files':[],
+               'dests':1,'rating':'sfw','run_at':'2099-01-01T00:00:00+00:00'}
+        calls = []
+        def reply(route, result):
+            route.fulfill(status=200, json={'ok':True,'result':result})
+        page.route('**/api/pipeline_state', lambda route: reply(route, {
+            'cfg':{'enabled':False,'explore':0},'items':[row],'windows':{'solid':0}
+        }))
+        page.route('**/api/post_scheduled', lambda route: reply(route, [row] if not calls else []))
+        def send(route):
+            calls.append(route.request.post_data_json)
+            reply(route, [])
+        page.route('**/api/post_schedule_now', send)
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("""async()=>{
+                CP.S.view='history'; CP.S.queueOpen=true;
+                await Pub.load('history'); CP.render();
+            }""")
+            page.locator('.sitem').filter(has_text='Queued artwork').get_by_role(
+                'button', name='Опубликовать сейчас', exact=True).click()
+            page.wait_for_function('!CP.S.sendingNow?.has(901)')
+            self.assertEqual(calls, [{'sid':901}])
+        finally:
+            close_page(page, self.id())
 
     def test_editor_history_queue_settings_and_preservation(self):
         buffer = io.BytesIO()
@@ -284,7 +910,7 @@ main()
         draft = dict(files=[upload], title='Новый пост', text='Main text', variants={'en': {'text': 'Keep English'}},
                      multi=True, marks={upload['id']: 'en'}, rating='sfw', signature=False, hashtags=[])
         self.api('ui_set', changes={'draft': draft})
-        page = self.browser.new_page(viewport={'width': 1360, 'height': 900})
+        page = self.new_page(viewport={'width': 1360, 'height': 900})
         errors = []
         (ROOT/'test-artifacts').mkdir(exist_ok=True)
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -379,15 +1005,73 @@ main()
             self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
             page.screenshot(path=str(ROOT/'test-artifacts'/'editor-mobile.png'), full_page=True)
             self.assertFalse(errors, errors)
-        except BaseException:
-            (ROOT/'test-artifacts').mkdir(exist_ok=True)
-            page.screenshot(path=str(ROOT/'test-artifacts'/'workflow.png'), full_page=True)
-            raise
         finally:
-            page.close()
+            close_page(page, self.id())
+
+    def test_trends_floofgens_topics_filters_and_refresh_settings(self):
+        sys.path.insert(0,str(ROOT))
+        sys.path.insert(0,str(ROOT/'tests'))
+        from trend_fixture import write_fixture
+        old=self.api('modules').get('trends',True)
+        self.api('modules_set',key='trends',on=True)
+        page=self.new_page(viewport={'width':1480,'height':1000})
+        errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        try:
+            page.goto(self.base,wait_until='networkidle')
+            page.locator('#nav [data-view="trends"]').click()
+            page.locator('[data-set="src"][data-val="floofgens"]').click()
+            page.get_by_role('heading',name='Данных floofgens.net ещё нет').wait_for()
+            page.locator('[data-action="manual"]').click()
+            self.assertIn('https://floofgens.net/db_export/',page.locator('#main').inner_text())
+            write_fixture(self.tmp.name)
+            page.evaluate("async()=>{await CP.loadInfo();CP.render()}")
+            page.wait_for_function("CP.S.data?.source==='floofgens' && !CP.S.loading")
+            self.assertEqual(page.locator('.li[data-pick="solo"]').count(),0)
+            self.assertGreater(page.locator('.li[data-pick="armor"] .name').first.evaluate('el=>el.getBoundingClientRect().width'),60)
+            page.locator('[data-action="trend-common"]').check()
+            page.wait_for_function("CP.S.data?.filters.show_common===true && !CP.S.loading")
+            page.locator('.li[data-pick="solo"]').wait_for()
+            page.locator('[data-action="trend-common"]').uncheck()
+            page.wait_for_function("CP.S.data?.filters.show_common===false && !CP.S.loading")
+            page.locator('[data-set="cat"][data-val="clothing"]').click()
+            page.wait_for_function("CP.S.data?.filters.category==='clothing' && !CP.S.loading")
+            self.assertEqual(page.locator('.li[data-pick="wolf"]').count(),0)
+            page.locator('.li[data-pick="armor"]').first.wait_for()
+            page.locator('[data-set="trendPeriod"][data-val="month"]').click()
+            page.wait_for_function("CP.S.data?.filters.period==='month' && !CP.S.loading")
+            self.assertEqual(page.evaluate("CP.S.data.rising.find(r=>r.tag==='armor').sample"),160)
+            page.locator('[data-action="trends-settings"]').click()
+            page.locator('#rfloof').fill('3')
+            page.locator('#rfloof').blur()
+            page.wait_for_function("CP.S.info.settings.trends.floofgens.refresh_days===3")
+            # App polling is intentionally ongoing; readiness is the rendered UI.
+            page.reload(wait_until='domcontentloaded')
+            page.wait_for_function("window.CP?.S.info && window.Pub && document.querySelector('#main #ptitle')")
+            page.locator('#nav [data-view="trends"]').click()
+            page.wait_for_function("CP.S.data?.source==='floofgens' && CP.S.data.filters.period==='month' && !CP.S.loading")
+            self.assertEqual(page.evaluate("CP.S.data.filters.category"),'clothing')
+            # A publication forecast must never replace the trend's time series.
+            page.locator('#fc-chart svg').wait_for()
+            page.evaluate("window.savedTrendForecast=CP.S.trendForecast; CP.S.fc={items:[],marker:'post-forecast'}; CP.render()")
+            page.locator('#fc-chart svg').wait_for()
+            self.assertEqual(page.evaluate("CP.S.fc.marker"), 'post-forecast')
+            self.assertTrue(page.evaluate("CP.S.trendForecast===window.savedTrendForecast"))
+            for _ in range(2):
+                page.locator('#nav [data-view="post"]').click()
+                page.locator('#ptitle').wait_for()
+                page.locator('#nav [data-view="trends"]').click()
+                page.locator('#fc-chart svg').wait_for()
+                self.assertTrue(page.evaluate("CP.S.trendForecast===window.savedTrendForecast"))
+            self.assertNotIn("reading 'length'", page.locator('body').inner_text())
+
+
+            self.assertFalse(errors,errors)
+        finally:
+            self.api('modules_set',key='trends',on=old)
+            close_page(page, self.id())
 
     def test_update_channel_selector_changes_channel_without_installing(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         calls = []
         try:
             page.goto(self.base, wait_until='domcontentloaded')
@@ -405,11 +1089,172 @@ main()
             self.assertEqual(page.locator('#update-channel').input_value(), 'experimental')
             self.assertIn('резервную копию', page.locator('#update-channel').locator('..').inner_text())
         finally:
-            page.close()
+            close_page(page, self.id())
+
+    def test_add_and_disable_reddit_community_from_settings(self):
+        page = self.new_page()
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='reddit';await Pub.load('settings');CP.render()}")
+            page.locator('#reddit-community-add').fill('https://www.reddit.com/r/ArtCommunity/submit/')
+            page.locator('[data-social-action="add-community"]').click()
+            page.wait_for_function("CP.S.pub.reddit.communities.ArtCommunity === true")
+            page.locator('#bt-reddit-ArtCommunity').uncheck()
+            page.wait_for_function("CP.S.pub.reddit.communities.ArtCommunity === false")
+            self.assertFalse(self.api('pub_settings')['reddit']['communities']['ArtCommunity'])
+        finally:
+            close_page(page, self.id())
+
+    def test_translation_columns_stay_aligned_with_many_platforms(self):
+        page = self.new_page(viewport={'width':1100, 'height':900})
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("""() => {
+                CP.S.view = 'post'; CP.S.postMode = 'edit';
+                CP.S.pub.modules.translation = true;
+                for (const key of Object.keys(CP.S.pub.text_lang)) CP.S.pub.text_lang[key] = 'en';
+                CP.render();
+            }""")
+            page.wait_for_function("""() => {
+                const ids = ['ptitle', 'ptitle_en', 'ptext', 'ptext_en'];
+                const fields = ids.map(id => document.getElementById(id));
+                if (fields.some(el => !el || !el.getClientRects().length)) return false;
+                const y = fields.map(el => el.getBoundingClientRect().top);
+                return Math.abs(y[0] - y[1]) <= 1 && Math.abs(y[2] - y[3]) <= 1;
+            }""")
+            self.assertGreater(page.locator('[data-pa="tlang"]').count(), 4)
+            page.set_viewport_size({'width':390, 'height':844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
+        finally:
+            close_page(page, self.id())
+
+    def test_view_transition_runs_only_on_navigation_and_respects_reduced_motion(self):
+        page = self.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("""() => {
+                CP.render();
+                window.viewAnimations = 0;
+                const main = document.querySelector('#main');
+                const original = main.animate.bind(main);
+                main.animate = (...args) => { window.viewAnimations++; return original(...args); };
+                CP.S.view = 'settings'; CP.S.platSec = 'app'; CP.render();
+            }""")
+            self.assertEqual(page.evaluate('window.viewAnimations'), 1)
+            page.evaluate('CP.render()')
+            self.assertEqual(page.evaluate('window.viewAnimations'), 1)
+            page.emulate_media(reduced_motion='reduce')
+            page.evaluate("CP.S.view='post'; CP.render()")
+            self.assertEqual(page.evaluate('window.viewAnimations'), 1)
+            self.assertTrue(page.locator('#ptitle').is_visible())
+        finally:
+            close_page(page, self.id())
+
+    def test_interface_motion_respects_reduced_motion_preference(self):
+        page = self.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base, wait_until='domcontentloaded')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("CP.toast('Motion test', 'info')")
+            toast = page.locator('.toast').last
+            self.assertEqual(toast.evaluate("el => getComputedStyle(el).animationName"), 'toast-enter')
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(toast.evaluate("el => getComputedStyle(el).animationName"), 'none')
+            self.assertEqual(page.locator('#nav button').first.evaluate("el => getComputedStyle(el).transitionDuration"), '0s')
+            page.evaluate("async()=>{CP.S.view='settings';CP.S.platSec='app';await Pub.load('settings');CP.render()}")
+            toggle = page.locator('.tgl input[type=checkbox]').first
+            self.assertEqual(toggle.evaluate("el => getComputedStyle(el, '::after').transitionDuration"), '0s')
+        finally:
+            close_page(page, self.id())
+
+    def test_publication_animation_tracks_real_progress_and_reduced_motion(self):
+        page = self.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.wait_for_function('window.CP?.S.info && CP.S.pub')
+            page.evaluate("""() => {
+                CP.S.view = 'post'; CP.S.postMode = 'progress';
+                CP.S.pubState = {title:'Test',rating:'sfw',dests:[
+                    {key:'discord:0',name:'Discord',state:'running',progress:.42,details:[]},
+                    {key:'vk',name:'VK',state:'done',details:[]},
+                    {key:'reddit:foo',platform:'reddit',name:'Reddit · foo',state:'error',outcome:'unknown',details:[]},
+                    {key:'reddit:bar',platform:'reddit',name:'Reddit · bar',state:'error',outcome:'not_sent',details:[]},
+                    {key:'telegram:1',platform:'telegram',name:'Telegram · one',state:'queued',details:[]},
+                    {key:'telegram:2',platform:'telegram',name:'Telegram · two',state:'done',note:'скорее всего, вышла, но ссылку найти не удалось',details:[]}
+                ]};
+                CP.S.pubJob = {state:'running',progress:.38}; CP.render();
+            }""")
+            overall = page.locator('[role=progressbar][aria-label="Публикация"]')
+            row = page.locator('[role=progressbar][aria-label="Discord"]')
+            self.assertEqual(page.locator('.send-dest').count(), 6)
+            self.assertEqual(page.locator('.send-dest.done').count(), 1)
+            self.assertEqual(page.locator('.send-dest.uncertain').count(), 2)
+            self.assertEqual(page.locator('.send-dest.error').count(), 1)
+            self.assertIn('VK: опубликовано', page.locator('.send-dest.done').get_attribute('aria-label'))
+            self.assertEqual(overall.get_attribute('aria-valuenow'), '38')
+            self.assertEqual(row.get_attribute('aria-valuenow'), '42')
+            self.assertEqual(overall.locator('div').evaluate("el=>el.style.width"), '38%')
+            self.assertEqual(row.locator('div').evaluate("el=>getComputedStyle(el,'::after').animationName"), 'progress-glint')
+            self.assertEqual(page.locator('.prow.done .pic').first.evaluate("el=>getComputedStyle(el).animationName"), 'none')
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(row.locator('div').evaluate("el=>getComputedStyle(el,'::after').animationName"), 'none')
+            self.assertEqual(page.locator('.prow.running .pic').evaluate("el=>getComputedStyle(el).animationName"), 'none')
+            page.evaluate("CP.S.pubJob={state:'done'};CP.render()")
+            self.assertEqual(page.locator('.send-dest.done').count(), 1)
+            self.assertEqual(page.locator('.send-dest.uncertain').count(), 2)
+        finally:
+            close_page(page, self.id())
+
+    def test_sending_celebrates_only_new_confirmed_success(self):
+        page = self.new_page(reduced_motion='no-preference')
+        try:
+            page.goto(self.base, wait_until='networkidle')
+            page.evaluate("""() => {
+                CP.S.view='post'; CP.S.postMode='progress';
+                CP.S.pubState={pub_id:987,title:'Test',rating:'sfw',dests:[
+                    {key:'discord:0',platform:'discord',name:'Discord',state:'running',details:[]},
+                    {key:'vk',platform:'vk',name:'VK',state:'done',details:[]},
+                    {key:'reddit:r',platform:'reddit',name:'Reddit',state:'running',details:[]}
+                ]}; CP.S.pubJob={state:'running',progress:.42}; CP.render();
+            }""")
+            self.assertEqual(page.locator('.send-flight').get_attribute('style'), 'left:42%')
+            self.assertEqual(page.locator('.send-dest.just-sent').count(), 0)
+            page.evaluate("""() => {
+                CP.S.pubState.dests[0].state='done';
+                CP.S.pubState.dests[2].state='error';CP.S.pubState.dests[2].outcome='unknown';
+                CP.render();
+            }""")
+            self.assertEqual(page.locator('.send-dest.just-sent').count(), 1)
+            self.assertIn('Discord', page.locator('.send-dest.just-sent').get_attribute('aria-label'))
+            self.assertEqual(page.locator('.send-dest.uncertain.just-sent').count(), 0)
+            self.assertEqual(page.locator('.send-dest.just-sent').evaluate("el=>getComputedStyle(el,'::before').animationName"), 'sent-ring')
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(page.locator('.send-dest.just-sent').evaluate("el=>getComputedStyle(el,'::before').animationName"), 'none')
+            self.assertEqual(page.locator('.send-flight svg').evaluate("el=>getComputedStyle(el).animationName"), 'none')
+            page.evaluate('CP.render()')
+            self.assertEqual(page.locator('.send-dest.just-sent').count(), 0)
+        finally:
+            close_page(page, self.id())
+
+    def test_history_hover_motion_respects_reduced_motion(self):
+        page = self.new_page(reduced_motion='no-preference')
+        try:
+            page.set_content('<div class="hitem" style="width:400px;height:60px"><span>Post</span><span class="chev">›</span></div>')
+            page.add_style_tag(path=str(ROOT/'app/web/style.css'))
+            page.locator('.hitem').hover()
+            page.wait_for_function("getComputedStyle(document.querySelector('.hitem .chev')).transform !== 'none'")
+            page.emulate_media(reduced_motion='reduce')
+            self.assertEqual(page.locator('.hitem .chev').evaluate("el=>getComputedStyle(el).transform"), 'none')
+            self.assertEqual(page.locator('.hitem .chev').evaluate("el=>getComputedStyle(el).transitionDuration"), '0s')
+        finally:
+            close_page(page, self.id())
 
     def test_first_post_guide_can_be_dismissed(self):
         self.api('ui_set', changes={'lang': 'ru'})
-        page = self.browser.new_page()
+        page = self.new_page()
         try:
             page.goto(self.base, wait_until='networkidle')
             page.evaluate("()=>{CP.store.set('onboardingDone',false);CP.S.draft={files:[],title:'',text:'',rating:null,exclude:[]};CP.S.plan={...CP.S.plan,configured:[]};CP.render()}")
@@ -420,12 +1265,12 @@ main()
             self.assertFalse(page.locator('.onboarding').count())
             self.assertTrue(page.evaluate("CP.store.get('onboardingDone',false)"))
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_settings_autosave_preserves_focus_hidden_fields_and_recovers_errors(self):
         self.api('ui_set', changes={'lang':'ru','settingsPending':None})
         self.api('pub_save',section='signatures',changes={'platforms':{'telegram':{'en':{'sfw':'Keep hidden English'}}}})
-        page=self.browser.new_page(viewport={'width':1360,'height':900})
+        page=self.new_page(viewport={'width':1360,'height':900})
         errors=[]
         page.on('pageerror',lambda error:errors.append(str(error)))
         page.on('dialog',lambda dialog:dialog.accept())
@@ -488,16 +1333,13 @@ main()
             self.assertFalse(self.api('pub_settings')['translate']['has_key'])
             self.assertEqual(page.locator('#trkey').input_value(),'not-saved-automatically')
             self.assertFalse(errors,errors)
-        except BaseException:
-            page.screenshot(path=str(ROOT/'test-artifacts'/'settings-autosave-failure.png'),full_page=True)
-            raise
         finally:
-            page.close()
+            close_page(page, self.id())
             self.api('modules_set',key='translation',on=False)
 
     def test_setup_guide_resumes_uses_real_settings_and_does_not_publish(self):
         self.api('ui_set', changes={'lang': 'ru', 'setupGuide': None})
-        page = self.browser.new_page(viewport={'width':1360,'height':1000})
+        page = self.new_page(viewport={'width':1360,'height':1000})
         errors, calls = [], []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.on('request', lambda request: calls.append(request.url.split('/api/')[-1]) if '/api/' in request.url else None)
@@ -553,14 +1395,11 @@ main()
             self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'),390)
             self.assertFalse(set(calls)&{'post_publish','post_schedule','pipeline_add','pipeline_set'})
             self.assertFalse(errors,errors)
-        except BaseException:
-            page.screenshot(path=str(ROOT/'test-artifacts'/'setup-guide-failure.png'),full_page=True)
-            raise
         finally:
-            page.close()
+            close_page(page, self.id())
 
     def test_translation_preserves_user_content_on_initial_render_and_mutation(self):
-        page = self.browser.new_page()
+        page = self.new_page()
         try:
             page.set_content('<button id="ui">Новый пост</button><b translate="no" id="title">Новый пост</b><textarea>Новый пост</textarea>')
             page.evaluate("window.UI_STATE={lang:'en'}")
@@ -576,8 +1415,11 @@ main()
             page.evaluate("I18N.confirm('Новый пост','\\nНовый пост')")
             self.assertEqual(messages[-1], 'New post\nНовый пост')
         finally:
-            page.close()
+            close_page(page, self.id())
 
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    sys.path.insert(0, str(ROOT))
+    from tools.run_tests import report_result
+    program = unittest.main(verbosity=2, exit=False)
+    sys.exit(report_result(program.result))

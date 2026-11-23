@@ -45,7 +45,7 @@ _cache = {"mtime": None, "cats": {}}
 
 def categories() -> dict:
     """{тег: категория} из выгрузок e621 и e6ai (раздел «Тренды»)."""
-    files = [data_dir() / "trends" / s / "meta.json" for s in ("e621", "e6ai")]
+    files = [data_dir() / "trends" / s / "meta.json" for s in ("e621", "e6ai", "floofgens")]
     mt = tuple(f.stat().st_mtime if f.exists() else 0 for f in files)
     if _cache["mtime"] != mt:
         cats = {}
@@ -106,7 +106,10 @@ def suggest(cfg: dict, draft: dict) -> list[str]:
     if r:
         add(r)
     chosen = []
-    for tags in (draft.get("e6ai_tags") or {}).values():
+    selected = list((draft.get("e6ai_tags") or {}).values())
+    for slot in (draft.get("booru_posts") or {}).values():
+        selected.extend((slot.get("tags") or {}).values())
+    for tags in selected:
         chosen += list(tags or [])
     for cat in ("character", "franchise"):   # персонажей теггер не знает — берём то, что вы отметили для e6ai
         for t in chosen:

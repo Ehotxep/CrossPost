@@ -19,7 +19,7 @@ RATINGS = ("sfw", "erotic", "explicit")          # рейтинг поста
 DEST_RATINGS = ("sfw", "nsfw", "all")            # рейтинг места: только SFW / только 18+ / любой
 ORIGINALS = ("reply", "comments", "none")
 
-PLATFORM_MODULES = ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "reddit", "joyreactor")
+PLATFORM_MODULES = ("telegram", "discord", "vk", "bluesky", "deviantart", "e6ai", "e621", "floofgens", "reddit", "joyreactor", "x")
 
 
 def platform_order(cfg: dict | None = None) -> list:
@@ -38,7 +38,7 @@ DEFAULTS = {
     "platform_order": list(PLATFORM_MODULES),   # в каком порядке показывать площадки: настройки, подписи, окно поста
     # отключаемые модули: площадки (не участвуют в публикации, не показываются) и экраны
     "modules": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": True, "e6ai": True,
-                "reddit": True, "joyreactor": True,
+                "reddit": True, "joyreactor": True, "x": False,
                 "history": True, "stats": True, "trends": True,
                 # теггер; сбор цифр (замеры, цифры с сайтов, сверка правок модераторов); новости; прогноз и лучшее время
                 "tagger": True, "collect": True, "news": True, "forecast": True, "crosspost": True,
@@ -55,18 +55,18 @@ DEFAULTS = {
         "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": True},
     },
     # на какие площадки уходит английский вариант текста поста (остальные — основной текст)
-    "text_lang": {"telegram": "main", "discord": "main", "vk": "main", "bluesky": "main", "deviantart": "main", "e6ai": "main", "reddit": "main", "joyreactor": "main"},
+    "text_lang": {"telegram": "main", "discord": "main", "vk": "main", "bluesky": "main", "deviantart": "main", "e6ai": "main", "reddit": "main", "joyreactor": "main", "x": "main"},
     "platform_texts_enabled": {k: False for k in PLATFORM_MODULES},
     # какие версии файлов (комикс: ru / en / clean — без надписей) уходят на площадку; пусто — любые.
     # Работает только в постах, где включён переключатель «Умное таргетирование»
-    "versions": {"telegram": [], "discord": [], "vk": [], "bluesky": [], "deviantart": [], "e6ai": [], "reddit": [], "joyreactor": []},
+    "versions": {"telegram": [], "discord": [], "vk": [], "bluesky": [], "deviantart": [], "e6ai": [], "reddit": [], "joyreactor": [], "x": []},
     # автоперевод описания (DeepSeek, OpenAI и любой сервис с интерфейсом OpenAI): текст уходит на их сервер, поэтому только по кнопке
     "translate": {"api_key": "", "model": "deepseek-flash", "base": "https://api.deepseek.com", "style": ""},
     "hashtags": {
         "enabled": True, "position": "start",         # start — первой строкой, как в ваших постах; end — в конце
         "rating_tags": {"sfw": "sfw", "erotic": "nsfw", "explicit": "nsfw"},
         "constant": [], "max_species": 3, "min_prob": 0.5,
-        "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": False, "reddit": False, "joyreactor": False},
+        "use": {"telegram": True, "discord": True, "vk": True, "bluesky": True, "deviantart": False, "reddit": False, "joyreactor": False, "x": False},
     },
     "telegram": {
         "enabled": False, "bot_token": "", "bot_name": "",
@@ -89,6 +89,8 @@ DEFAULTS = {
         "preselect": 0.5,         # теги теггера с уверенностью выше — отмечены сразу
         "show_min": 0.2,          # ниже — не показываем
         "with_sources": True, "with_description": True,
+        "source_link_mode": "post",  # post URL, or its channel/profile/site
+        "source_platforms": {},   # missing entries keep legacy behaviour: all public post links
         "never_suggest": [],      # эти теги теггера не предлагать совсем
         # куда загружать: e6ai или e621 (движок и форма одни; аккаунт, ключ и постоянные теги — у каждого сайта свои)
         "site": "e6ai",
@@ -103,6 +105,8 @@ DEFAULTS = {
         "enabled": False, "client_id": "", "client_secret": "", "redirect_uri": "http://localhost:8765/callback",
         "rating": "all",         # откровенное сюда не уходит никогда — правила DeviantArt
         "is_ai_generated": True, "noai": True, "allow_comments": True, "allow_free_download": False,
+        "browser_ok": False, "show_window": True, "paid_dry_shot": "", "paid_dry_note": "", "available_tiers": [], "tiers_checked_at": "",
+        "premium_download": False, "premium_price_usd": "", "subscriber_only": False, "subscriber_tiers": [],
         "gallery_id": "", "gallery_name": "", "originals": True,   # PNG-оригинал (до 30 МБ), иначе лёгкая версия
         "tags_from": "hashtags",  # hashtags — теги из хэштегов поста; none — без тегов
     },
@@ -113,6 +117,7 @@ DEFAULTS = {
         "explore": 0.25,         # охота за новыми окнами: 0 — только лучшие известные, 0,5 — часто пробовать неизученные
         "horizon_days": 30,      # на сколько дней вперёд расставлять очередь
     },
+    "x": {"enabled": False, "browser_ok": False, "show_window": True, "include_title": True},
     "reddit": {
         "enabled": False, "browser_ok": False, "show_window": True,
         "communities": {"FurAI": True, "aiyiff": True},
@@ -134,6 +139,16 @@ DEFAULTS = {
         "stats_auto": True, "stats_at": "", "stats_err": "", "stats_msg": "",   # сбор цифр постов раз в 3 часа
     },
 }
+
+
+# One adapter, three independent publication destinations.
+BOORU_PLATFORMS = ("e6ai", "e621", "floofgens")
+for _site in ("e621", "floofgens"):
+    DEFAULTS[_site] = {k: copy.deepcopy(v) for k, v in DEFAULTS["e6ai"].items()
+                       if k not in ("blep_api_key", "accounts", "site")}
+    DEFAULTS["modules"][_site] = False
+    DEFAULTS["text_lang"][_site] = "main"
+    DEFAULTS["versions"][_site] = []
 
 
 def _path():
@@ -166,6 +181,26 @@ def _migrate(data: dict) -> dict:
     le = data.pop("light_export", None)   # прежняя «папка для копий JPEG» → общая папка готовых файлов
     if isinstance(le, dict) and le.get("dir") and "outputs" not in data:
         data["outputs"] = {"dir": le["dir"], "by_date": bool(le.get("by_date"))}
+    if not data.get("booru_split"):
+        old = data.setdefault("e6ai", {})
+        selected = old.get("site") if old.get("site") in BOORU_PLATFORMS else "e6ai"
+        active = bool(old.get("enabled"))
+        modules = data.setdefault("modules", {})
+        module_on = modules.get("e6ai", True)
+        data["legacy_booru_site"] = selected
+        for site in ("e621", "floofgens"):
+            account = (old.get("accounts") or {}).get(site) or {}
+            shared = {k: copy.deepcopy(old[k]) for k in ("preselect", "show_min", "with_sources", "with_description", "source_platforms", "source_link_mode", "never_suggest") if k in old}
+            data.setdefault(site, dict(shared, **copy.deepcopy(account), enabled=active and selected == site))
+            modules.setdefault(site, module_on and (site == selected or bool(account.get("username"))))
+            for field in ("text_lang", "versions", "platform_texts_enabled"):
+                values = data.setdefault(field, {})
+                if site == selected and "e6ai" in values:
+                    values.setdefault(site, copy.deepcopy(values["e6ai"]))
+        if selected != "e6ai":
+            old["enabled"] = False
+            modules["e6ai"] = module_on and bool(old.get("username") and old.get("blep_api_key"))
+        data["booru_split"] = True
     return data
 
 
@@ -181,16 +216,10 @@ def load(raw: bool = False) -> dict:
         cfg['modules'].update({k: False for k in ('stats', 'trends', 'tagger', 'collect', 'news', 'forecast')})
     if not raw:
         e6 = cfg["e6ai"]
-        site = booru_site(cfg)
-        if site == "e6ai":
-            e6["api_key"] = e6.get("blep_api_key", "")
-            e6["base"] = BOORU[site]
-        if site != "e6ai":   # выбранный сайт — в те же поля, весь остальной код работает как с e6ai
-            acc = (e6.get("accounts") or {}).get(site) or {}
-            for k in PER_SITE:
-                e6[k] = acc.get(k, [] if k == "constant_tags" else "")
-            e6["base"] = BOORU[site]
-        e6["site_name"] = site
+        e6["api_key"] = e6.get("blep_api_key", "")
+        for site in BOORU_PLATFORMS:
+            cfg[site]["base"] = BOORU[site]
+            cfg[site]["site_name"] = site
         for k in PLATFORM_MODULES:
             if not cfg["modules"].get(k, True) and isinstance(cfg.get(k), dict):
                 cfg[k]["enabled"] = False
@@ -199,8 +228,29 @@ def load(raw: bool = False) -> dict:
     return cfg
 
 
-BOORU = {"e6ai": "https://blep.art", "e621": "https://e621.net"}
+# All entries share the e621ng adapter with separate accounts and tag databases.
+BOORU_SITES = {
+    "e6ai": {"name": "blep.art", "base": "https://blep.art", "available": True},
+    "e621": {"name": "e621", "base": "https://e621.net", "available": True},
+    "floofgens": {"name": "floofgens.net", "base": "https://floofgens.net", "available": True},
+}
+BOORU = {key: site["base"] for key, site in BOORU_SITES.items() if site["available"]}
 PER_SITE = ("username", "api_key", "constant_tags")   # своё у каждого сайта
+
+
+def booru_site_for_url(url: str) -> str | None:
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url or "")
+        if parsed.scheme != "https" or parsed.port not in (None, 443) or parsed.username or parsed.password:
+            return None
+        for key, base in BOORU.items():
+            host = urlparse(base).hostname
+            if parsed.hostname in (host, "www." + host):
+                return key
+    except ValueError:
+        pass
+    return None
 
 
 def booru_site(cfg: dict | None = None) -> str:
@@ -208,18 +258,13 @@ def booru_site(cfg: dict | None = None) -> str:
     return e6.get("site") if e6.get("site") in BOORU else "e6ai"
 
 
-def site_changes(changes: dict) -> dict:
-    """Правки раздела e6ai: аккаунт и постоянные теги — в ячейку выбранного сайта (e6ai — как раньше, сверху)."""
-    site = booru_site()
-    if site == "e6ai":
-        changes = dict(changes)
-        if "api_key" in changes:
-            changes["blep_api_key"] = changes.pop("api_key")
-        return changes
-    out = {k: v for k, v in changes.items() if k not in PER_SITE}
-    mine = {k: v for k, v in changes.items() if k in PER_SITE}
-    if mine:
-        out["accounts"] = {site: mine}
+def site_changes(changes: dict, site: str = "e6ai") -> dict:
+    """Legacy blep API-key field; other destinations save directly to their own sections."""
+    if site not in BOORU:
+        raise ValueError("Неизвестный сайт")
+    out = dict(changes)
+    if site == "e6ai" and "api_key" in out:
+        out["blep_api_key"] = out.pop("api_key")
     return out
 
 
@@ -242,6 +287,17 @@ def save(cfg: dict) -> dict:
 @_locked
 def update(section: str, changes: dict) -> dict:
     cfg = load(raw=True)
+    if section == 'deviantart':
+        from app.publish.da_access import validate_changes
+        changes = validate_changes(changes)
+        if any(k in changes and changes[k] != cfg[section].get(k) for k in ('premium_download','premium_price_usd','subscriber_only','subscriber_tiers','is_ai_generated','noai','gallery_id')):
+            changes.update(paid_dry_note='',paid_dry_shot='')
+    if section in BOORU_PLATFORMS and 'source_link_mode' in changes and changes['source_link_mode'] not in ('post','resource'):
+        raise ValueError('Неизвестный вид ссылки-источника')
+    if section in BOORU_PLATFORMS and 'source_platforms' in changes:
+        selected = changes['source_platforms']
+        if not isinstance(selected, dict) or any(k not in PLATFORM_MODULES or type(v) is not bool for k, v in selected.items()):
+            raise ValueError("Выбор площадок-источников должен содержать переключатели известных площадок")
     if section not in cfg:
         raise ValueError(f"Неизвестный раздел настроек: {section}")
     if isinstance(cfg[section], dict):
@@ -258,6 +314,7 @@ def update(section: str, changes: dict) -> dict:
 def public(cfg: dict) -> dict:
     """Настройки для интерфейса: секреты не отдаём целиком."""
     out = copy.deepcopy(cfg)
+    out["booru_sites"] = copy.deepcopy(BOORU_SITES)
     tok = out["telegram"].get("bot_token") or ""
     out["telegram"]["bot_token"] = ""
     out["telegram"]["has_token"] = bool(tok)
@@ -268,6 +325,9 @@ def public(cfg: dict) -> dict:
     for acc in (out["e6ai"].get("accounts") or {}).values():   # ключи второго сайта тоже не отдаём
         acc["has_key"] = bool(acc.get("api_key"))
         acc["api_key"] = ""
+    for site in ("e621", "floofgens"):
+        out[site]["has_key"] = bool(out[site].get("api_key"))
+        out[site]["api_key"] = ""
     out["vk"]["access_token"] = ""
     from app.publish.browser_targets import FLAIRS
     out["reddit"]["flairs"] = copy.deepcopy(FLAIRS)
