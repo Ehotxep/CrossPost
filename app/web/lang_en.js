@@ -2921,3 +2921,20 @@ Object.assign(window.EN_DICT, {
   "Отправка при первой возможности": "Will send as soon as possible",
   "Опубликовать этот пост сейчас? Если уже идёт отправка, пост начнёт публиковаться после неё.": "Publish this post now? If another post is sending, this one will follow it."
 });
+
+Object.assign(window.EN_DICT, {
+  "Копировать теги": "Copy tags",
+  "между площадками": "between platforms",
+  "Открыть просмотр": "Open preview",
+  "Заменить файл…": "Replace file…",
+  "Переместить в начало": "Move to start",
+  "Переместить в конец": "Move to end",
+  "Для всех площадок": "For all platforms",
+  "Русская версия": "Russian version",
+  "Без текста": "No text",
+  "Убрать из поста": "Remove from post",
+  "Отменить действие": "Undo",
+  "Порядок изображений изменён": "Image order changed",
+  "Изображение перемещено в начало": "Image moved to the start",
+  "Изображение перемещено в конец": "Image moved to the end"
+});

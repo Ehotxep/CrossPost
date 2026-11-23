@@ -78,6 +78,46 @@ class SocialBrowser(unittest.TestCase):
         finally:
             context.close()
 
+    def test_file_tiles_drag_keyboard_context_and_undo(self):
+        page = watch_page(self.browser.new_page())
+        try:
+            uploads=[]
+            def upload(route):
+                uploads.append(route.request.url)
+                route.fulfill(content_type='application/json',body='{"ok":true,"result":{"id":"dddddddddddddddd","name":"same.png","kind":"image","width":10,"height":10,"size":4,"format":"PNG"}}')
+            page.route('**/upload?*',upload)
+            page.set_content('''<base href="http://fixture.local/"><style>.gallery{display:flex}.gt{width:100px;height:100px}</style>
+              <div class="gallery"><figure class="gt" draggable="true" data-gi="0">A</figure>
+              <figure class="gt" draggable="true" data-gi="1">B</figure>
+              <figure class="gt" draggable="true" data-gi="2">C</figure></div>''')
+            page.evaluate("""()=>{window.CP={S:{view:'post',postMode:'edit',draft:{files:[{id:'a',name:'A'},{id:'b',name:'B'},{id:'c',name:'C'}],exclude:[]},
+              pub:{modules:{forecast:false}}},store:{set(){}},api:async()=>({}),render(){},esc:String,num:String,
+              toast:(text,kind,action)=>{window.lastToast={text,kind,action}}};window.API_TOKEN='fixture';}""")
+            page.add_script_tag(path=str(ROOT / 'app/web/post-state.js'))
+            page.add_script_tag(path=str(ROOT / 'app/web/publish.js'))
+            page.locator('[data-gi="0"]').drag_to(page.locator('[data-gi="1"]'),
+                target_position={'x':95,'y':50})
+            page.wait_for_function("CP.S.draft.files.map(f=>f.id).join('') === 'bac'")
+            self.assertEqual(page.evaluate("CP.S.draft.files.map(f=>f.id)"), ['b','a','c'])
+            self.assertEqual(page.evaluate("lastToast.action.label"), 'Отменить действие')
+            page.evaluate("lastToast.action.run()")
+            page.wait_for_function("CP.S.draft.files.map(f=>f.id).join('') === 'abc'")
+            page.locator('[data-gi="0"]').dispatch_event('keydown',{'key':'ArrowRight','altKey':True})
+            page.wait_for_function("CP.S.draft.files.map(f=>f.id).join('') === 'bac'")
+            page.evaluate("CP.S.draft.files=[{id:'a',name:'A'},{id:'b',name:'B'},{id:'c',name:'C'}]")
+            page.locator('[data-gi="1"]').click(button='right')
+            page.locator('.filectx [data-pa="file-last"]').wait_for()
+            self.assertTrue(page.locator('.filectx').is_visible())
+            page.evaluate("""()=>{window.dropSame=()=>{const dt=new DataTransfer();dt.items.add(new File(['same'],'same.png',{type:'image/png',lastModified:1}));
+              document.querySelector('.gallery').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dt}));};dropSame()}""")
+            page.wait_for_function("CP.S.draft.files.length === 4")
+            page.evaluate('dropSame()')
+            page.wait_for_function("lastToast && /уже добавлен/.test(lastToast.text)")
+            self.assertEqual(page.evaluate('CP.S.draft.files.length'),4)
+            self.assertEqual(len(uploads),1)
+        finally:
+            page.close()
+
     def test_x_real_submit_confirms_new_success_toast_and_ignores_timeline(self):
         source=X_FORM.replace('window.submits++',"window.submits++;document.getElementById('notice').innerHTML='Your post was sent <a href=https://x.com/fixture/status/123456>View</a>'")+ '<article><a href="https://x.com/other/status/999">Old post</a></article><div data-testid="toast" id="notice"></div>'
         with self.fixture('x',source) as page:

@@ -75,3 +75,11 @@ test('copy rejects invalid directions and modes without changing the draft',()=>
  }
  assert.equal(JSON.stringify(d),'{"files":[],"booru_posts":{}}');
 });
+test('file reordering uses insertion boundaries in both directions',()=>{
+ const {ctx}=context(),reorder=ctx.window.PostState.reorderFiles,files=['a','b','c','d'];
+ assert.deepEqual(Array.from(reorder(files,0,2)),['b','a','c','d']); // a after b
+ assert.deepEqual(Array.from(reorder(files,0,4)),['b','c','d','a']); // a to the end
+ assert.deepEqual(Array.from(reorder(files,3,1)),['a','d','b','c']); // d before b
+ assert.deepEqual(Array.from(reorder(files,2,3)),files);            // c after itself
+ assert.deepEqual(Array.from(files),['a','b','c','d']);             // source is untouched
+});

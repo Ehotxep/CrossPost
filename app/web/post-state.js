@@ -51,6 +51,22 @@
     return {posts, copied, skipped};
   }
 
+  // insertAt is a boundary in the original list: 0 is before the first file,
+  // files.length is after the last one. Keeping this independent from the DOM
+  // makes rightward and adjacent moves unambiguous and testable.
+  function reorderFiles(files, from, insertAt) {
+    const source = Array.isArray(files) ? files : [];
+    if (!Number.isInteger(from) || from < 0 || from >= source.length) return source.slice();
+    let boundary = Number.isFinite(insertAt) ? Math.trunc(insertAt) : source.length;
+    boundary = Math.max(0, Math.min(source.length, boundary));
+    const result = source.slice();
+    const [moved] = result.splice(from, 1);
+    if (boundary > from) boundary--;
+    boundary = Math.max(0, Math.min(result.length, boundary));
+    result.splice(boundary, 0, moved);
+    return result;
+  }
+
   class LatestRequests {
     constructor() {
       this.versions = new Map();
@@ -67,5 +83,5 @@
     }
   }
 
-  window.PostState = {capture, copyBooruTags, LatestRequests};
+  window.PostState = {capture, copyBooruTags, reorderFiles, LatestRequests};
 })();

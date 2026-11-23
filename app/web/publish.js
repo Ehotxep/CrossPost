@@ -273,8 +273,10 @@
     const tile = (f, i) => {
       const ar = f.width && f.height ? `aspect-ratio:${f.width}/${f.height};` : "width:160px;";
       const ready = f.kind === "image" && prep[f.id] === "ready";
-      return `<figure class="gt" data-user-attrs="data-tip" draggable="${multiOn() && s.brush ? "false" : "true"}" data-gi="${i}" style="${ar}" data-tip="${esc(f.name)}${f.width ? "\n" + f.width + "×" + f.height : ""} · ${mb(f.size)}${d.files.length > 1 ? "\nПеретащите, чтобы поменять порядок" : ""}">
+      return `<figure class="gt" tabindex="0" aria-label="${i + 1}. ${esc(f.name)}" data-file-id="${esc(f.id)}" data-user-attrs="data-tip" draggable="${multiOn() && s.brush ? "false" : "true"}" data-gi="${i}" style="${ar}" data-tip="${esc(f.name)}${f.width ? "\n" + f.width + "×" + f.height : ""} · ${mb(f.size)}${d.files.length > 1 ? "\nПеретащите, чтобы поменять порядок" : ""}">
         ${f.kind === "video" ? `<img src="/uthumb/${f.id}?t=${tok()}" alt="${esc(f.name)}" draggable="false" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'vid',textContent:'${esc(f.format || "MP4")}'}))">` : `<img src="/uthumb/${f.id}?t=${tok()}" alt="${esc(f.name)}" draggable="false">`}
+        <span class="gnum" aria-hidden="true">${i + 1}</span>
+        ${d.files.length > 1 ? `<span class="draghandle" aria-hidden="true" data-tip="Перетащите, чтобы поменять порядок">⠿</span>` : ""}
         ${f.kind === "video" ? `<span class="play" aria-hidden="true">▶</span>` : ""}
         ${multiOn() ? `<button class="vmark v-${(d.marks || {})[f.id] || "all"}" data-pa="vmark" data-id="${f.id}" data-tip="Версия файла: нажмите, чтобы сменить">${vlabel((d.marks || {})[f.id])}</button>` : ""}
         ${f.kind === "video" || f.kind === "gif" ? `<button class="gifbtn" data-pa="ved-open" data-i="${i}" data-tip="Обрезать, повернуть, уменьшить, сделать GIF из видео или видео из GIF">Изменить</button>` : ""}
@@ -673,14 +675,15 @@
     const sources = BOORUS.filter(site => site !== target).map(site => ({site, count:d.files.reduce((n,f) => n+(d.booru_posts?.[site]?.tags?.[f.id] || []).length,0)}));
     const available = sources.filter(item => item.count);
     const source = available.some(item => item.site === prefs.source) ? prefs.source : available[0]?.site;
-    return `<div class="booru-copy-panel" data-booru-copy-panel role="group" aria-label="Копирование тегов между площадками"><h4>Копировать теги между площадками</h4>
+    const direction = source ? `${names[source]} → ${names[target]}` : 'между площадками';
+    return `<details class="more booru-copy-panel" data-booru-copy-panel data-detail-key="booru-copy" ${s.editorDetails?.['booru-copy']?'open':''}><summary><span>Копировать теги</span><span class="muted small">${direction}</span></summary><div class="booru-copy-body" role="group" aria-label="Копирование тегов между площадками">
       <div class="booru-copy-direction"><div class="field"><label for="booru-copy-source">Откуда</label><select id="booru-copy-source" data-booru-copy-field="source">${sources.map(item => `<option value="${item.site}" ${item.site === source ? 'selected' : ''} ${item.count ? '' : 'disabled'}>${names[item.site]} · тегов: ${item.count}</option>`).join('')}</select></div>
       <span class="booru-copy-arrow" aria-hidden="true">→</span><div class="field"><label for="booru-copy-target">Куда</label><select id="booru-copy-target" data-booru-copy-field="target">${BOORUS.map(site=>`<option value="${site}" ${site===target?'selected':''}>${names[site]}</option>`).join('')}</select></div></div>
       ${!available.length ? `<p class="muted small">На других площадках ещё нет выбранных тегов для этих файлов.</p>` : ''}
       <div class="row booru-copy-controls"><div class="field"><label for="booru-copy-file">Для файлов</label><select id="booru-copy-file" data-booru-copy-field="file"><option value="all">Весь пост</option>${d.files.map((f,i) => `<option value="${esc(f.id)}" ${prefs.file === f.id ? 'selected' : ''}>${i+1}. ${esc(f.name || f.id)}</option>`).join('')}</select></div>
       <label class="booru-copy-replace"><input type="checkbox" id="booru-copy-mode" data-booru-copy-field="replace" ${prefs.mode==='replace'?'checked':''}> Заменить выбранные теги</label>
       <button class="btn primary" data-pa="booru-copy-tags" ${available.length?'':'disabled'}>Копировать</button></div>
-      <p class="muted small">По умолчанию теги добавляются без дублей. Исходные теги сохраняются. После копирования проверьте теги на принимающем сайте.</p></div>`;
+      <p class="muted small">По умолчанию теги добавляются без дублей. Исходные теги сохраняются. После копирования проверьте теги на принимающем сайте.</p></div></details>`;
   }
   async function selectBooruTags(site, run=false) {
     const s=S();
@@ -2219,6 +2222,87 @@
 
   // ---------------- файлы ----------------
   let upAbort = null, upStopped = false;   // отмена загрузки: прерывает текущий файл и не берёт следующие
+  let fileUndo = null;
+  const galleryState = (id = "") => ({ id, scroll: document.querySelector(".gallery")?.scrollLeft || 0 });
+  function restoreGalleryState(state) {
+    requestAnimationFrame(() => {
+      const gallery = document.querySelector(".gallery"); if (gallery) gallery.scrollLeft = state?.scroll || 0;
+      if (state?.id) document.querySelector(`.gt[data-file-id="${state.id}"]`)?.focus({preventScroll:true});
+    });
+  }
+  function renderFiles(state) { C().render(); restoreGalleryState(state); }
+  function finishFileUndo() {
+    if (!fileUndo) return;
+    clearTimeout(fileUndo.timer);
+    if (fileUndo.cleanup) fileUndo.cleanup();
+    fileUndo = null;
+  }
+  function offerFileUndo(text, undo, cleanup = null) {
+    finishFileUndo();
+    const token = {cleanup};
+    token.timer = setTimeout(() => { if (fileUndo === token) { if (cleanup) cleanup(); fileUndo = null; } }, 9000);
+    fileUndo = token;
+    C().toast(text, "info", {label:"Отменить действие", run:async()=>{
+      if (fileUndo !== token) return;
+      clearTimeout(token.timer); fileUndo = null; await undo();
+    }});
+  }
+  function moveToIndex(files, id, index) {
+    const from = files.findIndex(f => f.id === id);
+    if (from < 0) return files.slice();
+    const target = Math.max(0, Math.min(files.length - 1, index));
+    const boundary = target + (from < target ? 1 : 0);
+    return window.PostState.reorderFiles(files, from, boundary);
+  }
+  async function moveFile(from, insertAt, label = "Порядок изображений изменён") {
+    const d = draft(), f = d.files[from]; if (!f) return;
+    const oldIndex = from, state = galleryState(f.id), next = window.PostState.reorderFiles(d.files, from, insertAt);
+    if (next.every((item, i) => item === d.files[i])) return;
+    d.files = next; saveDraft(); await refreshPlan(); renderFiles(state);
+    offerFileUndo(label, async()=>{
+      const view = galleryState(f.id); d.files = moveToIndex(d.files, f.id, oldIndex);
+      saveDraft(); await refreshPlan(); renderFiles(view);
+    });
+  }
+  function detachFileData(d, id) {
+    const data = {mark:d.marks?.[id], alt:d.alts?.[id], sites:{}};
+    for (const site of BOORUS) {
+      const post=d.booru_posts?.[site]; if(!post)continue;
+      data.sites[site]={tags:post.tags?.[id],meta:post.meta?.[id]};
+      if(post.tags)delete post.tags[id];if(post.meta)delete post.meta[id];
+    }
+    if(d.marks)delete d.marks[id];if(d.alts)delete d.alts[id];
+    return data;
+  }
+  function attachFileData(d,id,data){
+    if(data.mark!==undefined)(d.marks||(d.marks={}))[id]=data.mark;
+    if(data.alt!==undefined)(d.alts||(d.alts={}))[id]=data.alt;
+    for(const [site,values] of Object.entries(data.sites||{})){
+      const post=(d.booru_posts||(d.booru_posts={}))[site]||=( {tags:{},meta:{}} );post.tags||={};post.meta||={};
+      if(values.tags!==undefined)post.tags[id]=values.tags;if(values.meta!==undefined)post.meta[id]=values.meta;
+    }
+    draft();
+  }
+  async function removeFileAt(index) {
+    const d=draft(),f=d.files[index];if(!f)return;
+    const state=galleryState(d.files[index+1]?.id||d.files[index-1]?.id||""),data=detachFileData(d,f.id);
+    d.files.splice(index,1);saveDraft();await refreshPlan();renderFiles(state);
+    offerFileUndo(`«${f.name}» убрано из поста`,async()=>{
+      const view=galleryState(f.id);d.files.splice(Math.min(index,d.files.length),0,f);attachFileData(d,f.id,data);
+      saveDraft();await refreshPlan();renderFiles(view);
+    },()=>C().api("post_remove_file",{file_id:f.id}).catch(()=>{}));
+  }
+  async function digestFile(file) {
+    if (!window.crypto?.subtle || file.size > 128 * 1024 * 1024) return "";
+    try { const bytes=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());return [...new Uint8Array(bytes)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+    catch (_) { return ""; }
+  }
+  async function fileInfo(file, digest="") {
+    digest=digest||await digestFile(file);
+    const r=await fetch("/upload?name="+encodeURIComponent(file.name||"paste.png"),{method:"POST",headers:{"X-Token":window.API_TOKEN,"Content-Type":"application/octet-stream"},body:file,signal:upAbort.signal});
+    const j=await r.json();if(!j.ok)throw new Error(j.error);const info=j.result;
+    return {id:info.id,name:info.name,kind:info.kind,width:info.width,height:info.height,size:info.size,duration:info.duration||null,format:info.format||"",digest:info.digest||digest,sourceModified:file.lastModified||0};
+  }
   async function uploadFiles(list) {
     const s = S(), d = draft();
     const files = Array.from(list || []);
@@ -2229,12 +2313,11 @@
       if (upStopped) { s.uploading -= 1; continue; }
       try {
         upAbort = new AbortController();
-        const r = await fetch("/upload?name=" + encodeURIComponent(f.name || "paste.png"), {
-          method: "POST", headers: { "X-Token": window.API_TOKEN, "Content-Type": "application/octet-stream" }, body: f, signal: upAbort.signal });
-        const j = await r.json();
-        if (!j.ok) throw new Error(j.error);
-        const info = j.result;
-        d.files.push({ id: info.id, name: info.name, kind: info.kind, width: info.width, height: info.height, size: info.size, duration: info.duration || null, format: info.format || "" });
+        const digest=await digestFile(f), duplicate=d.files.find(x=>(digest&&x.digest===digest)||(!digest&&x.name===f.name&&x.size===f.size&&x.sourceModified===(f.lastModified||0)));
+        if(duplicate){C().toast(`«${f.name}» уже добавлен в этот пост`,"info");bad++;s.uploading-=1;continue;}
+        const info = await fileInfo(f,digest), uploadedDuplicate=d.files.find(x=>info.digest&&x.digest===info.digest);
+        if(uploadedDuplicate){C().api("post_remove_file",{file_id:info.id}).catch(()=>{});C().toast(`«${f.name}» уже добавлен в этот пост`,"info");bad++;s.uploading-=1;continue;}
+        d.files.push(info);
         if (multiOn()) { const g = guessVersion(info.name) || s.nextMark; if (g) { d.marks = d.marks || {}; d.marks[info.id] = g; } }
       } catch (e) {
         if (e.name === "AbortError") bad++;   // отменили сами — это не ошибка
@@ -2248,6 +2331,32 @@
     else if (added > 0) C().toast(added === 1 ? "Файл добавлен" : `Добавлено файлов: ${added}`, "ok");
     if (multiOn()) autoDetect(false);
     saveDraft(); await refreshPlan(); C().render(); pollPrep(); loadTags(true);
+  }
+  async function replaceFileAt(index,file){
+    const d=draft(),old=d.files[index];if(!old||!file)return;
+    const digest=await digestFile(file),duplicate=d.files.find((x,i)=>i!==index&&digest&&x.digest===digest);
+    if(duplicate){C().toast(`«${file.name}» уже добавлен в этот пост`,"info");return;}
+    const state=galleryState(old.id);let completed=false;S().uploading=(S().uploading||0)+1;C().render();
+    try{
+      upAbort=new AbortController();const fresh=await fileInfo(file,digest),data=detachFileData(d,old.id),mark=data.mark;
+      if(mark!==undefined)(d.marks||(d.marks={}))[fresh.id]=mark;
+      d.files.splice(index,1,fresh);saveDraft();await refreshPlan();S().uploading=Math.max(0,(S().uploading||1)-1);completed=true;renderFiles({id:fresh.id,scroll:state.scroll});pollPrep();loadTags(true);
+      offerFileUndo(`«${old.name}» заменено`,async()=>{
+        const at=d.files.findIndex(x=>x.id===fresh.id);if(at<0)return;
+        d.files.splice(at,1,old);detachFileData(d,fresh.id);attachFileData(d,old.id,data);
+        saveDraft();await refreshPlan();renderFiles({id:old.id,scroll:state.scroll});
+        C().api("post_remove_file",{file_id:fresh.id}).catch(()=>{});
+      },()=>C().api("post_remove_file",{file_id:old.id}).catch(()=>{}));
+    }catch(e){C().toast(`${file.name}: ${e.message}`,"error");}
+    finally{if(!completed){S().uploading=Math.max(0,(S().uploading||1)-1);renderFiles(state);}upAbort=null;}
+  }
+  function closeFileMenu(){document.querySelector(".filectx")?.remove();}
+  function openFileMenu(event,tile){
+    closeFileMenu();const d=draft(),i=+tile.dataset.gi,f=d.files[i];if(!f)return;
+    const menu=document.createElement("div");menu.className="filectx";menu.dataset.fileMenu="";
+    const versions=multiOn()?`<hr><button data-pa="file-mark" data-id="${f.id}" data-val="all">Для всех площадок</button><button data-pa="file-mark" data-id="${f.id}" data-val="ru">Русская версия</button><button data-pa="file-mark" data-id="${f.id}" data-val="en">English version</button><button data-pa="file-mark" data-id="${f.id}" data-val="clean">Без текста</button>`:"";
+    menu.innerHTML=`<button data-pa="file-view" data-id="${f.id}">Открыть просмотр</button><label>Заменить файл…<input type="file" hidden data-file-replace="${i}" accept="${ACCEPT}"></label><button data-pa="file-first" data-id="${f.id}" ${i===0?'disabled':''}>Переместить в начало <small>Alt+Home</small></button><button data-pa="file-last" data-id="${f.id}" ${i===d.files.length-1?'disabled':''}>Переместить в конец <small>Alt+End</small></button>${versions}<hr><button class="danger" data-pa="rmfile" data-i="${i}">Убрать из поста <small>Delete</small></button>`;
+    document.body.appendChild(menu);const box=menu.getBoundingClientRect();menu.style.left=Math.max(10,Math.min(event.clientX,innerWidth-box.width-10))+"px";menu.style.top=Math.max(10,Math.min(event.clientY,innerHeight-box.height-10))+"px";menu.querySelector("button:not([disabled])")?.focus();
   }
   async function pollPrep() {
     const s = S(), ids = draft().files.filter((f) => f.kind === "image").map((f) => f.id);
@@ -2600,6 +2709,10 @@
       }
       case "e6need": { await selectBooruTags(a.dataset.site || BN()); const el = document.getElementById("e6card"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return true; }
       case "e6run": await loadTags(true, true); return true;
+      case "file-view": s.viewFile=a.dataset.id;closeFileMenu();C().render();return true;
+      case "file-first": {const i=d.files.findIndex(f=>f.id===a.dataset.id);closeFileMenu();await moveFile(i,0,"Изображение перемещено в начало");return true;}
+      case "file-last": {const i=d.files.findIndex(f=>f.id===a.dataset.id);closeFileMenu();await moveFile(i,d.files.length,"Изображение перемещено в конец");return true;}
+      case "file-mark": {const id=a.dataset.id;d.marks=d.marks||{};if(a.dataset.val==='all')delete d.marks[id];else d.marks[id]=a.dataset.val;closeFileMenu();saveDraft();await refreshPlan();renderFiles(galleryState(id));return true;}
       case "view-close": s.viewFile = null; C().render(); return true;
       case "view-prev": viewStep(-1); return true;
       case "view-next": viewStep(1); return true;
@@ -2621,7 +2734,7 @@
         window.VidEditor.open({ file: f, api, tok: window.API_TOKEN, toast: (t, k) => C().toast(t, k), onDone: vedDone });
         return true;
       }
-      case "rmfile": { const [f] = d.files.splice(+a.dataset.i, 1); if (f && d.e6tags) delete d.e6tags[f.id]; if (f && d.e6meta) delete d.e6meta[f.id]; if (f && d.marks) delete d.marks[f.id]; saveDraft(); if (f) api("post_remove_file", { file_id: f.id }).catch(() => {}); await refreshPlan(); C().render(); return true; }
+      case "rmfile": closeFileMenu();await removeFileAt(+a.dataset.i);return true;
       case "clear":
         if (!confirm("Очистить пост?")) return true;
         d.files.forEach((f) => api("post_remove_file", { file_id: f.id }).catch(() => {}));
@@ -3170,20 +3283,29 @@
   });
   document.addEventListener("dragstart", (e) => {
     const g = e.target.closest && e.target.closest(".gt");
-    if (!g || !onPost()) return;
-    S().dragI = +g.dataset.gi; g.classList.add("dragging");
+    if (!g || !onPost() || e.target.closest("button")) { if (g) e.preventDefault(); return; }
+    S().dragI = +g.dataset.gi; S().dragInsert = null; g.classList.add("dragging");
     e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "cp-reorder");
+    const ghost=g.cloneNode(true);ghost.className="gt dragghost";ghost.removeAttribute("tabindex");document.body.appendChild(ghost);S().dragGhost=ghost;
+    try{e.dataTransfer.setDragImage(ghost,75,60);}catch(_){/* browser default remains */}
   });
   document.addEventListener("dragend", () => {
-    S().dragI = null;
-    document.querySelectorAll(".gt.dragging,.gt.dropbefore").forEach((el) => el.classList.remove("dragging", "dropbefore"));
+    S().dragI = S().dragInsert = null;
+    S().dragGhost?.remove();S().dragGhost=null;
+    document.querySelectorAll(".gt.dragging,.gt.dropbefore,.gt.dropafter").forEach((el) => el.classList.remove("dragging", "dropbefore", "dropafter"));
   });
   document.addEventListener("dragover", (e) => {
     if (!onPost()) return;
     e.preventDefault();
     if (S().dragI != null) {
-      document.querySelectorAll(".gt.dropbefore").forEach((el) => el.classList.remove("dropbefore"));
-      const g = e.target.closest && e.target.closest(".gt"); if (g) g.classList.add("dropbefore");
+      e.dataTransfer.dropEffect = "move";
+      document.querySelectorAll(".gt.dropbefore,.gt.dropafter").forEach((el) => el.classList.remove("dropbefore", "dropafter"));
+      const g = e.target.closest && e.target.closest(".gt");
+      if (g) {
+        const box = g.getBoundingClientRect(), after = e.clientX >= box.left + box.width / 2;
+        S().dragInsert = +g.dataset.gi + (after ? 1 : 0);
+        g.classList.add(after ? "dropafter" : "dropbefore");
+      } else S().dragInsert = draft().files.length;
       return;
     }
     const z = document.getElementById("drop"); if (z) z.classList.add("over");
@@ -3194,12 +3316,10 @@
     e.preventDefault(); const z = document.getElementById("drop"); if (z) z.classList.remove("over");
     const s = S();
     if (s.dragI != null) {
-      const from = s.dragI; s.dragI = null;
-      const g = e.target.closest && e.target.closest(".gt"), d = draft();
-      let to = g ? +g.dataset.gi : d.files.length;
-      const [f] = d.files.splice(from, 1);
-      if (to > from) to -= 1;
-      d.files.splice(to, 0, f); saveDraft(); await refreshPlan(); C().render(); return;
+      const from = s.dragI, d = draft(), insertAt = s.dragInsert == null ? d.files.length : s.dragInsert;
+      s.dragI = s.dragInsert = null;
+      s.dragGhost?.remove();s.dragGhost=null;
+      await moveFile(from,insertAt);return;
     }
     uploadFiles(e.dataTransfer && e.dataTransfer.files);
   });
@@ -3207,6 +3327,26 @@
     if (!onPost() || !e.clipboardData) return;
     const files = Array.from(e.clipboardData.files || []);
     if (files.length) { e.preventDefault(); uploadFiles(files); }
+  });
+  document.addEventListener("contextmenu",(e)=>{
+    const tile=e.target.closest&&e.target.closest(".gt");if(!tile||!onPost())return;
+    e.preventDefault();openFileMenu(e,tile);
+  });
+  document.addEventListener("pointerdown",e=>{if(!e.target.closest?.(".filectx"))closeFileMenu();},true);
+  document.addEventListener("change",e=>{
+    const input=e.target.closest?.("[data-file-replace]");if(!input||!input.files?.[0])return;
+    const index=+input.dataset.fileReplace,file=input.files[0];closeFileMenu();replaceFileAt(index,file);
+  });
+  document.addEventListener("keydown",async e=>{
+    if(e.key==="Escape"){closeFileMenu();return;}
+    const tile=e.target.closest?.(".gt");if(!tile||!onPost()||multiOn()&&S().brush)return;
+    const i=+tile.dataset.gi,d=draft();
+    if(e.key==="Delete"){e.preventDefault();await removeFileAt(i);return;}
+    if(!e.altKey)return;
+    if(e.key==="ArrowLeft"&&i>0){e.preventDefault();await moveFile(i,i-1);}
+    else if(e.key==="ArrowRight"&&i<d.files.length-1){e.preventDefault();await moveFile(i,i+2);}
+    else if(e.key==="Home"&&i>0){e.preventDefault();await moveFile(i,0,"Изображение перемещено в начало");}
+    else if(e.key==="End"&&i<d.files.length-1){e.preventDefault();await moveFile(i,d.files.length,"Изображение перемещено в конец");}
   });
 
   window.Pub = { insightsHtml, loadInsights, order: porder, byOrder, setOrder: async (o) => { S().pub = await C().api("pub_save", { section: "platform_order", changes: o }); await refreshPlan(); }, bpInit, drawerHtml, loadTags, load, tick, renderPost, renderHistory, settingsHtml, platStatus, onClick, onChange, openDrawer };

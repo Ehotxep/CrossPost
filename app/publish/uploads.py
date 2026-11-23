@@ -4,6 +4,7 @@
 картинка / GIF / видео, размеры, вес. Оригинал не меняется.
 """
 import json
+import hashlib
 import re
 import secrets
 import shutil
@@ -25,6 +26,11 @@ def _safe(name: str) -> str:
 def describe(path: Path) -> dict:
     ext = path.suffix.lower()
     info = {"name": path.name, "size": path.stat().st_size, "kind": None, "width": None, "height": None, "format": ext.lstrip(".").upper()}
+    digest_file = path.parent.parent / f"{path.parent.name}.sha256"
+    if digest_file.exists():
+        digest = digest_file.read_text(encoding="ascii").strip().lower()
+        if re.fullmatch(r"[0-9a-f]{64}", digest):
+            info["digest"] = digest
     if ext in VIDEO_EXT:
         info["kind"] = "video"
         pr = probe_cached(path)
@@ -85,7 +91,7 @@ def save(name: str, data: bytes) -> dict:
     folder.mkdir(parents=True, exist_ok=True)
     p = folder / _safe(name)
     p.write_bytes(data)
-    return _finish(uid, folder, p)
+    return _finish(uid, folder, p, hashlib.sha256(data).hexdigest())
 
 
 def save_stream(name: str, src, length: int) -> dict:
@@ -98,25 +104,30 @@ def save_stream(name: str, src, length: int) -> dict:
     p = folder / _safe(name)
     try:
         left = length
+        digest = hashlib.sha256()
         with open(p, "wb") as f:
             while left > 0:
                 chunk = src.read(min(left, 1 << 20))
                 if not chunk:
                     raise ValueError("загрузка файла оборвалась — добавьте его ещё раз")
                 f.write(chunk)
+                digest.update(chunk)
                 left -= len(chunk)
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
-    return _finish(uid, folder, p)
+    return _finish(uid, folder, p, digest.hexdigest())
 
 
-def _finish(uid: str, folder: Path, p: Path) -> dict:
+def _finish(uid: str, folder: Path, p: Path, digest: str = "") -> dict:
     try:
         info = describe(p)
     except ValueError:
         shutil.rmtree(folder, ignore_errors=True)
         raise
+    if re.fullmatch(r"[0-9a-f]{64}", digest or ""):
+        (folder.parent / f"{uid}.sha256").write_text(digest, encoding="ascii")
+        info["digest"] = digest
     if info["kind"] == "image":   # лёгкую версию начинаем готовить сразу, пока пишется текст
         from app.publish import prep, settings
         prep.ensure_async(uid, settings.load()["light"])
@@ -151,6 +162,7 @@ def remove(uid: str):
         (p.parent.parent / f"{uid}.probe.json").unlink(missing_ok=True)
         (p.parent.parent / f"{uid}.strip.jpg").unlink(missing_ok=True)
         (p.parent.parent / f"{uid}.looprev.webm").unlink(missing_ok=True)
+        (p.parent.parent / f"{uid}.sha256").unlink(missing_ok=True)
         from app.publish import media
         media.remove(uid)
         from app.publish import prep

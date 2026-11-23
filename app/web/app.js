@@ -87,7 +87,7 @@
     const text=humanize(String(message||''));
     return `<div class="problem" role="alert"><p class="err">${esc(text)}</p>${text!==message?`<details class="more"><summary>Технические подробности</summary><pre translate="no">${esc(message)}</pre></details>`:''}<button class="btn small" data-view-link="settings" data-tab="diag">Открыть диагностику</button></div>`;
   }
-  function toast(text, kind = "ok") {
+  function toast(text, kind = "ok", action = null) {
     text = String(text || "").trim();
     if (kind === "error") text = humanize(text);
     if (!text) return;
@@ -100,12 +100,17 @@
     const t = document.createElement("div");
     t.className = "toast " + kind;
     t.setAttribute("role", kind === "error" ? "alert" : "status");
-    t.innerHTML = `<span class="ti">${kind === "error" ? "!" : kind === "info" ? "i" : "✓"}</span><span class="tt"></span><button class="tx" aria-label="Закрыть">×</button>`;
+    t.innerHTML = `<span class="ti">${kind === "error" ? "!" : kind === "info" ? "i" : "✓"}</span><span class="tt"></span>${action ? '<button class="ta"></button>' : ''}<button class="tx" aria-label="Закрыть">×</button>`;
     t.querySelector(".tt").textContent = text;
     t.querySelector(".tx").onclick = () => t.remove();
+    if (action) {
+      const button = t.querySelector(".ta");
+      button.textContent = action.label || "Отменить действие";
+      button.onclick = async () => { button.disabled = true; try { await action.run(); } finally { t.remove(); } };
+    }
     box.appendChild(t);
     while (box.children.length > 5) box.firstChild.remove();
-    setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, kind === "error" ? 12000 : kind === "info" ? 7000 : 2600);
+    setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, action ? 9000 : kind === "error" ? 12000 : kind === "info" ? 7000 : 2600);
   }
   // Необработанные ошибки (в обработчике кнопки, в запросе): раньше они пропадали молча — теперь видны в окне и в консоли
   const jsErr = (m) => { m = String(m || "").trim(); if (m && !/ResizeObserver|Script error/i.test(m)) toast("Ошибка: " + m, "error"); };
